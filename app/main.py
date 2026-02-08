@@ -55,11 +55,15 @@ async def run_vivasense(
         columns=tukey.summary().data[0]
     )
 
-    return {
+   anova_clean = anova_table.reset_index().fillna("NA")
+means_clean = means.fillna("NA")
+tukey_clean = tukey_df.fillna("NA")
+
+return {
         "audit": "ANOVA and mean separation successfully completed.",
-        "anova_table": anova_table.reset_index().to_dict(),
-        "means": means.to_dict(),
-        "tukey_results": tukey_df.to_dict(),
+        "anova_table": anova_clean.to_dict(),
+        "means": means_clean.to_dict(),
+        "tukey_results": tukey_clean.to_dict(),
         "interpretation": (
             f"ANOVA detected whether significant differences exist among {treatment}. "
             "Tukey HSD separated treatment means at P < 0.05."
