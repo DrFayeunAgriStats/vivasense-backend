@@ -9,7 +9,12 @@ app = FastAPI(title="VivaSense API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://*.lovableproject.com",
+        "https://*.lovable.app",
+        "https://fieldtoinsightacademy.com.ng",
+        "http://localhost:3000"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
