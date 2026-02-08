@@ -7,14 +7,11 @@ from statsmodels.stats.multicomp import pairwise_tukeyhsd
 
 app = FastAPI(title="VivaSense API")
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://*.lovableproject.com",
-        "https://*.lovable.app",
-        "https://fieldtoinsightacademy.com.ng",
-        "http://localhost:3000"
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
