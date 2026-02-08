@@ -31,19 +31,17 @@ async def run_vivasense(
 ):
     df = pd.read_excel(file.file)
 
-    # First column = Treatment
-    # Second column = Trait
     treatment = df.columns[0]
     trait = df.columns[1]
 
-    # ---------- ANOVA ----------
+    # ANOVA
     model = ols(f"{trait} ~ C({treatment})", data=df).fit()
     anova_table = sm.stats.anova_lm(model, typ=2)
 
-    # ---------- MEANS ----------
+    # Means
     means = df.groupby(treatment)[trait].mean()
 
-    # ---------- TUKEY ----------
+    # Tukey
     tukey = pairwise_tukeyhsd(
         endog=df[trait],
         groups=df[treatment],
@@ -55,21 +53,22 @@ async def run_vivasense(
         columns=tukey.summary().data[0]
     )
 
-   anova_clean = anova_table.reset_index().fillna("NA")
-means_clean = means.fillna("NA")
-tukey_clean = tukey_df.fillna("NA")
+    # Clean NaN values
+    anova_clean = anova_table.reset_index().fillna("NA")
+    means_clean = means.fillna("NA")
+    tukey_clean = tukey_df.fillna("NA")
 
-return {
+    return {
         "audit": "ANOVA and mean separation successfully completed.",
         "anova_table": anova_clean.to_dict(),
         "means": means_clean.to_dict(),
         "tukey_results": tukey_clean.to_dict(),
         "interpretation": (
-            f"ANOVA detected whether significant differences exist among {treatment}. "
+            f"ANOVA tested differences among {treatment}. "
             "Tukey HSD separated treatment means at P < 0.05."
         ),
         "reviewer_critique": (
-            "Reviewer will ask about experimental design, replication, "
-            "and whether assumptions of ANOVA were satisfied."
+            "Reviewer will question experimental design, replication, "
+            "and assumption checks."
         )
     }
