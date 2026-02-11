@@ -4,11 +4,11 @@ import pandas as pd
 import numpy as np
 from scipy import stats
 
-app = FastAPI()
+app = FastAPI(title="VivaSense API")
 
-# -----------------------
-# CORS
-# -----------------------
+# ---------------------------
+# CORS SETTINGS
+# ---------------------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,16 +16,33 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# -----------------------
-# Health check
-# -----------------------
+# ---------------------------
+# CLEAN JSON VALUES
+# ---------------------------
+def clean_json(obj):
+    if isinstance(obj, float):
+        if np.isnan(obj) or np.isinf(obj):
+            return None
+        return obj
+
+    if isinstance(obj, dict):
+        return {k: clean_json(v) for k, v in obj.items()}
+
+    if isinstance(obj, list):
+        return [clean_json(v) for v in obj]
+
+    return obj
+
+# ---------------------------
+# HOME
+# ---------------------------
 @app.get("/")
 def home():
     return {"status": "VivaSense backend running"}
 
-# -----------------------
-# Main Analysis Endpoint
-# -----------------------
+# ---------------------------
+# RUN ANALYSIS
+# ---------------------------
 @app.post("/vivasense/run")
 async def run_vivasense(
     file: UploadFile = File(...),
@@ -33,30 +50,33 @@ async def run_vivasense(
     predictors: str = Form(...)
 ):
     try:
+        # Load dataset
         df = pd.read_excel(file.file)
 
-        predictors_list = predictors.split(",")
+        predictor_list = [p.strip() for p in predictors.split(",")]
 
-        results = {}
+        groups = []
+        for level in df[predictor_list[0]].unique():
+            group = df[df[predictor_list[0]] == level][outcome]
+            groups.append(group)
 
-        # One-way ANOVA
-        groups = [
-            df[df[predictors_list[0]] == g][outcome]
-            for g in df[predictors_list[0]].dropna().unique()
-        ]
+        # Run ANOVA
+        f_stat, p_val = stats.f_oneway(*groups)
 
-        f_stat, p_value = stats.f_oneway(*groups)
-
-        results["anova"] = {
+        results = {
+            "analysis": "ANOVA",
+            "outcome_variable": outcome,
+            "predictor": predictor_list,
             "f_statistic": float(f_stat),
-            "p_value": float(p_value)
+            "p_value": float(p_val),
+            "interpretation": (
+                "Significant difference detected (p < 0.05)"
+                if p_val < 0.05
+                else "No significant difference detected (p ≥ 0.05)"
+            )
         }
 
-        results["interpretation"] = (
-            "Significant difference detected"
-            if p_value < 0.05
-            else "No significant difference detected"
-        )
+        results = clean_json(results)
 
         return results
 
