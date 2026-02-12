@@ -87,7 +87,7 @@ async def run_vivasense(
                 detail=f"Not enough data after removing missing values. Need at least 3 rows, got {len(df_clean)}"
             )
         
-        # Build formula
+        # Build formula with categorical wrapper
         formula = f"{outcome} ~ " + " + ".join([f"C({p})" for p in predictors_list])
         
         # Fit model
@@ -98,10 +98,21 @@ async def run_vivasense(
         
         # ---------- ANOVA TABLE ----------
         anova_table = anova_table.reset_index()
-        anova_table.columns = ["Source", "SS", "DF", "MS", "F", "p_value"]
+        
+        # Handle different ANOVA table structures
+        if len(anova_table.columns) == 5:
+            # Type 2 ANOVA: index, sum_sq, df, F, PR(>F)
+            anova_table.columns = ["Source", "SS", "DF", "F", "p_value"]
+        elif len(anova_table.columns) == 6:
+            # Type 1 ANOVA: index, sum_sq, df, mean_sq, F, PR(>F)
+            anova_table.columns = ["Source", "SS", "DF", "MS", "F", "p_value"]
+        else:
+            # Keep original column names as fallback
+            pass
         
         # Clean up source names (remove C() wrapper)
-        anova_table["Source"] = anova_table["Source"].astype(str).str.replace("C(", "").str.replace(")", "")
+        if "Source" in anova_table.columns:
+            anova_table["Source"] = anova_table["Source"].astype(str).str.replace("C(", "").str.replace(")", "")
         
         anova_json = dataframe_to_records(anova_table)
         
@@ -134,7 +145,7 @@ async def run_vivasense(
         # ---------- ASSUMPTION TESTS ----------
         residuals = model.resid
         
-        # Shapiro-Wilk test
+        # Shapiro-Wilk test (only for sample sizes 3-5000)
         if len(residuals) >= 3 and len(residuals) <= 5000:
             shapiro_stat, shapiro_p = stats.shapiro(residuals)
         else:
@@ -167,7 +178,7 @@ async def run_vivasense(
         
         # ---------- INTERPRETATION ----------
         # Find the predictor row in ANOVA table
-        predictor_rows = anova_table[anova_table["Source"].str.contains(predictors_list[0], case=False)]
+        predictor_rows = anova_table[anova_table["Source"].str.contains(predictors_list[0], case=False, na=False)]
         
         if len(predictor_rows) > 0:
             pval = predictor_rows.iloc[0]["p_value"]
@@ -189,14 +200,14 @@ async def run_vivasense(
             "interpretation": interpretation,
             "metadata": {
                 "n_observations": len(df_clean),
-                "n_groups": len(df_clean[predictors_list[0]].unique()),
+                "n_groups": len(df_clean[predictors_list[0]].unique()) if len(predictors_list) > 0 else 0,
                 "outcome_variable": outcome,
                 "predictor_variables": predictors_list
             }
         }
     
     except HTTPException:
-        # Re-raise HTTP exceptions
+        # Re-raise HTTP exceptions as-is
         raise
     
     except Exception as e:
@@ -212,7 +223,9 @@ async def run_vivasense(
         )
 
 
-# Health check endpoint
+# -----------------------
+# Health Check Endpoints
+# -----------------------
 @app.get("/")
 async def health_check():
     return {
