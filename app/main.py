@@ -1,125 +1,127 @@
-from fastapi import FastAPI, File, UploadFile, Form
+from fastapi import FastAPI, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import numpy as np
-import io
-import statsmodels.api as sm
-import statsmodels.formula.api as smf
-from statsmodels.stats.multicomp import pairwise_tukeyhsd
 from scipy import stats
+import statsmodels.api as sm
+from statsmodels.formula.api import ols
+from statsmodels.stats.multicomp import pairwise_tukeyhsd
 
-app = FastAPI()
+app = FastAPI(title="VivaSense API")
 
-# --- CORS ---
+# -----------------------
+# CORS
+# -----------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten later in production
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ---------- Utility: Clean NaN for JSON ----------
-def clean_nan(obj):
-    if isinstance(obj, dict):
-        return {k: clean_nan(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [clean_nan(v) for v in obj]
-    elif isinstance(obj, float):
-        if np.isnan(obj) or np.isinf(obj):
-            return None
-        return float(obj)
-    else:
-        return obj
+# -----------------------
+# Helpers
+# -----------------------
 
-# ---------- API ROUTE ----------
+def safe_number(x):
+    """Convert NaN/inf to None so JSON does not crash"""
+    if pd.isna(x) or np.isinf(x):
+        return None
+    return float(x)
+
+def dataframe_to_records(df):
+    return [
+        {col: safe_number(val) if isinstance(val, (int, float)) else val
+         for col, val in row.items()}
+        for row in df.to_dict(orient="records")
+    ]
+
+# -----------------------
+# API Endpoint
+# -----------------------
+
 @app.post("/vivasense/run")
 async def run_vivasense(
-    file: UploadFile = File(...),
+    file: UploadFile,
     outcome: str = Form(...),
     predictors: str = Form(...)
 ):
-    try:
-        contents = await file.read()
-        df = pd.read_excel(io.BytesIO(contents))
 
-        predictors_list = [p.strip() for p in predictors.split(",")]
+    df = pd.read_excel(file.file)
 
-        # Use first predictor only for now (one-way ANOVA)
-        factor = predictors_list[0]
+    predictors_list = [p.strip() for p in predictors.split(",")]
 
-        # Drop missing rows
-        df = df[[outcome, factor]].dropna()
+    # Build formula
+    formula = f"{outcome} ~ " + " + ".join(predictors_list)
 
-        # ---------------- ANOVA ----------------
-        formula = f"{outcome} ~ C({factor})"
-        model = smf.ols(formula, data=df).fit()
-        anova_table = sm.stats.anova_lm(model, typ=2)
+    model = ols(formula, data=df).fit()
+    anova_table = sm.stats.anova_lm(model, typ=2)
 
-        anova_table_reset = anova_table.reset_index()
-        anova_table_dict = anova_table_reset.to_dict(orient="records")
+    # ---------- ANOVA TABLE ----------
+    anova_table = anova_table.reset_index()
+    anova_table.columns = ["Source", "SS", "DF", "MS", "F", "p_value"]
 
-        # ---------------- Group Means ----------------
-        group_means = df.groupby(factor)[outcome].mean().reset_index()
-        group_means_dict = group_means.to_dict(orient="records")
+    anova_json = dataframe_to_records(anova_table)
 
-        # ---------------- Tukey HSD ----------------
+    # ---------- GROUP MEANS ----------
+    group_means = (
+        df.groupby(predictors_list)[outcome]
+        .mean()
+        .reset_index()
+        .rename(columns={outcome: "Mean"})
+    )
+
+    group_means_json = dataframe_to_records(group_means)
+
+    # ---------- TUKEY HSD ----------
+    if len(predictors_list) == 1:
         tukey = pairwise_tukeyhsd(
-            endog=df[outcome],
-            groups=df[factor],
-            alpha=0.05
+            df[outcome],
+            df[predictors_list[0]]
         )
-
         tukey_df = pd.DataFrame(
-            tukey._results_table.data[1:],
-            columns=tukey._results_table.data[0]
+            data=tukey.summary().data[1:],
+            columns=tukey.summary().data[0]
         )
-        tukey_dict = tukey_df.to_dict(orient="records")
+        tukey_json = dataframe_to_records(tukey_df)
+    else:
+        tukey_json = []
 
-        # ---------------- Assumptions ----------------
+    # ---------- ASSUMPTION TESTS ----------
+    residuals = model.resid
 
-        # Shapiro-Wilk (normality of residuals)
-        shapiro_stat, shapiro_p = stats.shapiro(model.resid)
+    shapiro_stat, shapiro_p = stats.shapiro(residuals)
+    levene_stat, levene_p = stats.levene(
+        *[df[df[predictors_list[0]] == g][outcome]
+          for g in df[predictors_list[0]].unique()]
+    )
 
-        shapiro_result = {
-            "statistic": float(shapiro_stat),
-            "p_value": float(shapiro_p),
-            "normal": bool(shapiro_p > 0.05)
+    assumptions = {
+        "shapiro_wilk": {
+            "statistic": safe_number(shapiro_stat),
+            "p_value": safe_number(shapiro_p),
+            "pass": shapiro_p >= 0.05
+        },
+        "levene_test": {
+            "statistic": safe_number(levene_stat),
+            "p_value": safe_number(levene_p),
+            "pass": levene_p >= 0.05
         }
+    }
 
-        # Levene (homogeneity of variance)
-        groups = [group[outcome].values for name, group in df.groupby(factor)]
-        levene_stat, levene_p = stats.levene(*groups)
+    # ---------- INTERPRETATION ----------
+    pval = anova_table.loc[anova_table["Source"] == predictors_list[0], "p_value"].values[0]
 
-        levene_result = {
-            "statistic": float(levene_stat),
-            "p_value": float(levene_p),
-            "homogeneous": bool(levene_p > 0.05)
-        }
+    if pval < 0.05:
+        interpretation = "Significant difference detected (p < 0.05)"
+    else:
+        interpretation = "No significant difference detected (p ≥ 0.05)"
 
-        # ---------------- Interpretation ----------------
-        p_value = anova_table["PR(>F)"][0]
-
-        if p_value < 0.05:
-            interpretation = "Significant difference detected (p < 0.05)"
-        else:
-            interpretation = "No significant difference detected (p ≥ 0.05)"
-
-        # ---------------- Response ----------------
-        response = {
-            "interpretation": interpretation,
-            "anova_table": anova_table_dict,
-            "group_means": group_means_dict,
-            "posthoc": tukey_dict,
-            "shapiro_wilk": shapiro_result,
-            "levene_test": levene_result
-        }
-
-        return clean_nan(response)
-
-    except Exception as e:
-        return {"error": str(e)}
-
-# ---------- Root ----------
-@app.get("/")
-def root():
-    return {"message": "VivaSense backend running"}
+    # ---------- FINAL RESPONSE ----------
+    return {
+        "anova_table": anova_json,
+        "group_means": group_means_json,
+        "tukey_hsd": tukey_json,
+        "assumptions": assumptions,
+        "interpretation": interpretation
+    }
