@@ -26,25 +26,34 @@ app.add_middleware(
 # -----------------------
 def safe_json_value(x):
     """Convert any value to JSON-safe format"""
-    # Handle None, NaN, inf
-    if x is None or pd.isna(x):
-        return None
-    if np.isinf(x):
+    # Handle None first
+    if x is None:
         return None
     
-    # Handle boolean (numpy and native)
+    # Handle strings (before numeric checks)
+    if isinstance(x, str):
+        return x
+    
+    # Handle boolean (before numeric, since bool is subclass of int)
     if isinstance(x, (bool, np.bool_)):
         return bool(x)
     
     # Handle numeric types
     if isinstance(x, (int, np.integer)):
         return int(x)
+    
     if isinstance(x, (float, np.floating)):
+        # Check for NaN and inf only on numeric types
+        if pd.isna(x) or np.isinf(x):
+            return None
         return float(x)
     
-    # Handle strings
-    if isinstance(x, str):
-        return x
+    # Try to check if it's NaN-like (works for pandas types)
+    try:
+        if pd.isna(x):
+            return None
+    except:
+        pass
     
     # Fallback: convert to string
     return str(x)
