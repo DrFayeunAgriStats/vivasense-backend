@@ -1,240 +1,513 @@
-from fastapi import FastAPI, UploadFile, Form, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-import pandas as pd
-import numpy as np
-from scipy import stats
-import statsmodels.api as sm
-from statsmodels.formula.api import ols
-from statsmodels.stats.multicomp import pairwise_tukeyhsd
-import traceback
+import { useState, useRef, useCallback } from "react";
+import { Layout } from "@/components/layout/Layout";
+import { VivaSenseHero } from "@/components/vivasense/VivaSenseHero";
+import { VivaSenseFeatures } from "@/components/vivasense/VivaSenseFeatures";
+import { VivaSenseInstitutional } from "@/components/vivasense/VivaSenseInstitutional";
+import { useToast } from "@/hooks/use-toast";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Loader2, Upload, Download, RefreshCw } from "lucide-react";
 
-app = FastAPI(title="VivaSense API")
+const VIVASENSE_API_URL = "https://vivasense-backend.onrender.com/vivasense/run";
 
-# -----------------------
-# CORS
-# -----------------------
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+interface ANOVARow {
+  Source: string;
+  SS: number;
+  DF: number;
+  F: number;
+  p_value: number;
+}
 
-# -----------------------
-# Helpers
-# -----------------------
-def safe_number(x):
-    """Convert NaN/inf to None so JSON does not crash"""
-    if pd.isna(x) or np.isinf(x):
-        return None
-    return float(x)
+interface GroupMean {
+  Treatment?: string;
+  Mean: number;
+  SD?: number;
+  N?: number;
+}
 
-def dataframe_to_records(df):
-    return [
-        {col: safe_number(val) if isinstance(val, (int, float)) else val
-         for col, val in row.items()}
-        for row in df.to_dict(orient="records")
-    ]
+interface TukeyComparison {
+  group1: string;
+  group2: string;
+  meandiff?: number;
+  diff?: number;
+  p_value?: number;
+  pValue?: number;
+  reject?: boolean;
+  significant?: boolean;
+}
 
-# -----------------------
-# API Endpoint
-# -----------------------
-@app.post("/vivasense/run")
-async def run_vivasense(
-    file: UploadFile,
-    outcome: str = Form(...),
-    predictors: str = Form(...)
-):
-    try:
-        # Read the Excel file
-        df = pd.read_excel(file.file)
-        
-        # Clean column names (remove extra spaces, standardize)
-        df.columns = df.columns.str.strip()
-        
-        # Parse predictors
-        predictors_list = [p.strip() for p in predictors.split(",")]
-        
-        # VALIDATION: Check if outcome column exists
-        if outcome not in df.columns:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Outcome column '{outcome}' not found. Available columns: {list(df.columns)}"
-            )
-        
-        # VALIDATION: Check if predictor columns exist
-        missing_predictors = [p for p in predictors_list if p not in df.columns]
-        if missing_predictors:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Predictor columns {missing_predictors} not found. Available columns: {list(df.columns)}"
-            )
-        
-        # VALIDATION: Check if outcome is numeric
-        if not pd.api.types.is_numeric_dtype(df[outcome]):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Outcome column '{outcome}' must be numeric. Current type: {df[outcome].dtype}"
-            )
-        
-        # Drop rows with missing values in required columns
-        required_cols = [outcome] + predictors_list
-        df_clean = df[required_cols].dropna()
-        
-        if len(df_clean) < 3:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Not enough data after removing missing values. Need at least 3 rows, got {len(df_clean)}"
-            )
-        
-        # Build formula with categorical wrapper
-        formula = f"{outcome} ~ " + " + ".join([f"C({p})" for p in predictors_list])
-        
-        # Fit model
-        model = ols(formula, data=df_clean).fit()
-        
-        # Get ANOVA table
-        anova_table = sm.stats.anova_lm(model, typ=2)
-        
-        # ---------- ANOVA TABLE ----------
-        anova_table = anova_table.reset_index()
-        
-        # Handle different ANOVA table structures
-        if len(anova_table.columns) == 5:
-            # Type 2 ANOVA: index, sum_sq, df, F, PR(>F)
-            anova_table.columns = ["Source", "SS", "DF", "F", "p_value"]
-        elif len(anova_table.columns) == 6:
-            # Type 1 ANOVA: index, sum_sq, df, mean_sq, F, PR(>F)
-            anova_table.columns = ["Source", "SS", "DF", "MS", "F", "p_value"]
-        else:
-            # Keep original column names as fallback
-            pass
-        
-        # Clean up source names (remove C() wrapper)
-        if "Source" in anova_table.columns:
-            anova_table["Source"] = anova_table["Source"].astype(str).str.replace("C(", "").str.replace(")", "")
-        
-        anova_json = dataframe_to_records(anova_table)
-        
-        # ---------- GROUP MEANS ----------
-        group_means = (
-            df_clean.groupby(predictors_list)[outcome]
-            .agg(['mean', 'std', 'count'])
-            .reset_index()
-            .rename(columns={'mean': 'Mean', 'std': 'SD', 'count': 'N'})
-        )
-        group_means_json = dataframe_to_records(group_means)
-        
-        # ---------- TUKEY HSD ----------
-        tukey_json = []
-        if len(predictors_list) == 1:
-            try:
-                tukey = pairwise_tukeyhsd(
-                    df_clean[outcome],
-                    df_clean[predictors_list[0]]
-                )
-                tukey_df = pd.DataFrame(
-                    data=tukey.summary().data[1:],
-                    columns=tukey.summary().data[0]
-                )
-                tukey_json = dataframe_to_records(tukey_df)
-            except Exception as e:
-                # If Tukey fails, just skip it
-                tukey_json = [{"error": f"Tukey test failed: {str(e)}"}]
-        
-        # ---------- ASSUMPTION TESTS ----------
-        residuals = model.resid
-        
-        # Shapiro-Wilk test (only for sample sizes 3-5000)
-        if len(residuals) >= 3 and len(residuals) <= 5000:
-            shapiro_stat, shapiro_p = stats.shapiro(residuals)
-        else:
-            shapiro_stat, shapiro_p = None, None
-        
-        # Levene test
-        groups = [df_clean[df_clean[predictors_list[0]] == g][outcome].values 
-                  for g in df_clean[predictors_list[0]].unique()]
-        
-        # Filter out empty groups
-        groups = [g for g in groups if len(g) > 0]
-        
-        if len(groups) >= 2:
-            levene_stat, levene_p = stats.levene(*groups)
-        else:
-            levene_stat, levene_p = None, None
-        
-        assumptions = {
-            "shapiro_wilk": {
-                "statistic": safe_number(shapiro_stat),
-                "p_value": safe_number(shapiro_p),
-                "pass": shapiro_p >= 0.05 if shapiro_p is not None else None
-            },
-            "levene_test": {
-                "statistic": safe_number(levene_stat),
-                "p_value": safe_number(levene_p),
-                "pass": levene_p >= 0.05 if levene_p is not None else None
-            }
-        }
-        
-        # ---------- INTERPRETATION ----------
-        # Find the predictor row in ANOVA table
-        predictor_rows = anova_table[anova_table["Source"].str.contains(predictors_list[0], case=False, na=False)]
-        
-        if len(predictor_rows) > 0:
-            pval = predictor_rows.iloc[0]["p_value"]
-            if pd.notna(pval) and pval < 0.05:
-                interpretation = f"Significant difference detected (p = {pval:.4f})"
-            elif pd.notna(pval):
-                interpretation = f"No significant difference detected (p = {pval:.4f})"
-            else:
-                interpretation = "Could not determine significance"
-        else:
-            interpretation = "Could not find treatment effect in ANOVA table"
-        
-        # ---------- FINAL RESPONSE ----------
-        return {
-            "anova_table": anova_json,
-            "group_means": group_means_json,
-            "tukey_hsd": tukey_json,
-            "assumptions": assumptions,
-            "interpretation": interpretation,
-            "metadata": {
-                "n_observations": len(df_clean),
-                "n_groups": len(df_clean[predictors_list[0]].unique()) if len(predictors_list) > 0 else 0,
-                "outcome_variable": outcome,
-                "predictor_variables": predictors_list
-            }
-        }
+interface Assumption {
+  statistic: number | null;
+  p_value: number | null;
+  pass: boolean | null;
+}
+
+interface VivaSenseResults {
+  anova_table: ANOVARow[];
+  group_means: GroupMean[];
+  tukey_hsd?: TukeyComparison[];
+  assumptions?: {
+    shapiro_wilk: Assumption;
+    levene_test: Assumption;
+  };
+  shapiro_wilk?: Assumption;
+  levene_test?: Assumption;
+  interpretation: string;
+  metadata?: {
+    n_observations: number;
+    n_groups: number;
+    outcome_variable: string;
+    predictor_variables: string[];
+  };
+}
+
+export default function VivaSense() {
+  const [isLoading, setIsLoading] = useState(false);
+  const [results, setResults] = useState<VivaSenseResults | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [outcome, setOutcome] = useState("");
+  const [predictors, setPredictors] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const formRef = useRef<HTMLDivElement>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
+  const { toast } = useToast();
+
+  const scrollToForm = useCallback(() => {
+    formRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, []);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0];
+    if (selectedFile) {
+      setFile(selectedFile);
+      setError(null);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     
-    except HTTPException:
-        # Re-raise HTTP exceptions as-is
-        raise
-    
-    except Exception as e:
-        # Catch any other errors and return detailed error message
-        error_trace = traceback.format_exc()
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error": str(e),
-                "type": type(e).__name__,
-                "traceback": error_trace
-            }
-        )
-
-
-# -----------------------
-# Health Check Endpoints
-# -----------------------
-@app.get("/")
-async def health_check():
-    return {
-        "status": "healthy",
-        "message": "VivaSense API is running",
-        "version": "1.0.0"
+    if (!file) {
+      setError("Please upload a dataset file");
+      return;
+    }
+    if (!outcome) {
+      setError("Please enter the outcome variable name");
+      return;
+    }
+    if (!predictors) {
+      setError("Please enter the predictor variable name(s)");
+      return;
     }
 
+    setIsLoading(true);
+    setResults(null);
+    setError(null);
 
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("outcome", outcome);
+    formData.append("predictors", predictors);
+
+    try {
+      const response = await fetch(VIVASENSE_API_URL, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorMsg = `Analysis failed (${response.status})`;
+        try {
+          const errorData = JSON.parse(errorText);
+          if (errorData.detail) {
+            errorMsg = typeof errorData.detail === 'string' 
+              ? errorData.detail 
+              : JSON.stringify(errorData.detail);
+          }
+        } catch {
+          errorMsg = errorText || errorMsg;
+        }
+        throw new Error(errorMsg);
+      }
+
+      const data: VivaSenseResults = await response.json();
+      setResults(data);
+      
+      setTimeout(() => {
+        resultsRef.current?.scrollIntoView({ behavior: "smooth" });
+      }, 100);
+
+      toast({
+        title: "Analysis Complete",
+        description: "Your results are ready below.",
+      });
+    } catch (error) {
+      console.error("VivaSense analysis error:", error);
+      const errMsg = error instanceof Error ? error.message : "An unexpected error occurred. Please try again.";
+      setError(errMsg);
+      toast({
+        title: "Analysis Failed",
+        description: errMsg,
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleClearResults = () => {
+    setResults(null);
+    setFile(null);
+    setOutcome("");
+    setPredictors("");
+    setError(null);
+  };
+
+  return (
+    <Layout>
+      <VivaSenseHero onGetStarted={scrollToForm} />
+      <VivaSenseFeatures />
+
+      {/* Analysis Form */}
+      <section ref={formRef} className="py-16 bg-gradient-to-b from-white to-gray-50">
+        <div className="container mx-auto px-4 max-w-3xl">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-2xl">Run Your Analysis</CardTitle>
+              <CardDescription>
+                Upload your dataset and specify your variables to get started
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleSubmit} className="space-y-6">
+                {/* File Upload */}
+                <div className="space-y-2">
+                  <Label htmlFor="file">Dataset File (Excel or CSV)</Label>
+                  <div className="flex items-center gap-4">
+                    <Input
+                      id="file"
+                      type="file"
+                      accept=".xlsx,.xls,.csv"
+                      onChange={handleFileChange}
+                      disabled={isLoading}
+                      className="flex-1"
+                    />
+                    {file && (
+                      <span className="text-sm text-green-600 flex items-center gap-1">
+                        <Upload className="h-4 w-4" />
+                        {file.name}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Outcome Variable */}
+                <div className="space-y-2">
+                  <Label htmlFor="outcome">Outcome Variable</Label>
+                  <Input
+                    id="outcome"
+                    type="text"
+                    placeholder="e.g., Yield_kg_ha"
+                    value={outcome}
+                    onChange={(e) => setOutcome(e.target.value)}
+                    disabled={isLoading}
+                  />
+                  <p className="text-sm text-gray-500">
+                    The column name of your response variable (must match exactly as in your file)
+                  </p>
+                </div>
+
+                {/* Predictors */}
+                <div className="space-y-2">
+                  <Label htmlFor="predictors">Predictor Variable(s)</Label>
+                  <Input
+                    id="predictors"
+                    type="text"
+                    placeholder="e.g., Treatment"
+                    value={predictors}
+                    onChange={(e) => setPredictors(e.target.value)}
+                    disabled={isLoading}
+                  />
+                  <p className="text-sm text-gray-500">
+                    Treatment or factor column name (for multiple, separate with commas)
+                  </p>
+                </div>
+
+                {/* Error Alert */}
+                {error && (
+                  <Alert variant="destructive">
+                    <AlertDescription>{error}</AlertDescription>
+                  </Alert>
+                )}
+
+                {/* Submit Button */}
+                <Button
+                  type="submit"
+                  disabled={isLoading}
+                  className="w-full"
+                  size="lg"
+                >
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Analyzing... (may take up to 60 seconds on first run)
+                    </>
+                  ) : (
+                    "Analyze Data"
+                  )}
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
+      </section>
+
+      {/* Results Section */}
+      {results && (
+        <section ref={resultsRef} className="py-16 bg-white">
+          <div className="container mx-auto px-4 max-w-5xl">
+            <div className="flex justify-between items-center mb-8">
+              <h2 className="text-3xl font-bold">Analysis Results</h2>
+              <Button onClick={handleClearResults} variant="outline">
+                <RefreshCw className="mr-2 h-4 w-4" />
+                New Analysis
+              </Button>
+            </div>
+
+            {/* Metadata */}
+            {results.metadata && (
+              <Card className="mb-6">
+                <CardHeader>
+                  <CardTitle className="text-lg">Dataset Summary</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    <div>
+                      <span className="font-semibold">Observations:</span> {results.metadata.n_observations}
+                    </div>
+                    <div>
+                      <span className="font-semibold">Groups:</span> {results.metadata.n_groups}
+                    </div>
+                    <div>
+                      <span className="font-semibold">Outcome:</span> {results.metadata.outcome_variable}
+                    </div>
+                    <div>
+                      <span className="font-semibold">Predictors:</span> {results.metadata.predictor_variables.join(", ")}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Interpretation */}
+            <Card className="mb-6 border-l-4 border-l-blue-500">
+              <CardHeader>
+                <CardTitle className="text-lg">Interpretation</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-gray-700">{results.interpretation}</p>
+              </CardContent>
+            </Card>
+
+            {/* ANOVA Table */}
+            <Card className="mb-6">
+              <CardHeader>
+                <CardTitle className="text-lg">ANOVA Table</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-2 text-left font-semibold">Source</th>
+                        <th className="px-4 py-2 text-right font-semibold">SS</th>
+                        <th className="px-4 py-2 text-right font-semibold">DF</th>
+                        <th className="px-4 py-2 text-right font-semibold">F</th>
+                        <th className="px-4 py-2 text-right font-semibold">p-value</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {results.anova_table.map((row, i) => (
+                        <tr key={i} className="border-t">
+                          <td className="px-4 py-2">{row.Source}</td>
+                          <td className="px-4 py-2 text-right">{row.SS?.toFixed(2) ?? 'N/A'}</td>
+                          <td className="px-4 py-2 text-right">{row.DF ?? 'N/A'}</td>
+                          <td className="px-4 py-2 text-right">{row.F?.toFixed(4) ?? 'N/A'}</td>
+                          <td className="px-4 py-2 text-right font-semibold">
+                            {row.p_value !== null && row.p_value !== undefined
+                              ? row.p_value < 0.001
+                                ? '<0.001'
+                                : row.p_value.toFixed(4)
+                              : 'N/A'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Group Means */}
+            <Card className="mb-6">
+              <CardHeader>
+                <CardTitle className="text-lg">Group Means</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-2 text-left font-semibold">Treatment</th>
+                        <th className="px-4 py-2 text-right font-semibold">Mean</th>
+                        {results.group_means[0]?.SD !== undefined && (
+                          <th className="px-4 py-2 text-right font-semibold">SD</th>
+                        )}
+                        {results.group_means[0]?.N !== undefined && (
+                          <th className="px-4 py-2 text-right font-semibold">N</th>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {results.group_means.map((row, i) => (
+                        <tr key={i} className="border-t">
+                          <td className="px-4 py-2">{Object.values(row)[0]}</td>
+                          <td className="px-4 py-2 text-right font-semibold">{row.Mean.toFixed(2)}</td>
+                          {row.SD !== undefined && (
+                            <td className="px-4 py-2 text-right">{row.SD.toFixed(2)}</td>
+                          )}
+                          {row.N !== undefined && (
+                            <td className="px-4 py-2 text-right">{row.N}</td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Tukey HSD */}
+            {results.tukey_hsd && results.tukey_hsd.length > 0 && (
+              <Card className="mb-6">
+                <CardHeader>
+                  <CardTitle className="text-lg">Post-Hoc Test (Tukey HSD)</CardTitle>
+                  <CardDescription>Pairwise comparisons between treatment groups</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-2 text-left font-semibold">Comparison</th>
+                          <th className="px-4 py-2 text-right font-semibold">Mean Diff</th>
+                          <th className="px-4 py-2 text-right font-semibold">p-value</th>
+                          <th className="px-4 py-2 text-center font-semibold">Significant?</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {results.tukey_hsd.map((row, i) => {
+                          const pValue = row.p_value ?? row.pValue;
+                          const diff = row.meandiff ?? row.diff;
+                          const sig = row.reject ?? row.significant ?? (pValue !== undefined && pValue < 0.05);
+                          
+                          return (
+                            <tr key={i} className="border-t">
+                              <td className="px-4 py-2">{row.group1} vs {row.group2}</td>
+                              <td className="px-4 py-2 text-right">{diff?.toFixed(2) ?? 'N/A'}</td>
+                              <td className="px-4 py-2 text-right">
+                                {pValue !== null && pValue !== undefined
+                                  ? pValue < 0.001
+                                    ? '<0.001'
+                                    : pValue.toFixed(4)
+                                  : 'N/A'}
+                              </td>
+                              <td className="px-4 py-2 text-center">
+                                {sig ? (
+                                  <span className="text-red-600 font-semibold">Yes</span>
+                                ) : (
+                                  <span className="text-gray-500">No</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Assumptions */}
+            {(results.assumptions || results.shapiro_wilk || results.levene_test) && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">Assumption Tests</CardTitle>
+                  <CardDescription>Statistical tests for ANOVA validity</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Shapiro-Wilk */}
+                  {(() => {
+                    const sw = results.assumptions?.shapiro_wilk || results.shapiro_wilk;
+                    if (!sw) return null;
+                    return (
+                      <div className="p-4 bg-gray-50 rounded-lg">
+                        <h4 className="font-semibold mb-2">Shapiro-Wilk Test (Normality)</h4>
+                        <div className="grid grid-cols-3 gap-4 text-sm">
+                          <div>
+                            <span className="text-gray-600">Statistic:</span> {sw.statistic?.toFixed(4) ?? 'N/A'}
+                          </div>
+                          <div>
+                            <span className="text-gray-600">p-value:</span> {sw.p_value?.toFixed(4) ?? 'N/A'}
+                          </div>
+                          <div>
+                            <span className="text-gray-600">Result:</span>{' '}
+                            <span className={sw.pass ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>
+                              {sw.pass ? 'PASS' : 'FAIL'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Levene Test */}
+                  {(() => {
+                    const lv = results.assumptions?.levene_test || results.levene_test;
+                    if (!lv) return null;
+                    return (
+                      <div className="p-4 bg-gray-50 rounded-lg">
+                        <h4 className="font-semibold mb-2">Levene Test (Homogeneity of Variance)</h4>
+                        <div className="grid grid-cols-3 gap-4 text-sm">
+                          <div>
+                            <span className="text-gray-600">Statistic:</span> {lv.statistic?.toFixed(4) ?? 'N/A'}
+                          </div>
+                          <div>
+                            <span className="text-gray-600">p-value:</span> {lv.p_value?.toFixed(4) ?? 'N/A'}
+                          </div>
+                          <div>
+                            <span className="text-gray-600">Result:</span>{' '}
+                            <span className={lv.pass ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>
+                              {lv.pass ? 'PASS' : 'FAIL'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        </section>
+      )}
+
+      <VivaSenseInstitutional />
+    </Layout>
+  );
+}
