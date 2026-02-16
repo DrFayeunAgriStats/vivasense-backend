@@ -199,7 +199,7 @@ class StatisticalAnalyzer:
         
         return formula
     
-   def calculate_effect_sizes(self, anova_table: pd.DataFrame, 
+    def calculate_effect_sizes(self, anova_table: pd.DataFrame, 
                           ss_total: float) -> Dict[str, EffectSize]:
     """Calculate various effect sizes"""
     effect_sizes = {}
