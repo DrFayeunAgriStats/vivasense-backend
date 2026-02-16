@@ -42,6 +42,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+@app.get("/")
+def root():
+    return {
+        "name": "VivaSense Backend",
+        "status": "ok",
+        "docs": "/docs",
+        "health": "/health"
+    }
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 # ----------------------------
 # Request/Response Schemas
