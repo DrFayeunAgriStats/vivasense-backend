@@ -199,17 +199,68 @@ class StatisticalAnalyzer:
         
         return formula
     
-    def calculate_effect_sizes(self, anova_table: pd.DataFrame, 
-                              ss_total: float) -> Dict[str, EffectSize]:
-        """Calculate various effect sizes"""
-        effect_sizes = {}
+   def calculate_effect_sizes(self, anova_table: pd.DataFrame, 
+                          ss_total: float) -> Dict[str, EffectSize]:
+    """Calculate various effect sizes"""
+    effect_sizes = {}
+    
+    for effect in anova_table.index:
+        if effect != 'Residual':
+            ss_effect = anova_table.loc[effect, 'sum_sq']
+            df_effect = anova_table.loc[effect, 'df']
+            
+            # Calculate mean squares manually
+            ms_effect = ss_effect / df_effect if df_effect > 0 else 0
+            
+            if 'Residual' in anova_table.index:
+                ss_residual = anova_table.loc['Residual', 'sum_sq']
+                df_residual = anova_table.loc['Residual', 'df']
+                ms_error = ss_residual / df_residual if df_residual > 0 else 0
+            else:
+                ms_error = 0
+            
+            # Eta-squared
+            eta_sq = ss_effect / ss_total if ss_total > 0 else 0
+            
+            # Omega-squared
+            if ms_error > 0 and ss_total > 0:
+                omega_sq = (ss_effect - (df_effect * ms_error)) / (ss_total + ms_error)
+            else:
+                omega_sq = eta_sq
+            
+            # Cohen's f
+            if ms_error > 0:
+                cohens_f = np.sqrt(ms_effect / ms_error)
+            else:
+                cohens_f = np.sqrt(eta_sq / (1 - eta_sq)) if eta_sq < 1 else float('inf')
+            
+            # Interpret effect size
+            if eta_sq < self.config.effect_size_threshold_small:
+                interpretation = "negligible"
+            elif eta_sq < self.config.effect_size_threshold_medium:
+                interpretation = "small"
+            elif eta_sq < self.config.effect_size_threshold_large:
+                interpretation = "medium"
+            else:
+                interpretation = "large"
+            
+            effect_sizes[effect] = EffectSize(
+                eta_squared=eta_sq,
+                omega_squared=max(0, omega_sq),
+                cohens_f=cohens_f,
+                interpretation=interpretation
+            )
+    
+    return effect_sizes
         
         for effect in anova_table.index:
             if effect != 'Residual':
                 ss_effect = anova_table.loc[effect, 'sum_sq']
                 df_effect = anova_table.loc[effect, 'df']
                 ms_effect = ss_effect / df_effect if df_effect > 0 else 0
-                ms_error = anova_table.loc['Residual', 'mean_sq'] if 'Residual' in anova_table.index else 0
+               df_error = anova_table.loc['Residual', 'df'] if 'Residual' in anova_table.index else 1
+                ss_error = anova_table.loc['Residual', 'sum_sq'] if 'Residual' in anova_table.index else 0
+                ms_error = ss_error / df_error if df_error > 0 else 0
                 
                 # Eta-squared
                 eta_sq = ss_effect / ss_total
