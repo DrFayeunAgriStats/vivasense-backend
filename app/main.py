@@ -348,7 +348,22 @@ def _anova_oneway(df: pd.DataFrame, factor: str, trait: str, alpha: float, block
 
 # ----------------------------
 # Routes
+# ----------------------------# ----------------------------
+# Routes
 # ----------------------------
+@app.get("/")
+def root():
+    return {
+        "service": "VivaSense V1",
+        "status": "ok",
+        "docs": "/docs",
+        "health": "/health"
+    }
+
+@app.get("/health")
+def health() -> Dict[str, str]:
+    return {"status": "ok", "service": "VivaSense V1"}
+
 @app.get("/health")
 def health() -> Dict[str, str]:
     return {"status": "ok", "service": "VivaSense V1"}
