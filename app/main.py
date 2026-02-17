@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import base64
 import warnings
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -27,7 +27,7 @@ warnings.filterwarnings("ignore")
 # ----------------------------
 # App setup
 # ----------------------------
-app = FastAPI(title="VivaSense V1", version="1.0.0")
+app = FastAPI(title="VivaSense V1", version="1.0.1")
 
 app.add_middleware(
     CORSMiddleware,
@@ -44,17 +44,22 @@ app.add_middleware(
 class OneWayAnovaRequest(BaseModel):
     factor: str = Field(..., description="Grouping/factor column (e.g., Treatment, Genotype)")
     trait: str = Field(..., description="Numeric trait column (e.g., Yield)")
+    block: Optional[str] = Field(None, description="Optional block/replicate column for RCBD (e.g., Block, Rep)")
     alpha: float = Field(0.05, ge=0.0001, le=0.2)
 
 
 class MultiTraitAnovaRequest(BaseModel):
     factor: str = Field(..., description="Grouping/factor column (e.g., Treatment, Genotype)")
     traits: List[str] = Field(..., description="List of numeric trait columns")
+    block: Optional[str] = Field(None, description="Optional block/replicate column for RCBD (e.g., Block, Rep)")
     alpha: float = Field(0.05, ge=0.0001, le=0.2)
 
 
 class CorrelationRequest(BaseModel):
-    columns: Optional[List[str]] = Field(None, description="Columns to include (numeric only). If null, use all numeric columns.")
+    columns: Optional[List[str]] = Field(
+        None,
+        description="Columns to include (numeric only). If null, use all numeric columns."
+    )
     method: str = Field("pearson", description="pearson or spearman")
 
 
@@ -86,7 +91,7 @@ def _b64_png_from_fig(fig: plt.Figure) -> str:
 
 
 def _require_columns(df: pd.DataFrame, cols: List[str]) -> None:
-    missing = [c for c in cols if c not in df.columns]
+    missing = [c for c in cols if c and c not in df.columns]
     if missing:
         raise HTTPException(status_code=400, detail=f"Missing columns: {missing}")
 
@@ -105,22 +110,8 @@ def _clean_factor(series: pd.Series, name: str) -> pd.Series:
     return s
 
 
-def _agri_interpretation_oneway(alpha: float, p: float, trait: str, factor: str) -> str:
-    if p < alpha:
-        return (
-            f"ANOVA indicates a statistically significant effect of '{factor}' on '{trait}' (p={p:.4g} < {alpha}). "
-            f"This suggests real differences among the groups. Use the Tukey mean separation and letters to identify "
-            f"which groups are different. Groups that do NOT share the same letter are significantly different."
-        )
-    return (
-        f"ANOVA indicates no statistically significant effect of '{factor}' on '{trait}' (p={p:.4g} ≥ {alpha}). "
-        f"Observed differences in group means are likely due to random variation under this design. "
-        f"You may still report descriptive means and variability (SE/CV), but avoid claiming treatment/genotype superiority."
-    )
-
-
 def _assumption_notes(shapiro_p: Optional[float], levene_p: Optional[float], alpha: float) -> List[str]:
-    notes = []
+    notes: List[str] = []
     if shapiro_p is not None:
         if shapiro_p < alpha:
             notes.append(
@@ -163,27 +154,41 @@ def _cv_percent(y: pd.Series) -> Optional[float]:
     return (s / m) * 100.0
 
 
+def _agri_interpretation_oneway(alpha: float, p: float, trait: str, factor: str, block: Optional[str]) -> str:
+    design = f"RCBD (blocking by '{block}')" if block else "CRD (no blocking)"
+    if p < alpha:
+        return (
+            f"Design: {design}. ANOVA indicates a statistically significant effect of '{factor}' on '{trait}' "
+            f"(p={p:.4g} < {alpha}). This suggests real differences among the groups. Use the Tukey mean separation "
+            f"and letters to identify which groups differ. Groups that do NOT share the same letter are significantly different."
+        )
+    return (
+        f"Design: {design}. ANOVA indicates no statistically significant effect of '{factor}' on '{trait}' "
+        f"(p={p:.4g} ≥ {alpha}). Observed differences in group means are likely due to random variation under this design. "
+        f"You may still report descriptive means and variability (SE/CV), but avoid claiming treatment/genotype superiority."
+    )
+
+
 # ---- Compact Letter Display (simple greedy algorithm)
-def _build_cld_from_tukey(tukey: Any, groups_order: List[str], alpha: float) -> Dict[str, str]:
+def _build_cld_from_tukey(tukey: Any, groups_order: List[str]) -> Dict[str, str]:
     """
     Returns mapping {group: letters}. Groups with shared letter are NOT significantly different.
-    This is a pragmatic CLD (not perfect for every edge-case), but works well for typical agricultural layouts.
+    Pragmatic CLD (works well for typical agricultural layouts).
     """
-    # Build significance matrix
     idx = {g: i for i, g in enumerate(groups_order)}
     k = len(groups_order)
     sig = np.zeros((k, k), dtype=bool)
 
-    # tukey.summary() gives rows with group1 group2 meandiff p-adj lower upper reject
+    # Tukey columns: group1 group2 meandiff p-adj lower upper reject
     table = tukey.summary().data[1:]
     for row in table:
-        g1, g2, p_adj, reject = row[0], row[1], float(row[3]), bool(row[5])
-        i, j = idx[str(g1)], idx[str(g2)]
+        g1, g2 = str(row[0]), str(row[1])
+        reject = bool(row[6])  # ✅ correct index for 'reject'
+        i, j = idx[g1], idx[g2]
         sig[i, j] = reject
         sig[j, i] = reject
 
-    # Greedy letter assignment
-    letters = []
+    letters: List[List[str]] = []
     group_letters: Dict[str, List[str]] = {g: [] for g in groups_order}
 
     def can_share_letter(g: str, letter_groups: List[str]) -> bool:
@@ -233,30 +238,39 @@ def _boxplot(df: pd.DataFrame, factor: str, trait: str) -> str:
     return _b64_png_from_fig(fig)
 
 
-def _anova_oneway(df: pd.DataFrame, factor: str, trait: str, alpha: float) -> Dict[str, Any]:
-    # Clean
-    tmp = df[[factor, trait]].copy()
-    tmp[factor] = _clean_factor(tmp[factor], factor)
-    tmp[trait] = _ensure_numeric(tmp[trait], trait)
-    tmp = tmp.dropna(subset=[trait, factor])
+def _anova_oneway(df: pd.DataFrame, factor: str, trait: str, alpha: float, block: Optional[str] = None) -> Dict[str, Any]:
+    # Clean + select columns
+    cols = [factor, trait] + ([block] if block else [])
+    tmp = df[cols].copy()
 
-    # Model
-    model = ols(f"`{trait}` ~ C(`{factor}`)", data=tmp).fit()
+    tmp[factor] = _clean_factor(tmp[factor], factor)
+    if block:
+        tmp[block] = _clean_factor(tmp[block], block)
+    tmp[trait] = _ensure_numeric(tmp[trait], trait)
+
+    tmp = tmp.dropna(subset=[trait, factor] + ([block] if block else []))
+
+    # Model formula
+    if block:
+        formula = f"`{trait}` ~ C(`{factor}`) + C(`{block}`)"
+    else:
+        formula = f"`{trait}` ~ C(`{factor}`)"
+
+    model = ols(formula, data=tmp).fit()
     anova_table = sm.stats.anova_lm(model, typ=2)
 
-    # p-value
+    # p-value for factor term
     p = float(anova_table.loc[f"C(`{factor}`)", "PR(>F)"])
 
     # Diagnostics
     resid = pd.Series(model.resid).dropna()
     shapiro_p = None
-    if resid.shape[0] >= 3 and resid.shape[0] <= 5000:
+    if 3 <= resid.shape[0] <= 5000:
         try:
             shapiro_p = float(stats.shapiro(resid)[1])
         except Exception:
             shapiro_p = None
 
-    # Levene across groups
     levene_p = None
     try:
         arrays = [g[trait].dropna().values for _, g in tmp.groupby(factor)]
@@ -265,14 +279,15 @@ def _anova_oneway(df: pd.DataFrame, factor: str, trait: str, alpha: float) -> Di
     except Exception:
         levene_p = None
 
-    # Summary stats
+    # Summary stats + CV
     summ = _summary_stats(tmp, factor, trait)
     cv = _cv_percent(tmp[trait])
 
-    # Tukey (always compute; useful even if ANOVA ns)
+    # Tukey
+    tuk = None
+    tukey_rows: List[Dict[str, Any]] = []
     try:
         tuk = pairwise_tukeyhsd(endog=tmp[trait].values, groups=tmp[factor].values, alpha=alpha)
-        tukey_rows = []
         for r in tuk.summary().data[1:]:
             tukey_rows.append({
                 "group1": str(r[0]),
@@ -283,34 +298,34 @@ def _anova_oneway(df: pd.DataFrame, factor: str, trait: str, alpha: float) -> Di
                 "upper": float(r[5]),
                 "reject": bool(r[6]),
             })
-    except Exception as e:
+    except Exception:
         tuk = None
         tukey_rows = []
-    
-    # Order groups by mean (descending) for nice letters
+
+    # Order by mean (descending) for letters
     summ_sorted = summ.sort_values("mean", ascending=False).reset_index(drop=True)
     groups_order = [str(x) for x in summ_sorted[factor].tolist()]
 
-    cld = {}
+    cld: Dict[str, str] = {}
     if tuk is not None and len(groups_order) >= 2:
         try:
-            cld = _build_cld_from_tukey(tuk, groups_order, alpha)
+            cld = _build_cld_from_tukey(tuk, groups_order)
         except Exception:
             cld = {}
 
-    # Attach letters to summary table
     summ_sorted["letters"] = summ_sorted[factor].astype(str).map(cld).fillna("")
 
-    # Plots
+    # Plots (use cleaned data!)
     mean_plot_b64 = _mean_plot(summ_sorted, factor, trait)
-    boxplot_b64 = _boxplot(tmp, factor, trait)
+    boxplot_b64 = _boxplot(tmp, factor, trait)  # ✅ cleaned data
 
-    # Output
-    result = {
+    return {
         "meta": {
             "analysis": "one_way_anova",
+            "design": "rcbd" if block else "crd",
             "factor": factor,
             "trait": trait,
+            "block": block,
             "alpha": alpha,
             "n_rows_used": int(tmp.shape[0]),
             "cv_percent": None if cv is None else float(cv),
@@ -327,9 +342,8 @@ def _anova_oneway(df: pd.DataFrame, factor: str, trait: str, alpha: float) -> Di
             "mean_plot_png_b64": mean_plot_b64,
             "boxplot_png_b64": boxplot_b64,
         },
-        "interpretation": _agri_interpretation_oneway(alpha, p, trait, factor),
+        "interpretation": _agri_interpretation_oneway(alpha, p, trait, factor, block),
     }
-    return result
 
 
 # ----------------------------
@@ -343,32 +357,41 @@ def health() -> Dict[str, str]:
 @app.post("/analyze/anova/oneway")
 async def analyze_oneway(req: OneWayAnovaRequest, file: UploadFile = File(...)) -> Dict[str, Any]:
     df = _read_csv(file)
-    _require_columns(df, [req.factor, req.trait])
-    return _anova_oneway(df, req.factor, req.trait, req.alpha)
+    needed = [req.factor, req.trait] + ([req.block] if req.block else [])
+    _require_columns(df, needed)
+    return _anova_oneway(df, req.factor, req.trait, req.alpha, block=req.block)
 
 
 @app.post("/analyze/anova/multitrait")
 async def analyze_multitrait(req: MultiTraitAnovaRequest, file: UploadFile = File(...)) -> Dict[str, Any]:
     df = _read_csv(file)
-    _require_columns(df, [req.factor] + req.traits)
+    needed = [req.factor] + req.traits + ([req.block] if req.block else [])
+    _require_columns(df, needed)
 
-    results = []
+    results: List[Dict[str, Any]] = []
     for t in req.traits:
         try:
-            results.append(_anova_oneway(df, req.factor, t, req.alpha))
+            results.append(_anova_oneway(df, req.factor, t, req.alpha, block=req.block))
         except HTTPException as e:
             results.append({
-                "meta": {"analysis": "one_way_anova", "factor": req.factor, "trait": t, "alpha": req.alpha},
+                "meta": {"analysis": "one_way_anova", "factor": req.factor, "trait": t, "block": req.block, "alpha": req.alpha},
                 "error": e.detail
             })
         except Exception as e:
             results.append({
-                "meta": {"analysis": "one_way_anova", "factor": req.factor, "trait": t, "alpha": req.alpha},
+                "meta": {"analysis": "one_way_anova", "factor": req.factor, "trait": t, "block": req.block, "alpha": req.alpha},
                 "error": str(e)
             })
 
     return {
-        "meta": {"analysis": "multi_trait_oneway_anova", "factor": req.factor, "alpha": req.alpha, "n_traits": len(req.traits)},
+        "meta": {
+            "analysis": "multi_trait_oneway_anova",
+            "design": "rcbd" if req.block else "crd",
+            "factor": req.factor,
+            "block": req.block,
+            "alpha": req.alpha,
+            "n_traits": len(req.traits)
+        },
         "results": results
     }
 
@@ -395,7 +418,6 @@ async def analyze_correlation(req: CorrelationRequest, file: UploadFile = File(.
 
     corr = data.corr(method=method)
 
-    # Heatmap plot (matplotlib only)
     fig = plt.figure()
     plt.imshow(corr.values, aspect="auto")
     plt.xticks(range(len(cols)), cols, rotation=45, ha="right")
@@ -432,7 +454,6 @@ async def analyze_regression(req: RegressionRequest, file: UploadFile = File(...
     y = tmp[req.y].values
     model = sm.OLS(y, X).fit()
 
-    # Scatter + fitted line
     fig = plt.figure()
     plt.scatter(tmp[req.x].values, tmp[req.y].values)
     x_line = np.linspace(tmp[req.x].min(), tmp[req.x].max(), 100)
