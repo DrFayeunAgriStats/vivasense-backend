@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -370,56 +370,72 @@ def health() -> Dict[str, str]:
 
 
 @app.post("/analyze/anova/oneway")
-async def analyze_oneway(req: OneWayAnovaRequest, file: UploadFile = File(...)) -> Dict[str, Any]:
+async def analyze_oneway(
+    file: UploadFile = File(...),
+    factor: str = Form(...),
+    trait: str = Form(...),
+    alpha: float = Form(0.05),
+    block: Optional[str] = Form(None),
+) -> Dict[str, Any]:
     df = _read_csv(file)
-    needed = [req.factor, req.trait] + ([req.block] if req.block else [])
+    needed = [factor, trait] + ([block] if block else [])
     _require_columns(df, needed)
-    return _anova_oneway(df, req.factor, req.trait, req.alpha, block=req.block)
+    return _anova_oneway(df, factor, trait, alpha, block=block)
 
 
 @app.post("/analyze/anova/multitrait")
-async def analyze_multitrait(req: MultiTraitAnovaRequest, file: UploadFile = File(...)) -> Dict[str, Any]:
+async def analyze_multitrait(
+    file: UploadFile = File(...),
+    factor: str = Form(...),
+    alpha: float = Form(0.05),
+    block: Optional[str] = Form(None),
+    traits: List[str] = Form(...),
+) -> Dict[str, Any]:
     df = _read_csv(file)
-    needed = [req.factor] + req.traits + ([req.block] if req.block else [])
+    needed = [factor] + traits + ([block] if block else [])
     _require_columns(df, needed)
 
-    results: List[Dict[str, Any]] = []
-    for t in req.traits:
+    results = []
+    for t in traits:
         try:
-            results.append(_anova_oneway(df, req.factor, t, req.alpha, block=req.block))
+            results.append(_anova_oneway(df, factor, t, alpha, block=block))
         except HTTPException as e:
             results.append({
-                "meta": {"analysis": "one_way_anova", "factor": req.factor, "trait": t, "block": req.block, "alpha": req.alpha},
+                "meta": {"analysis": "one_way_anova", "factor": factor, "trait": t, "block": block, "alpha": alpha},
                 "error": e.detail
             })
         except Exception as e:
             results.append({
-                "meta": {"analysis": "one_way_anova", "factor": req.factor, "trait": t, "block": req.block, "alpha": req.alpha},
+                "meta": {"analysis": "one_way_anova", "factor": factor, "trait": t, "block": block, "alpha": alpha},
                 "error": str(e)
             })
 
     return {
         "meta": {
             "analysis": "multi_trait_oneway_anova",
-            "design": "rcbd" if req.block else "crd",
-            "factor": req.factor,
-            "block": req.block,
-            "alpha": req.alpha,
-            "n_traits": len(req.traits)
+            "design": "rcbd" if block else "crd",
+            "factor": factor,
+            "block": block,
+            "alpha": alpha,
+            "n_traits": len(traits)
         },
         "results": results
     }
 
 
 @app.post("/analyze/correlation")
-async def analyze_correlation(req: CorrelationRequest, file: UploadFile = File(...)) -> Dict[str, Any]:
+async def analyze_correlation(
+    file: UploadFile = File(...),
+    method: str = Form("pearson"),
+    columns: Optional[List[str]] = Form(None),
+) -> Dict[str, Any]:
     df = _read_csv(file)
 
     numeric_df = df.select_dtypes(include=[np.number]).copy()
     if numeric_df.empty:
         raise HTTPException(status_code=400, detail="No numeric columns found for correlation.")
 
-    cols = req.columns if req.columns else numeric_df.columns.tolist()
+    cols = columns if columns else numeric_df.columns.tolist()
     _require_columns(df, cols)
 
     data = df[cols].apply(pd.to_numeric, errors="coerce")
@@ -427,12 +443,13 @@ async def analyze_correlation(req: CorrelationRequest, file: UploadFile = File(.
     if data.shape[0] < 3:
         raise HTTPException(status_code=400, detail="Too few complete rows for correlation (need at least 3).")
 
-    method = req.method.lower().strip()
+    method = method.lower().strip()
     if method not in ["pearson", "spearman"]:
         raise HTTPException(status_code=400, detail="method must be 'pearson' or 'spearman'.")
 
     corr = data.corr(method=method)
 
+    # Heatmap plot (matplotlib only)
     fig = plt.figure()
     plt.imshow(corr.values, aspect="auto")
     plt.xticks(range(len(cols)), cols, rotation=45, ha="right")
@@ -453,34 +470,39 @@ async def analyze_correlation(req: CorrelationRequest, file: UploadFile = File(.
 
 
 @app.post("/analyze/regression/simple")
-async def analyze_regression(req: RegressionRequest, file: UploadFile = File(...)) -> Dict[str, Any]:
+async def analyze_regression(
+    file: UploadFile = File(...),
+    x: str = Form(...),
+    y: str = Form(...),
+) -> Dict[str, Any]:
     df = _read_csv(file)
-    _require_columns(df, [req.x, req.y])
+    _require_columns(df, [x, y])
 
-    tmp = df[[req.x, req.y]].copy()
-    tmp[req.x] = pd.to_numeric(tmp[req.x], errors="coerce")
-    tmp[req.y] = pd.to_numeric(tmp[req.y], errors="coerce")
+    tmp = df[[x, y]].copy()
+    tmp[x] = pd.to_numeric(tmp[x], errors="coerce")
+    tmp[y] = pd.to_numeric(tmp[y], errors="coerce")
     tmp = tmp.dropna()
 
     if tmp.shape[0] < 5:
         raise HTTPException(status_code=400, detail="Too few rows for regression (need at least 5 complete observations).")
 
-    X = sm.add_constant(tmp[req.x].values)
-    y = tmp[req.y].values
-    model = sm.OLS(y, X).fit()
+    X = sm.add_constant(tmp[x].values)
+    yy = tmp[y].values
+    model = sm.OLS(yy, X).fit()
 
+    # Scatter + fitted line
     fig = plt.figure()
-    plt.scatter(tmp[req.x].values, tmp[req.y].values)
-    x_line = np.linspace(tmp[req.x].min(), tmp[req.x].max(), 100)
+    plt.scatter(tmp[x].values, tmp[y].values)
+    x_line = np.linspace(tmp[x].min(), tmp[x].max(), 100)
     y_line = model.params[0] + model.params[1] * x_line
     plt.plot(x_line, y_line)
-    plt.xlabel(req.x)
-    plt.ylabel(req.y)
+    plt.xlabel(x)
+    plt.ylabel(y)
     plt.title("Simple Linear Regression")
     plot_b64 = _b64_png_from_fig(fig)
 
     return {
-        "meta": {"analysis": "simple_regression", "x": req.x, "y": req.y, "n_rows_used": int(tmp.shape[0])},
+        "meta": {"analysis": "simple_regression", "x": x, "y": y, "n_rows_used": int(tmp.shape[0])},
         "model": {
             "intercept": float(model.params[0]),
             "slope": float(model.params[1]),
@@ -490,7 +512,7 @@ async def analyze_regression(req: RegressionRequest, file: UploadFile = File(...
         },
         "plots": {"scatter_fit_png_b64": plot_b64},
         "interpretation": (
-            f"The slope indicates the expected change in '{req.y}' per unit increase in '{req.x}'. "
-            f"R² shows how much variation in '{req.y}' is explained by '{req.x}' in this linear model."
+            f"The slope indicates the expected change in '{y}' per unit increase in '{x}'. "
+            f"R² shows how much variation in '{y}' is explained by '{x}' in this linear model."
         )
     }
