@@ -1,518 +1,1021 @@
-from __future__ import annotations
+import React, { useMemo, useState } from "react";
 
-import io
-import base64
-import warnings
-from typing import Any, Dict, List, Optional
+/**
+ * VivaSense V1 Frontend (Lovable-ready)
+ *
+ * IMPORTANT (Backend compatibility):
+ * This frontend sends requests as multipart/form-data with fields like:
+ *  - file (CSV)
+ *  - factor, trait, alpha, block (optional), traits (repeated), columns (repeated), method, x, y
+ *
+ * Your FastAPI endpoints MUST accept these as Form(...) + File(...).
+ * (If your backend expects JSON body models, switch backend to Form inputs.)
+ */
 
-import numpy as np
-import pandas as pd
+export default function VivaSenseFrontend() {
+  // ---- CONFIG
+  const [apiBaseUrl, setApiBaseUrl] = useState("https://vivasense-backend.onrender.com");
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+  // ---- File + columns
+  const [file, setFile] = useState(null);
+  const [columns, setColumns] = useState([]);
+  const [numericCols, setNumericCols] = useState([]);
+  const [nonNumericCols, setNonNumericCols] = useState([]);
+  const [fileName, setFileName] = useState("");
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+  // ---- UI mode
+  const MODES = [
+    { key: "anova_oneway", label: "One-way ANOVA (Single Trait)" },
+    { key: "anova_multitrait", label: "One-way ANOVA (Multi-trait)" },
+    { key: "correlation", label: "Correlation + Heatmap" },
+    { key: "regression", label: "Simple Regression" },
+  ];
+  const [mode, setMode] = useState("anova_oneway");
 
-from scipy import stats
-import statsmodels.api as sm
-from statsmodels.formula.api import ols
-from statsmodels.stats.multicomp import pairwise_tukeyhsd
+  // ---- Common params
+  const [alpha, setAlpha] = useState(0.05);
 
-warnings.filterwarnings("ignore")
+  // ---- ANOVA params
+  const [factor, setFactor] = useState("");
+  const [block, setBlock] = useState(""); // optional (RCBD)
+  const [trait, setTrait] = useState("");
+  const [traitsMulti, setTraitsMulti] = useState([]);
 
+  // ---- Correlation params
+  const [corrMethod, setCorrMethod] = useState("pearson");
+  const [corrColumns, setCorrColumns] = useState([]);
 
-# ----------------------------
-# App setup
-# ----------------------------
-app = FastAPI(title="VivaSense V1", version="1.0.1")
+  // ---- Regression params
+  const [xCol, setXCol] = useState("");
+  const [yCol, setYCol] = useState("");
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # tighten later
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+  // ---- Results
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null);
 
+  // ----------------------------
+  // CSV header + numeric inference
+  // ----------------------------
+  async function readCsvColumnsAndTypes(fileObj) {
+    const text = await fileObj.text();
+    const lines = text
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
 
-# ----------------------------
-# Request models
-# ----------------------------
-class OneWayAnovaRequest(BaseModel):
-    factor: str = Field(..., description="Grouping/factor column (e.g., Treatment, Genotype)")
-    trait: str = Field(..., description="Numeric trait column (e.g., Yield)")
-    block: Optional[str] = Field(None, description="Optional block/replicate column for RCBD (e.g., Block, Rep)")
-    alpha: float = Field(0.05, ge=0.0001, le=0.2)
+    if (lines.length < 2) return { cols: [], numericCols: [], nonNumericCols: [] };
 
+    const headerLine = lines[0];
 
-class MultiTraitAnovaRequest(BaseModel):
-    factor: str = Field(..., description="Grouping/factor column (e.g., Treatment, Genotype)")
-    traits: List[str] = Field(..., description="List of numeric trait columns")
-    block: Optional[str] = Field(None, description="Optional block/replicate column for RCBD (e.g., Block, Rep)")
-    alpha: float = Field(0.05, ge=0.0001, le=0.2)
+    // Parse header (simple quote-aware)
+    const cols = [];
+    let current = "";
+    let inQuotes = false;
+    for (let i = 0; i < headerLine.length; i++) {
+      const ch = headerLine[i];
+      if (ch === '"') {
+        inQuotes = !inQuotes;
+        continue;
+      }
+      if (ch === "," && !inQuotes) {
+        cols.push(current.trim());
+        current = "";
+      } else {
+        current += ch;
+      }
+    }
+    if (current.length) cols.push(current.trim());
 
+    const cleanCols = cols.filter((c) => c.length > 0);
+    if (!cleanCols.length) return { cols: [], numericCols: [], nonNumericCols: [] };
 
-class CorrelationRequest(BaseModel):
-    columns: Optional[List[str]] = Field(
-        None,
-        description="Columns to include (numeric only). If null, use all numeric columns."
-    )
-    method: str = Field("pearson", description="pearson or spearman")
+    // Sample up to 40 data rows
+    const sampleLines = lines.slice(1, Math.min(lines.length, 41));
 
+    const counts = {};
+    const numericCounts = {};
+    cleanCols.forEach((c) => {
+      counts[c] = 0;
+      numericCounts[c] = 0;
+    });
 
-class RegressionRequest(BaseModel):
-    x: str = Field(..., description="Predictor column (numeric)")
-    y: str = Field(..., description="Response column (numeric)")
+    const isNum = (v) => v !== null && v !== "" && !Number.isNaN(Number(v));
 
-
-# ----------------------------
-# Helpers
-# ----------------------------
-def _read_csv(upload: UploadFile) -> pd.DataFrame:
-    try:
-        raw = upload.file.read()
-        df = pd.read_csv(io.BytesIO(raw))
-        if df.empty:
-            raise ValueError("CSV is empty.")
-        return df
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Could not read CSV: {e}")
-
-
-def _b64_png_from_fig(fig: plt.Figure) -> str:
-    buf = io.BytesIO()
-    fig.tight_layout()
-    fig.savefig(buf, format="png", dpi=180, bbox_inches="tight")
-    plt.close(fig)
-    return base64.b64encode(buf.getvalue()).decode("utf-8")
-
-
-def _require_columns(df: pd.DataFrame, cols: List[str]) -> None:
-    missing = [c for c in cols if c and c not in df.columns]
-    if missing:
-        raise HTTPException(status_code=400, detail=f"Missing columns: {missing}")
-
-
-def _ensure_numeric(series: pd.Series, name: str) -> pd.Series:
-    s = pd.to_numeric(series, errors="coerce")
-    if s.dropna().shape[0] < 3:
-        raise HTTPException(status_code=400, detail=f"Trait '{name}' has too few numeric values.")
-    return s
-
-
-def _clean_factor(series: pd.Series, name: str) -> pd.Series:
-    s = series.astype(str).fillna("NA")
-    if s.nunique(dropna=False) < 2:
-        raise HTTPException(status_code=400, detail=f"Factor '{name}' must have at least 2 groups.")
-    return s
-
-
-def _assumption_notes(shapiro_p: Optional[float], levene_p: Optional[float], alpha: float) -> List[str]:
-    notes: List[str] = []
-    if shapiro_p is not None:
-        if shapiro_p < alpha:
-            notes.append(
-                f"Normality check (Shapiro on residuals): p={shapiro_p:.4g} < {alpha} → residuals deviate from normality. "
-                f"Consider transformation (log/sqrt) or robust/nonparametric alternatives depending on design."
-            )
-        else:
-            notes.append(f"Normality check (Shapiro on residuals): p={shapiro_p:.4g} ≥ {alpha} → normality looks acceptable.")
-    if levene_p is not None:
-        if levene_p < alpha:
-            notes.append(
-                f"Homogeneity check (Levene): p={levene_p:.4g} < {alpha} → variances differ among groups. "
-                f"Consider transformation or Welch-type approach if appropriate."
-            )
-        else:
-            notes.append(f"Homogeneity check (Levene): p={levene_p:.4g} ≥ {alpha} → variance homogeneity looks acceptable.")
-    return notes
-
-
-def _summary_stats(df: pd.DataFrame, factor: str, trait: str) -> pd.DataFrame:
-    g = df.groupby(factor)[trait]
-    out = pd.DataFrame({
-        "n": g.count(),
-        "mean": g.mean(),
-        "sd": g.std(ddof=1),
-    })
-    out["se"] = out["sd"] / np.sqrt(out["n"].replace(0, np.nan))
-    out = out.reset_index()
-    return out
-
-
-def _cv_percent(y: pd.Series) -> Optional[float]:
-    y = y.dropna()
-    if y.shape[0] < 3:
-        return None
-    m = float(np.mean(y))
-    s = float(np.std(y, ddof=1))
-    if m == 0:
-        return None
-    return (s / m) * 100.0
-
-
-def _agri_interpretation_oneway(alpha: float, p: float, trait: str, factor: str, block: Optional[str]) -> str:
-    design = f"RCBD (blocking by '{block}')" if block else "CRD (no blocking)"
-    if p < alpha:
-        return (
-            f"Design: {design}. ANOVA indicates a statistically significant effect of '{factor}' on '{trait}' "
-            f"(p={p:.4g} < {alpha}). This suggests real differences among the groups. Use the Tukey mean separation "
-            f"and letters to identify which groups differ. Groups that do NOT share the same letter are significantly different."
-        )
-    return (
-        f"Design: {design}. ANOVA indicates no statistically significant effect of '{factor}' on '{trait}' "
-        f"(p={p:.4g} ≥ {alpha}). Observed differences in group means are likely due to random variation under this design. "
-        f"You may still report descriptive means and variability (SE/CV), but avoid claiming treatment/genotype superiority."
-    )
-
-
-# ---- Compact Letter Display (simple greedy algorithm)
-def _build_cld_from_tukey(tukey: Any, groups_order: List[str]) -> Dict[str, str]:
-    """
-    Returns mapping {group: letters}. Groups with shared letter are NOT significantly different.
-    Pragmatic CLD (works well for typical agricultural layouts).
-    """
-    idx = {g: i for i, g in enumerate(groups_order)}
-    k = len(groups_order)
-    sig = np.zeros((k, k), dtype=bool)
-
-    # Tukey columns: group1 group2 meandiff p-adj lower upper reject
-    table = tukey.summary().data[1:]
-    for row in table:
-        g1, g2 = str(row[0]), str(row[1])
-        reject = bool(row[6])  # ✅ correct index for 'reject'
-        i, j = idx[g1], idx[g2]
-        sig[i, j] = reject
-        sig[j, i] = reject
-
-    letters: List[List[str]] = []
-    group_letters: Dict[str, List[str]] = {g: [] for g in groups_order}
-
-    def can_share_letter(g: str, letter_groups: List[str]) -> bool:
-        gi = idx[g]
-        for h in letter_groups:
-            hi = idx[h]
-            if sig[gi, hi]:
-                return False
-        return True
-
-    for g in groups_order:
-        placed = False
-        for li, letter_groups in enumerate(letters):
-            if can_share_letter(g, letter_groups):
-                letter_groups.append(g)
-                group_letters[g].append(chr(ord("a") + li))
-                placed = True
-        if not placed:
-            letters.append([g])
-            group_letters[g].append(chr(ord("a") + (len(letters) - 1)))
-
-    return {g: "".join(group_letters[g]) for g in groups_order}
-
-
-def _mean_plot(summary_df: pd.DataFrame, factor: str, trait: str) -> str:
-    fig = plt.figure()
-    x = np.arange(summary_df.shape[0])
-    means = summary_df["mean"].values
-    ses = summary_df["se"].values
-    plt.errorbar(x, means, yerr=ses, fmt="o", capsize=4)
-    plt.xticks(x, summary_df[factor].astype(str).values, rotation=30, ha="right")
-    plt.title(f"Mean ± SE: {trait} by {factor}")
-    plt.xlabel(factor)
-    plt.ylabel(trait)
-    return _b64_png_from_fig(fig)
-
-
-def _boxplot(df: pd.DataFrame, factor: str, trait: str) -> str:
-    fig = plt.figure()
-    groups = [g[trait].dropna().values for _, g in df.groupby(factor)]
-    labels = [str(k) for k, _ in df.groupby(factor)]
-    plt.boxplot(groups, labels=labels, showmeans=True)
-    plt.xticks(rotation=30, ha="right")
-    plt.title(f"Boxplot: {trait} by {factor}")
-    plt.xlabel(factor)
-    plt.ylabel(trait)
-    return _b64_png_from_fig(fig)
-
-
-def _anova_oneway(df: pd.DataFrame, factor: str, trait: str, alpha: float, block: Optional[str] = None) -> Dict[str, Any]:
-    # Clean + select columns
-    cols = [factor, trait] + ([block] if block else [])
-    tmp = df[cols].copy()
-
-    tmp[factor] = _clean_factor(tmp[factor], factor)
-    if block:
-        tmp[block] = _clean_factor(tmp[block], block)
-    tmp[trait] = _ensure_numeric(tmp[trait], trait)
-
-    tmp = tmp.dropna(subset=[trait, factor] + ([block] if block else []))
-
-    # Model formula
-    if block:
-        formula = f"`{trait}` ~ C(`{factor}`) + C(`{block}`)"
-    else:
-        formula = f"`{trait}` ~ C(`{factor}`)"
-
-    model = ols(formula, data=tmp).fit()
-    anova_table = sm.stats.anova_lm(model, typ=2)
-
-    # p-value for factor term
-    p = float(anova_table.loc[f"C(`{factor}`)", "PR(>F)"])
-
-    # Diagnostics
-    resid = pd.Series(model.resid).dropna()
-    shapiro_p = None
-    if 3 <= resid.shape[0] <= 5000:
-        try:
-            shapiro_p = float(stats.shapiro(resid)[1])
-        except Exception:
-            shapiro_p = None
-
-    levene_p = None
-    try:
-        arrays = [g[trait].dropna().values for _, g in tmp.groupby(factor)]
-        if len(arrays) >= 2:
-            levene_p = float(stats.levene(*arrays, center="median")[1])
-    except Exception:
-        levene_p = None
-
-    # Summary stats + CV
-    summ = _summary_stats(tmp, factor, trait)
-    cv = _cv_percent(tmp[trait])
-
-    # Tukey
-    tuk = None
-    tukey_rows: List[Dict[str, Any]] = []
-    try:
-        tuk = pairwise_tukeyhsd(endog=tmp[trait].values, groups=tmp[factor].values, alpha=alpha)
-        for r in tuk.summary().data[1:]:
-            tukey_rows.append({
-                "group1": str(r[0]),
-                "group2": str(r[1]),
-                "meandiff": float(r[2]),
-                "p_adj": float(r[3]),
-                "lower": float(r[4]),
-                "upper": float(r[5]),
-                "reject": bool(r[6]),
-            })
-    except Exception:
-        tuk = None
-        tukey_rows = []
-
-    # Order by mean (descending) for letters
-    summ_sorted = summ.sort_values("mean", ascending=False).reset_index(drop=True)
-    groups_order = [str(x) for x in summ_sorted[factor].tolist()]
-
-    cld: Dict[str, str] = {}
-    if tuk is not None and len(groups_order) >= 2:
-        try:
-            cld = _build_cld_from_tukey(tuk, groups_order)
-        except Exception:
-            cld = {}
-
-    summ_sorted["letters"] = summ_sorted[factor].astype(str).map(cld).fillna("")
-
-    # Plots (use cleaned data!)
-    mean_plot_b64 = _mean_plot(summ_sorted, factor, trait)
-    boxplot_b64 = _boxplot(tmp, factor, trait)  # ✅ cleaned data
-
-    return {
-        "meta": {
-            "analysis": "one_way_anova",
-            "design": "rcbd" if block else "crd",
-            "factor": factor,
-            "trait": trait,
-            "block": block,
-            "alpha": alpha,
-            "n_rows_used": int(tmp.shape[0]),
-            "cv_percent": None if cv is None else float(cv),
-        },
-        "anova_table": anova_table.reset_index().rename(columns={"index": "term"}).to_dict(orient="records"),
-        "assumptions": {
-            "shapiro_p": shapiro_p,
-            "levene_p": levene_p,
-            "notes": _assumption_notes(shapiro_p, levene_p, alpha),
-        },
-        "group_summary": summ_sorted.to_dict(orient="records"),
-        "tukey_hsd": tukey_rows,
-        "plots": {
-            "mean_plot_png_b64": mean_plot_b64,
-            "boxplot_png_b64": boxplot_b64,
-        },
-        "interpretation": _agri_interpretation_oneway(alpha, p, trait, factor, block),
+    for (const line of sampleLines) {
+      // naive split (works well for typical experiment CSVs)
+      const parts = line.split(",");
+      for (let i = 0; i < cleanCols.length; i++) {
+        const col = cleanCols[i];
+        const v = (parts[i] ?? "").replaceAll('"', "").trim();
+        if (!v) continue;
+        counts[col] += 1;
+        if (isNum(v)) numericCounts[col] += 1;
+      }
     }
 
-
-# ----------------------------
-# Routes
-# ----------------------------# ----------------------------
-# Routes
-# ----------------------------
-@app.get("/")
-def root():
-    return {
-        "service": "VivaSense V1",
-        "status": "ok",
-        "docs": "/docs",
-        "health": "/health"
+    const numeric = [];
+    const nonNumeric = [];
+    for (const c of cleanCols) {
+      const seen = counts[c];
+      const num = numericCounts[c];
+      const ratio = seen === 0 ? 0 : num / seen;
+      if (ratio >= 0.8) numeric.push(c);
+      else nonNumeric.push(c);
     }
 
-@app.get("/health")
-def health() -> Dict[str, str]:
-    return {"status": "ok", "service": "VivaSense V1"}
+    return { cols: cleanCols, numericCols: numeric, nonNumericCols: nonNumeric };
+  }
 
-@app.get("/health")
-def health() -> Dict[str, str]:
-    return {"status": "ok", "service": "VivaSense V1"}
+  function resetResults() {
+    setError("");
+    setResult(null);
+  }
 
+  function onPickFile(e) {
+    resetResults();
+    const f = e.target.files?.[0] || null;
 
-@app.post("/analyze/anova/oneway")
-async def analyze_oneway(
-    file: UploadFile = File(...),
-    factor: str = Form(...),
-    trait: str = Form(...),
-    alpha: float = Form(0.05),
-    block: Optional[str] = Form(None),
-) -> Dict[str, Any]:
-    df = _read_csv(file)
-    needed = [factor, trait] + ([block] if block else [])
-    _require_columns(df, needed)
-    return _anova_oneway(df, factor, trait, alpha, block=block)
+    setFile(f);
+    setFileName(f ? f.name : "");
 
+    setColumns([]);
+    setNumericCols([]);
+    setNonNumericCols([]);
 
-@app.post("/analyze/anova/multitrait")
-async def analyze_multitrait(
-    file: UploadFile = File(...),
-    factor: str = Form(...),
-    alpha: float = Form(0.05),
-    block: Optional[str] = Form(None),
-    traits: List[str] = Form(...),
-) -> Dict[str, Any]:
-    df = _read_csv(file)
-    needed = [factor] + traits + ([block] if block else [])
-    _require_columns(df, needed)
+    setFactor("");
+    setBlock("");
+    setTrait("");
+    setTraitsMulti([]);
 
-    results = []
-    for t in traits:
-        try:
-            results.append(_anova_oneway(df, factor, t, alpha, block=block))
-        except HTTPException as e:
-            results.append({
-                "meta": {"analysis": "one_way_anova", "factor": factor, "trait": t, "block": block, "alpha": alpha},
-                "error": e.detail
-            })
-        except Exception as e:
-            results.append({
-                "meta": {"analysis": "one_way_anova", "factor": factor, "trait": t, "block": block, "alpha": alpha},
-                "error": str(e)
-            })
+    setCorrColumns([]);
+    setXCol("");
+    setYCol("");
 
-    return {
-        "meta": {
-            "analysis": "multi_trait_oneway_anova",
-            "design": "rcbd" if block else "crd",
-            "factor": factor,
-            "block": block,
-            "alpha": alpha,
-            "n_traits": len(traits)
-        },
-        "results": results
+    if (!f) return;
+
+    readCsvColumnsAndTypes(f)
+      .then(({ cols, numericCols, nonNumericCols }) => {
+        setColumns(cols);
+        setNumericCols(numericCols);
+        setNonNumericCols(nonNumericCols);
+
+        // Defaults
+        const defaultFactor = nonNumericCols[0] || cols[0] || "";
+        setFactor(defaultFactor);
+
+        const blockCandidate =
+          cols.find((c) => c.toLowerCase() === "block") ||
+          cols.find((c) => c.toLowerCase() === "rep") ||
+          cols.find((c) => c.toLowerCase() === "replicate") ||
+          "";
+        setBlock(blockCandidate);
+
+        const defaultTrait = numericCols[0] || "";
+        setTrait(defaultTrait);
+
+        setTraitsMulti(numericCols.slice(0, Math.min(numericCols.length, 4)));
+        setCorrColumns(numericCols.slice(0, Math.min(numericCols.length, 6)));
+
+        setXCol(numericCols[0] || "");
+        setYCol(numericCols[1] || "");
+      })
+      .catch(() => {
+        setColumns([]);
+        setNumericCols([]);
+        setNonNumericCols([]);
+      });
+  }
+
+  function validate() {
+    if (!apiBaseUrl?.trim()) return "Please set your API base URL.";
+    if (!file) return "Please upload a CSV file.";
+    if (!columns.length) return "Could not detect CSV headers. Ensure the first row contains column names.";
+
+    if (mode === "anova_oneway") {
+      if (!factor) return "Please select a factor column.";
+      if (!trait) return "Please select a trait column (numeric).";
+      if (!numericCols.includes(trait)) return "Trait must be numeric (e.g., Yield, Height).";
+      if (block && block === factor) return "Block cannot be the same as Factor.";
+      if (block && numericCols.includes(block)) return "Block should be categorical (non-numeric).";
     }
 
-
-@app.post("/analyze/correlation")
-async def analyze_correlation(
-    file: UploadFile = File(...),
-    method: str = Form("pearson"),
-    columns: Optional[List[str]] = Form(None),
-) -> Dict[str, Any]:
-    df = _read_csv(file)
-
-    numeric_df = df.select_dtypes(include=[np.number]).copy()
-    if numeric_df.empty:
-        raise HTTPException(status_code=400, detail="No numeric columns found for correlation.")
-
-    cols = columns if columns else numeric_df.columns.tolist()
-    _require_columns(df, cols)
-
-    data = df[cols].apply(pd.to_numeric, errors="coerce")
-    data = data.dropna(axis=0, how="any")
-    if data.shape[0] < 3:
-        raise HTTPException(status_code=400, detail="Too few complete rows for correlation (need at least 3).")
-
-    method = method.lower().strip()
-    if method not in ["pearson", "spearman"]:
-        raise HTTPException(status_code=400, detail="method must be 'pearson' or 'spearman'.")
-
-    corr = data.corr(method=method)
-
-    # Heatmap plot (matplotlib only)
-    fig = plt.figure()
-    plt.imshow(corr.values, aspect="auto")
-    plt.xticks(range(len(cols)), cols, rotation=45, ha="right")
-    plt.yticks(range(len(cols)), cols)
-    plt.title(f"{method.title()} Correlation Heatmap")
-    plt.colorbar()
-    heatmap_b64 = _b64_png_from_fig(fig)
-
-    return {
-        "meta": {"analysis": "correlation", "method": method, "n_rows_used": int(data.shape[0])},
-        "correlation_matrix": corr.reset_index().rename(columns={"index": "variable"}).to_dict(orient="records"),
-        "plots": {"heatmap_png_b64": heatmap_b64},
-        "interpretation": (
-            "Correlation measures association (not causation). Values near +1/-1 indicate strong positive/negative association, "
-            "while values near 0 indicate weak linear/monotonic association."
-        )
+    if (mode === "anova_multitrait") {
+      if (!factor) return "Please select a factor column.";
+      if (!traitsMulti.length) return "Please select one or more traits.";
+      for (const t of traitsMulti) {
+        if (!numericCols.includes(t)) return `Trait '${t}' must be numeric.`;
+      }
+      if (block && block === factor) return "Block cannot be the same as Factor.";
+      if (block && numericCols.includes(block)) return "Block should be categorical (non-numeric).";
     }
 
-
-@app.post("/analyze/regression/simple")
-async def analyze_regression(
-    file: UploadFile = File(...),
-    x: str = Form(...),
-    y: str = Form(...),
-) -> Dict[str, Any]:
-    df = _read_csv(file)
-    _require_columns(df, [x, y])
-
-    tmp = df[[x, y]].copy()
-    tmp[x] = pd.to_numeric(tmp[x], errors="coerce")
-    tmp[y] = pd.to_numeric(tmp[y], errors="coerce")
-    tmp = tmp.dropna()
-
-    if tmp.shape[0] < 5:
-        raise HTTPException(status_code=400, detail="Too few rows for regression (need at least 5 complete observations).")
-
-    X = sm.add_constant(tmp[x].values)
-    yy = tmp[y].values
-    model = sm.OLS(yy, X).fit()
-
-    # Scatter + fitted line
-    fig = plt.figure()
-    plt.scatter(tmp[x].values, tmp[y].values)
-    x_line = np.linspace(tmp[x].min(), tmp[x].max(), 100)
-    y_line = model.params[0] + model.params[1] * x_line
-    plt.plot(x_line, y_line)
-    plt.xlabel(x)
-    plt.ylabel(y)
-    plt.title("Simple Linear Regression")
-    plot_b64 = _b64_png_from_fig(fig)
-
-    return {
-        "meta": {"analysis": "simple_regression", "x": x, "y": y, "n_rows_used": int(tmp.shape[0])},
-        "model": {
-            "intercept": float(model.params[0]),
-            "slope": float(model.params[1]),
-            "r_squared": float(model.rsquared),
-            "p_value_slope": float(model.pvalues[1]),
-            "stderr_slope": float(model.bse[1]),
-        },
-        "plots": {"scatter_fit_png_b64": plot_b64},
-        "interpretation": (
-            f"The slope indicates the expected change in '{y}' per unit increase in '{x}'. "
-            f"R² shows how much variation in '{y}' is explained by '{x}' in this linear model."
-        )
+    if (mode === "correlation") {
+      if (!corrColumns.length) return "Please select numeric columns for correlation.";
+      for (const c of corrColumns) {
+        if (!numericCols.includes(c)) return `Correlation column '${c}' must be numeric.`;
+      }
+      if (!["pearson", "spearman"].includes(corrMethod)) return "Correlation method must be pearson or spearman.";
     }
+
+    if (mode === "regression") {
+      if (!xCol || !yCol) return "Please select x and y columns.";
+      if (xCol === yCol) return "x and y must be different columns.";
+      if (!numericCols.includes(xCol) || !numericCols.includes(yCol)) return "Regression x and y must be numeric columns.";
+    }
+
+    return "";
+  }
+
+  async function postMultipart(url, formData) {
+    const res = await fetch(url, { method: "POST", body: formData });
+    const contentType = res.headers.get("content-type") || "";
+    let payload = null;
+
+    if (contentType.includes("application/json")) {
+      payload = await res.json().catch(() => null);
+    } else {
+      const txt = await res.text().catch(() => "");
+      payload = { detail: txt };
+    }
+
+    if (!res.ok) {
+      const msg = payload?.detail || payload?.error || "Request failed.";
+      throw new Error(msg);
+    }
+    return payload;
+  }
+
+  async function runAnalysis() {
+    resetResults();
+    const v = validate();
+    if (v) {
+      setError(v);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      if (mode === "anova_oneway") {
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("factor", factor);
+        fd.append("trait", trait);
+        fd.append("alpha", String(alpha));
+        if (block) fd.append("block", block);
+
+        const data = await postMultipart(`${apiBaseUrl}/analyze/anova/oneway`, fd);
+        setResult(data);
+      }
+
+      if (mode === "anova_multitrait") {
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("factor", factor);
+        traitsMulti.forEach((t) => fd.append("traits", t));
+        fd.append("alpha", String(alpha));
+        if (block) fd.append("block", block);
+
+        const data = await postMultipart(`${apiBaseUrl}/analyze/anova/multitrait`, fd);
+        setResult(data);
+      }
+
+      if (mode === "correlation") {
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("method", corrMethod);
+        corrColumns.forEach((c) => fd.append("columns", c));
+
+        const data = await postMultipart(`${apiBaseUrl}/analyze/correlation`, fd);
+        setResult(data);
+      }
+
+      if (mode === "regression") {
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("x", xCol);
+        fd.append("y", yCol);
+
+        const data = await postMultipart(`${apiBaseUrl}/analyze/regression/simple`, fd);
+        setResult(data);
+      }
+    } catch (e) {
+      setError(e?.message || "Something went wrong.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function Pill({ text }) {
+    return <span style={styles.pill}>{text}</span>;
+  }
+
+  const detectedCols = useMemo(() => columns || [], [columns]);
+
+  // ----------------------------
+  // UI
+  // ----------------------------
+  return (
+    <div style={styles.page}>
+      <div style={styles.header}>
+        <div>
+          <div style={styles.title}>VivaSense V1</div>
+          <div style={styles.subtitle}>Upload CSV → Analyze → Get tables, plots, and interpretation</div>
+        </div>
+      </div>
+
+      <div style={styles.card}>
+        <div style={styles.grid2}>
+          <div>
+            <label style={styles.label}>Backend API Base URL</label>
+            <input
+              style={styles.input}
+              value={apiBaseUrl}
+              onChange={(e) => setApiBaseUrl(e.target.value)}
+              placeholder="https://vivasense-backend.onrender.com"
+            />
+            <div style={styles.hint}>
+              Example: <code>http://127.0.0.1:8000</code> or <code>https://vivasense-backend.onrender.com</code>
+            </div>
+          </div>
+
+          <div>
+            <label style={styles.label}>Upload CSV</label>
+            <input style={styles.input} type="file" accept=".csv" onChange={onPickFile} />
+            <div style={styles.hint}>
+              {fileName ? (
+                <>
+                  Loaded: <b>{fileName}</b>
+                </>
+              ) : (
+                "Choose a CSV file with a header row (column names)."
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div style={styles.hr} />
+
+        <div style={styles.grid2}>
+          <div>
+            <label style={styles.label}>Analysis Type</label>
+            <select
+              style={styles.select}
+              value={mode}
+              onChange={(e) => {
+                resetResults();
+                setMode(e.target.value);
+              }}
+            >
+              {MODES.map((m) => (
+                <option key={m.key} value={m.key}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+
+            <div style={styles.hint}>
+              Detected columns:{" "}
+              {detectedCols.length ? (
+                detectedCols.slice(0, 12).map((c) => <Pill key={c} text={c} />)
+              ) : (
+                <span style={styles.muted}>Upload a CSV to detect columns.</span>
+              )}
+              {detectedCols.length > 12 && <span style={styles.muted}> +{detectedCols.length - 12} more</span>}
+              <div style={{ marginTop: 8 }}>
+                <span style={styles.muted}>Numeric:</span>{" "}
+                {numericCols.length ? numericCols.slice(0, 10).map((c) => <Pill key={c} text={c} />) : <span style={styles.muted}>none</span>}
+              </div>
+              <div style={{ marginTop: 6 }}>
+                <span style={styles.muted}>Categorical:</span>{" "}
+                {nonNumericCols.length ? nonNumericCols.slice(0, 10).map((c) => <Pill key={c} text={c} />) : <span style={styles.muted}>none</span>}
+              </div>
+            </div>
+          </div>
+
+          {(mode === "anova_oneway" || mode === "anova_multitrait") && (
+            <div>
+              <label style={styles.label}>Alpha (significance level)</label>
+              <input
+                style={styles.input}
+                type="number"
+                step="0.01"
+                min="0.0001"
+                max="0.2"
+                value={alpha}
+                onChange={(e) => setAlpha(Number(e.target.value))}
+              />
+              <div style={styles.hint}>Default is 0.05</div>
+            </div>
+          )}
+        </div>
+
+        {/* Mode-specific controls */}
+        {mode === "anova_oneway" && (
+          <div style={styles.cardInner}>
+            <div style={styles.sectionTitle}>One-way ANOVA (Single Trait)</div>
+            <div style={styles.grid4}>
+              <div>
+                <label style={styles.label}>Factor column</label>
+                <select style={styles.select} value={factor} onChange={(e) => setFactor(e.target.value)}>
+                  <option value="">-- select --</option>
+                  {nonNumericCols.length
+                    ? nonNumericCols.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))
+                    : detectedCols.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={styles.label}>Block column (optional)</label>
+                <select style={styles.select} value={block} onChange={(e) => setBlock(e.target.value)}>
+                  <option value="">-- none --</option>
+                  {nonNumericCols
+                    .filter((c) => c !== factor)
+                    .map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                </select>
+                <div style={styles.hint}>Use for RCBD (e.g., Block/Replicate). Leave blank for CRD.</div>
+              </div>
+
+              <div>
+                <label style={styles.label}>Trait column (numeric)</label>
+                <select style={styles.select} value={trait} onChange={(e) => setTrait(e.target.value)}>
+                  <option value="">-- select --</option>
+                  {numericCols.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "end" }}>
+                <button style={styles.button} onClick={runAnalysis} disabled={loading}>
+                  {loading ? "Running..." : "Run ANOVA"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {mode === "anova_multitrait" && (
+          <div style={styles.cardInner}>
+            <div style={styles.sectionTitle}>One-way ANOVA (Multi-trait)</div>
+            <div style={styles.grid4}>
+              <div>
+                <label style={styles.label}>Factor column</label>
+                <select style={styles.select} value={factor} onChange={(e) => setFactor(e.target.value)}>
+                  <option value="">-- select --</option>
+                  {nonNumericCols.length
+                    ? nonNumericCols.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))
+                    : detectedCols.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={styles.label}>Block column (optional)</label>
+                <select style={styles.select} value={block} onChange={(e) => setBlock(e.target.value)}>
+                  <option value="">-- none --</option>
+                  {nonNumericCols
+                    .filter((c) => c !== factor)
+                    .map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                </select>
+                <div style={styles.hint}>Use for RCBD (e.g., Block/Replicate). Leave blank for CRD.</div>
+              </div>
+
+              <div>
+                <label style={styles.label}>Traits (numeric, multi-select)</label>
+                <select
+                  style={styles.select}
+                  multiple
+                  size={Math.min(8, Math.max(4, numericCols.length))}
+                  value={traitsMulti}
+                  onChange={(e) => {
+                    const selected = Array.from(e.target.selectedOptions).map((o) => o.value);
+                    setTraitsMulti(selected);
+                  }}
+                >
+                  {numericCols.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+                <div style={styles.hint}>Hold Ctrl/Command to select multiple traits.</div>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "end" }}>
+                <button style={styles.button} onClick={runAnalysis} disabled={loading}>
+                  {loading ? "Running..." : "Run Multi-trait ANOVA"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {mode === "correlation" && (
+          <div style={styles.cardInner}>
+            <div style={styles.sectionTitle}>Correlation + Heatmap</div>
+            <div style={styles.grid3}>
+              <div>
+                <label style={styles.label}>Method</label>
+                <select style={styles.select} value={corrMethod} onChange={(e) => setCorrMethod(e.target.value)}>
+                  <option value="pearson">pearson</option>
+                  <option value="spearman">spearman</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={styles.label}>Columns (numeric, multi-select)</label>
+                <select
+                  style={styles.select}
+                  multiple
+                  size={Math.min(8, Math.max(4, numericCols.length))}
+                  value={corrColumns}
+                  onChange={(e) => {
+                    const selected = Array.from(e.target.selectedOptions).map((o) => o.value);
+                    setCorrColumns(selected);
+                  }}
+                >
+                  {numericCols.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "end" }}>
+                <button style={styles.button} onClick={runAnalysis} disabled={loading}>
+                  {loading ? "Running..." : "Run Correlation"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {mode === "regression" && (
+          <div style={styles.cardInner}>
+            <div style={styles.sectionTitle}>Simple Regression</div>
+            <div style={styles.grid3}>
+              <div>
+                <label style={styles.label}>X (predictor, numeric)</label>
+                <select style={styles.select} value={xCol} onChange={(e) => setXCol(e.target.value)}>
+                  <option value="">-- select --</option>
+                  {numericCols.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={styles.label}>Y (response, numeric)</label>
+                <select style={styles.select} value={yCol} onChange={(e) => setYCol(e.target.value)}>
+                  <option value="">-- select --</option>
+                  {numericCols.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "end" }}>
+                <button style={styles.button} onClick={runAnalysis} disabled={loading}>
+                  {loading ? "Running..." : "Run Regression"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Errors */}
+        {error && (
+          <div style={styles.errorBox}>
+            <b>Error:</b> {error}
+          </div>
+        )}
+      </div>
+
+      {/* RESULTS */}
+      {result && (
+        <div style={styles.card}>
+          <div style={styles.sectionTitle}>Results</div>
+
+          {/* Multi-trait wrapper */}
+          {result?.meta?.analysis === "multi_trait_oneway_anova" ? (
+            <div>
+              <div style={styles.hint}>
+                Factor: <b>{result?.meta?.factor}</b> | Traits: <b>{result?.meta?.n_traits}</b> | Alpha:{" "}
+                <b>{result?.meta?.alpha}</b>
+                {result?.meta?.block ? (
+                  <>
+                    {" "}
+                    | Block: <b>{result.meta.block}</b>
+                  </>
+                ) : null}
+              </div>
+
+              {(result.results || []).map((r, idx) => (
+                <div key={idx} style={styles.resultBlock}>
+                  <div style={styles.resultBlockHeader}>
+                    Trait: <b>{r?.meta?.trait}</b>
+                    {r?.error && <span style={{ ...styles.pill, marginLeft: 10, background: "#ffd7d7" }}>Error</span>}
+                  </div>
+
+                  {r?.error ? <div style={styles.errorBox}>{r.error}</div> : <OneWayAnovaResultView data={r} />}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <>
+              {result?.meta?.analysis === "one_way_anova" && <OneWayAnovaResultView data={result} />}
+              {result?.meta?.analysis === "correlation" && <CorrelationResultView data={result} />}
+              {result?.meta?.analysis === "simple_regression" && <RegressionResultView data={result} />}
+              {!["one_way_anova", "correlation", "simple_regression"].includes(result?.meta?.analysis) && (
+                <div style={styles.muted}>Unknown result format.</div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      <div style={styles.footer}>
+        <div style={styles.muted}>
+          Tip: If you get a CORS error on Render, ensure your FastAPI CORS middleware allows your Lovable domain.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ----------------------------
+// Result Views
+// ----------------------------
+function OneWayAnovaResultView({ data }) {
+  const b64ToImgSrc = (b64) => `data:image/png;base64,${b64}`;
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
+        <MetaPill label="Analysis" value={data?.meta?.analysis} />
+        {data?.meta?.design && <MetaPill label="Design" value={data.meta.design} />}
+        <MetaPill label="Factor" value={data?.meta?.factor} />
+        {data?.meta?.block && <MetaPill label="Block" value={data.meta.block} />}
+        <MetaPill label="Trait" value={data?.meta?.trait} />
+        <MetaPill label="Alpha" value={String(data?.meta?.alpha)} />
+        <MetaPill label="N used" value={String(data?.meta?.n_rows_used)} />
+        {data?.meta?.cv_percent != null && <MetaPill label="CV%" value={Number(data.meta.cv_percent).toFixed(2)} />}
+      </div>
+
+      {data?.interpretation && (
+        <div style={styles.interpretation}>
+          <b>Interpretation:</b> {data.interpretation}
+        </div>
+      )}
+
+      {data?.assumptions?.notes?.length ? (
+        <div style={styles.noteBox}>
+          <b>Assumptions:</b>
+          <ul style={{ marginTop: 8 }}>
+            {data.assumptions.notes.map((n, i) => (
+              <li key={i}>{n}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      <div style={styles.grid2}>
+        <div>
+          <div style={styles.subTitle}>ANOVA Table</div>
+          <Table rows={data?.anova_table || []} />
+        </div>
+        <div>
+          <div style={styles.subTitle}>Group Summary (Mean, SE, Letters)</div>
+          <Table rows={data?.group_summary || []} />
+        </div>
+      </div>
+
+      <div style={styles.subTitle}>Tukey HSD</div>
+      <Table rows={data?.tukey_hsd || []} />
+
+      <div style={styles.grid2}>
+        <div>
+          <div style={styles.subTitle}>Mean Plot (±SE)</div>
+          {data?.plots?.mean_plot_png_b64 ? (
+            <img style={styles.img} src={b64ToImgSrc(data.plots.mean_plot_png_b64)} alt="Mean plot" />
+          ) : (
+            <div style={styles.muted}>No plot</div>
+          )}
+        </div>
+        <div>
+          <div style={styles.subTitle}>Boxplot</div>
+          {data?.plots?.boxplot_png_b64 ? (
+            <img style={styles.img} src={b64ToImgSrc(data.plots.boxplot_png_b64)} alt="Boxplot" />
+          ) : (
+            <div style={styles.muted}>No plot</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CorrelationResultView({ data }) {
+  const b64ToImgSrc = (b64) => `data:image/png;base64,${b64}`;
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
+        <MetaPill label="Analysis" value={data?.meta?.analysis} />
+        <MetaPill label="Method" value={data?.meta?.method} />
+        <MetaPill label="N used" value={String(data?.meta?.n_rows_used)} />
+      </div>
+
+      {data?.interpretation && (
+        <div style={styles.interpretation}>
+          <b>Interpretation:</b> {data.interpretation}
+        </div>
+      )}
+
+      <div style={styles.subTitle}>Correlation Matrix</div>
+      <Table rows={data?.correlation_matrix || []} />
+
+      <div style={styles.subTitle}>Heatmap</div>
+      {data?.plots?.heatmap_png_b64 ? (
+        <img style={styles.img} src={b64ToImgSrc(data.plots.heatmap_png_b64)} alt="Heatmap" />
+      ) : (
+        <div style={styles.muted}>No heatmap</div>
+      )}
+    </div>
+  );
+}
+
+function RegressionResultView({ data }) {
+  const b64ToImgSrc = (b64) => `data:image/png;base64,${b64}`;
+  const m = data?.model || {};
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
+        <MetaPill label="Analysis" value={data?.meta?.analysis} />
+        <MetaPill label="X" value={data?.meta?.x} />
+        <MetaPill label="Y" value={data?.meta?.y} />
+        <MetaPill label="N used" value={String(data?.meta?.n_rows_used)} />
+      </div>
+
+      {data?.interpretation && (
+        <div style={styles.interpretation}>
+          <b>Interpretation:</b> {data.interpretation}
+        </div>
+      )}
+
+      <div style={styles.subTitle}>Model Summary</div>
+      <Table
+        rows={[
+          {
+            intercept: m.intercept,
+            slope: m.slope,
+            r_squared: m.r_squared,
+            p_value_slope: m.p_value_slope,
+            stderr_slope: m.stderr_slope,
+          },
+        ]}
+      />
+
+      <div style={styles.subTitle}>Scatter + Fitted Line</div>
+      {data?.plots?.scatter_fit_png_b64 ? (
+        <img style={styles.img} src={b64ToImgSrc(data.plots.scatter_fit_png_b64)} alt="Regression plot" />
+      ) : (
+        <div style={styles.muted}>No plot</div>
+      )}
+    </div>
+  );
+}
+
+function MetaPill({ label, value }) {
+  return (
+    <span style={styles.metaPill}>
+      <b>{label}:</b> {value ?? ""}
+    </span>
+  );
+}
+
+function Table({ rows }) {
+  if (!rows || !rows.length) return <div style={styles.muted}>No data</div>;
+  const cols = Object.keys(rows[0] || {});
+  return (
+    <div style={styles.tableWrap}>
+      <table style={styles.table}>
+        <thead>
+          <tr>
+            {cols.map((c) => (
+              <th key={c} style={styles.th}>
+                {c}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i}>
+              {cols.map((c) => (
+                <td key={c} style={styles.td}>
+                  {formatCell(r[c])}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function formatCell(v) {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "number") {
+    if (!Number.isFinite(v)) return String(v);
+    if (Math.abs(v) < 1e-3 && v !== 0) return v.toExponential(3);
+    return Number.isInteger(v) ? String(v) : v.toFixed(4);
+  }
+  if (typeof v === "boolean") return v ? "true" : "false";
+  return String(v);
+}
+
+// ----------------------------
+// Inline styles (Lovable-friendly)
+// ----------------------------
+const styles = {
+  page: {
+    maxWidth: 1100,
+    margin: "0 auto",
+    padding: 18,
+    fontFamily:
+      'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"',
+    color: "#111",
+  },
+  header: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 14,
+  },
+  title: { fontSize: 26, fontWeight: 800, letterSpacing: -0.3 },
+  subtitle: { fontSize: 13, color: "#444", marginTop: 4 },
+  card: {
+    background: "#fff",
+    border: "1px solid #e6e6e6",
+    borderRadius: 12,
+    padding: 14,
+    boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+    marginBottom: 14,
+  },
+  cardInner: {
+    marginTop: 14,
+    padding: 12,
+    background: "#fafafa",
+    border: "1px solid #eee",
+    borderRadius: 12,
+  },
+  sectionTitle: { fontSize: 16, fontWeight: 800, marginBottom: 10 },
+  subTitle: { fontSize: 14, fontWeight: 700, marginTop: 12, marginBottom: 6 },
+  label: { display: "block", fontSize: 12, fontWeight: 700, marginBottom: 6 },
+  hint: { fontSize: 12, color: "#555", marginTop: 6, lineHeight: 1.35 },
+  muted: { color: "#666", fontSize: 12 },
+  input: {
+    width: "100%",
+    padding: "10px 10px",
+    borderRadius: 10,
+    border: "1px solid #ddd",
+    outline: "none",
+  },
+  select: {
+    width: "100%",
+    padding: "10px 10px",
+    borderRadius: 10,
+    border: "1px solid #ddd",
+    outline: "none",
+    background: "#fff",
+  },
+  button: {
+    width: "100%",
+    padding: "11px 12px",
+    borderRadius: 10,
+    border: "1px solid #111",
+    background: "#111",
+    color: "#fff",
+    fontWeight: 800,
+    cursor: "pointer",
+  },
+  hr: { height: 1, background: "#eee", margin: "14px 0" },
+  grid2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 },
+  grid3: { display: "grid", gridTemplateColumns: "1fr 1fr 220px", gap: 12 },
+  grid4: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 220px", gap: 12 },
+  tableWrap: {
+    overflowX: "auto",
+    border: "1px solid #eee",
+    borderRadius: 10,
+    background: "#fff",
+  },
+  table: { width: "100%", borderCollapse: "collapse", fontSize: 12 },
+  th: {
+    textAlign: "left",
+    padding: "10px 10px",
+    borderBottom: "1px solid #eee",
+    background: "#fafafa",
+    position: "sticky",
+    top: 0,
+  },
+  td: { padding: "8px 10px", borderBottom: "1px solid #f0f0f0", whiteSpace: "nowrap" },
+  pill: {
+    display: "inline-block",
+    padding: "2px 8px",
+    borderRadius: 999,
+    background: "#efefef",
+    border: "1px solid #e2e2e2",
+    marginRight: 6,
+    marginBottom: 6,
+    fontSize: 12,
+  },
+  metaPill: {
+    display: "inline-block",
+    padding: "6px 10px",
+    borderRadius: 999,
+    background: "#f7f7f7",
+    border: "1px solid #e7e7e7",
+    fontSize: 12,
+  },
+  errorBox: {
+    marginTop: 12,
+    padding: 10,
+    borderRadius: 10,
+    background: "#fff1f1",
+    border: "1px solid #ffd0d0",
+    color: "#7a1111",
+    fontSize: 13,
+  },
+  noteBox: {
+    marginTop: 10,
+    padding: 10,
+    borderRadius: 10,
+    background: "#f5fbff",
+    border: "1px solid #d6efff",
+    color: "#083a57",
+    fontSize: 13,
+  },
+  interpretation: {
+    marginTop: 10,
+    padding: 10,
+    borderRadius: 10,
+    background: "#f7fff4",
+    border: "1px solid #dbffd0",
+    color: "#1e4d16",
+    fontSize: 13,
+  },
+  img: {
+    width: "100%",
+    maxHeight: 520,
+    objectFit: "contain",
+    border: "1px solid #eee",
+    borderRadius: 12,
+    background: "#fff",
+    padding: 6,
+  },
+  resultBlock: {
+    marginTop: 12,
+    padding: 12,
+    border: "1px solid #eee",
+    borderRadius: 12,
+    background: "#fff",
+  },
+  resultBlockHeader: {
+    fontSize: 14,
+    fontWeight: 800,
+    marginBottom: 8,
+  },
+  footer: { marginTop: 10, paddingBottom: 12 },
+};
