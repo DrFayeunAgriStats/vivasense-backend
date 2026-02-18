@@ -28,6 +28,8 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+import json
+from starlette.responses import JSONResponse
 
 import matplotlib
 matplotlib.use("Agg")
@@ -69,6 +71,45 @@ def health():
 # ----------------------------
 # Helpers
 # ----------------------------
+def to_json_safe(obj: Any) -> Any:
+    """
+    Convert numpy/pandas objects to JSON-serializable Python types.
+    """
+    # numpy scalars
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, (np.floating,)):
+        return float(obj)
+    if isinstance(obj, (np.bool_,)):
+        return bool(obj)
+
+    # numpy arrays
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+
+    # pandas
+    if isinstance(obj, pd.DataFrame):
+        return obj.replace({np.nan: None}).to_dict(orient="records")
+    if isinstance(obj, pd.Series):
+        return obj.replace({np.nan: None}).to_list()
+
+    # dict / list / tuple
+    if isinstance(obj, dict):
+        return {str(k): to_json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [to_json_safe(v) for v in obj]
+
+    # NaN
+    if obj is None:
+        return None
+    try:
+        if isinstance(obj, float) and np.isnan(obj):
+            return None
+    except Exception:
+        pass
+
+    return obj
+
 def _b64_png(fig) -> str:
     buf = io.BytesIO()
     fig.tight_layout()
@@ -768,17 +809,18 @@ async def analyze_anova_multitrait(
             results_by_trait[t] = {"error": True, "detail": str(e)}
             summary.append({"trait": t, "error": True, "detail": str(e)})
 
-    return {
-        "meta": {
-            "design": design,
-            "alpha": alpha,
-            "traits": trait_columns,
-            "n_rows": int(df.shape[0]),
-        },
-        "tables": {
-            "summary": summary,
-        },
-        "results_by_trait": results_by_trait,
-        "plots": {},
-        "interpretation": "Multi-trait analysis completed. Any problematic trait is returned as an error object instead of crashing the whole run.",
-    }
+    payload = {
+    "meta": {
+        "design": design,
+        "alpha": alpha,
+        "traits": trait_columns,
+        "n_rows": int(df.shape[0]),
+    },
+    "tables": {"summary": summary},
+    "results_by_trait": results_by_trait,
+    "plots": {},
+    "interpretation": "Multi-trait analysis completed. Any problematic trait is returned as an error object instead of crashing the whole run.",
+}
+
+return JSONResponse(content=to_json_safe(payload))
+
