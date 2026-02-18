@@ -1,20 +1,19 @@
 """
-VivaSense V1 — app/main.py (single-file FastAPI backend)
+VivaSense V1 — app/main.py (SIMPLE + STABLE, multi-trait DISABLED)
 
-Features (V1 plan)
+What this file supports (V1):
 - Descriptive statistics (optionally grouped)
-- One-way ANOVA (CRD) + Tukey HSD + compact letter display
+- One-way ANOVA (CRD) + Tukey HSD + compact letter display (CLD)
 - Two-way ANOVA (CRD factorial) + Tukey on A:B combinations
-- Factorial in RCBD (block + A*B) + Tukey on A:B combinations
-- Split-plot ANOVA (correct main-plot error term using Block:A) + Tukey on A:B combinations
-- Multi-trait runner for any of the above designs
+- Factorial in RCBD (Block + A*B) + Tukey on A:B combinations
+- Split-plot ANOVA (correct main-plot test using Block:Main as error) + Tukey on Main:Sub combinations
+- Mean plot (SE) + boxplot
+- Assumption checks (Shapiro, Levene)
+- Plain-English interpretation
 
-All endpoints accept multipart/form-data (Form + File), NOT JSON body models.
-Returns JSON with:
-  meta, tables, plots (base64 PNG), interpretation
-
-Dependencies:
-  fastapi, uvicorn, pandas, numpy, scipy, statsmodels, matplotlib
+Important:
+- All endpoints accept multipart/form-data (Form + File), NOT JSON bodies.
+- Multi-trait endpoint is intentionally DISABLED for V1 stability.
 """
 
 from __future__ import annotations
@@ -28,8 +27,6 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import json
-from starlette.responses import JSONResponse
 
 import matplotlib
 matplotlib.use("Agg")
@@ -44,7 +41,7 @@ warnings.filterwarnings("ignore")
 
 
 # ----------------------------
-# App
+# FastAPI app
 # ----------------------------
 app = FastAPI(title="VivaSense V1", version="1.0.0")
 
@@ -59,7 +56,6 @@ app.add_middleware(
 
 @app.get("/")
 def root():
-    # If GET is defined, FastAPI will also respond to HEAD properly (no 405 surprises).
     return {"name": "VivaSense V1", "status": "ok", "docs": "/docs"}
 
 
@@ -71,45 +67,6 @@ def health():
 # ----------------------------
 # Helpers
 # ----------------------------
-def to_json_safe(obj: Any) -> Any:
-    """
-    Convert numpy/pandas objects to JSON-serializable Python types.
-    """
-    # numpy scalars
-    if isinstance(obj, (np.integer,)):
-        return int(obj)
-    if isinstance(obj, (np.floating,)):
-        return float(obj)
-    if isinstance(obj, (np.bool_,)):
-        return bool(obj)
-
-    # numpy arrays
-    if isinstance(obj, np.ndarray):
-        return obj.tolist()
-
-    # pandas
-    if isinstance(obj, pd.DataFrame):
-        return obj.replace({np.nan: None}).to_dict(orient="records")
-    if isinstance(obj, pd.Series):
-        return obj.replace({np.nan: None}).to_list()
-
-    # dict / list / tuple
-    if isinstance(obj, dict):
-        return {str(k): to_json_safe(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [to_json_safe(v) for v in obj]
-
-    # NaN
-    if obj is None:
-        return None
-    try:
-        if isinstance(obj, float) and np.isnan(obj):
-            return None
-    except Exception:
-        pass
-
-    return obj
-
 def _b64_png(fig) -> str:
     buf = io.BytesIO()
     fig.tight_layout()
@@ -131,8 +88,6 @@ async def load_csv(upload: UploadFile) -> pd.DataFrame:
         raise HTTPException(status_code=400, detail=f"Could not read CSV: {e}")
     if df.empty:
         raise HTTPException(status_code=400, detail="Uploaded CSV is empty.")
-
-    # Clean column names
     df.columns = [str(c).strip() for c in df.columns]
     return df
 
@@ -142,7 +97,7 @@ def require_cols(df: pd.DataFrame, cols: List[str]) -> None:
     if missing:
         raise HTTPException(
             status_code=400,
-            detail=f"Missing required column(s): {missing}. Available: {list(df.columns)}",
+            detail=f"Missing required column(s): {missing}. Available columns: {list(df.columns)}",
         )
 
 
@@ -156,17 +111,17 @@ def clean_for_model(df: pd.DataFrame, y: str, x_cols: List[str]) -> pd.DataFrame
 
     d[y] = coerce_numeric(d[y])
     for c in x_cols:
-        d[c] = d[c].astype(str)
+        d[c] = d[c].astype(str).str.strip()
 
     d = d.dropna(subset=[y] + x_cols)
 
     if d.shape[0] < 3:
-        raise HTTPException(status_code=400, detail=f"Not enough valid rows for analysis after cleaning ({y}).")
+        raise HTTPException(status_code=400, detail=f"Not enough valid rows after cleaning for trait '{y}'.")
 
-    # Ensure at least 2 groups where relevant (helps Tukey/Levene)
-    if len(x_cols) == 1:
-        if d[x_cols[0]].nunique(dropna=True) < 2:
-            raise HTTPException(status_code=400, detail=f"Need at least 2 levels in '{x_cols[0]}' for ANOVA.")
+    # If single-factor analysis, require >=2 levels
+    if len(x_cols) == 1 and d[x_cols[0]].nunique(dropna=True) < 2:
+        raise HTTPException(status_code=400, detail=f"Need at least 2 levels in '{x_cols[0]}' for ANOVA.")
+
     return d
 
 
@@ -175,7 +130,9 @@ def cv_percent(y: pd.Series) -> Optional[float]:
     m = float(np.nanmean(y))
     if np.isnan(m) or m == 0:
         return None
-    s = float(np.nanstd(y, ddof=1)) if y.dropna().shape[0] > 1 else np.nan
+    if y.dropna().shape[0] < 2:
+        return None
+    s = float(np.nanstd(y, ddof=1))
     if np.isnan(s):
         return None
     return float((s / m) * 100.0)
@@ -214,7 +171,6 @@ def mean_table(df: pd.DataFrame, y: str, group: str) -> pd.DataFrame:
         "sd": g.std(ddof=1).values,
         "se": (g.std(ddof=1) / np.sqrt(g.count().clip(lower=1))).values,
     })
-    # sort by mean descending for nicer reporting
     return out.sort_values("mean", ascending=False).reset_index(drop=True)
 
 
@@ -235,10 +191,8 @@ def mean_plot(df: pd.DataFrame, y: str, group: str, title: str) -> str:
 def box_plot(df: pd.DataFrame, y: str, group: str, title: str) -> str:
     fig = plt.figure(figsize=(7.8, 4.3))
     ax = fig.add_subplot(111)
-
     levels = df[group].astype(str).unique().tolist()
     data = [df.loc[df[group].astype(str) == lvl, y].dropna().values for lvl in levels]
-
     ax.boxplot(data, labels=levels, showmeans=True)
     ax.set_ylabel(y)
     ax.set_title(title)
@@ -248,10 +202,6 @@ def box_plot(df: pd.DataFrame, y: str, group: str, title: str) -> str:
 
 
 def compact_letter_display(groups: List[str], means: Dict[str, float], sig: Dict[Tuple[str, str], bool]) -> Dict[str, str]:
-    """
-    Simple compact letter display:
-    sig[(a,b)] == True means significantly different.
-    """
     ordered = sorted(groups, key=lambda g: means.get(g, -np.inf), reverse=True)
     letters_for = {g: "" for g in ordered}
     letter_sets: List[List[str]] = []
@@ -284,14 +234,8 @@ def compact_letter_display(groups: List[str], means: Dict[str, float], sig: Dict
 
 
 def tukey_letters(df: pd.DataFrame, y: str, group: str, alpha: float) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Returns:
-      - Tukey table
-      - Means table with CLD letters
-    """
     mt = mean_table(df, y, group)
 
-    # Safety: Tukey requires >=2 groups and >=2 observations total
     if df[group].nunique() < 2:
         raise HTTPException(status_code=400, detail=f"Need at least 2 levels in '{group}' for Tukey.")
     if df[y].dropna().shape[0] < 3:
@@ -318,15 +262,15 @@ def tukey_letters(df: pd.DataFrame, y: str, group: str, alpha: float) -> Tuple[p
 def interpret_anova(title: str, p_map: Dict[str, Optional[float]], cv: Optional[float], alpha: float) -> str:
     lines = [f"{title} interpretation:"]
     if cv is not None:
-        lines.append(f"- The coefficient of variation (CV) is {cv:.2f}%. Lower CV generally indicates more precise measurements.")
+        lines.append(f"- CV = {cv:.2f}%. Lower CV generally indicates more precise measurements.")
     for term, p in p_map.items():
         if p is None:
             continue
         if p < alpha:
-            lines.append(f"- **{term}** is significant (p = {p:.4f}), meaning it has a real effect on the trait.")
+            lines.append(f"- **{term}** is significant (p = {p:.4f}).")
         else:
-            lines.append(f"- **{term}** is not significant (p = {p:.4f}); differences may be due to random variation.")
-    lines.append("- Assumptions: check residual normality (Shapiro) and equal variances (Levene).")
+            lines.append(f"- **{term}** is not significant (p = {p:.4f}).")
+    lines.append("- Assumptions: check Shapiro (normality) and Levene (equal variance).")
     return "\n".join(lines)
 
 
@@ -335,7 +279,6 @@ def interpret_anova(title: str, p_map: Dict[str, Optional[float]], cv: Optional[
 # ----------------------------
 def oneway_engine(df: pd.DataFrame, factor: str, trait: str, alpha: float) -> Dict[str, Any]:
     d = clean_for_model(df, trait, [factor])
-    d[factor] = d[factor].astype(str)
 
     model = ols(f"{trait} ~ C({factor})", data=d).fit()
     anova = sm.stats.anova_lm(model, typ=2).reset_index().rename(columns={"index": "source"})
@@ -351,9 +294,8 @@ def oneway_engine(df: pd.DataFrame, factor: str, trait: str, alpha: float) -> Di
         "box_plot": box_plot(d, trait, factor, f"Boxplot of {trait} by {factor}"),
     }
 
-    # p-value for factor term
     p_factor = None
-    m = anova["source"].astype(str).str.contains(f"C({factor})")
+    m = anova["source"].astype(str).str.contains(f"C\\({factor}\\)")
     if m.any():
         p_factor = float(anova.loc[m, "PR(>F)"].iloc[0])
 
@@ -374,14 +316,12 @@ def oneway_engine(df: pd.DataFrame, factor: str, trait: str, alpha: float) -> Di
             "assumptions": [sh, lv],
         },
         "plots": plots,
-        "interpretation": interpret_anova("One-way ANOVA", {"Treatment": p_factor}, cv_percent(d[trait]), alpha),
+        "interpretation": interpret_anova("One-way ANOVA", {factor: p_factor}, cv_percent(d[trait]), alpha),
     }
 
 
 def twoway_engine(df: pd.DataFrame, a: str, b: str, trait: str, alpha: float) -> Dict[str, Any]:
     d = clean_for_model(df, trait, [a, b])
-    d[a] = d[a].astype(str)
-    d[b] = d[b].astype(str)
     d["_AB_"] = d[a].astype(str) + ":" + d[b].astype(str)
 
     model = ols(f"{trait} ~ C({a}) * C({b})", data=d).fit()
@@ -400,13 +340,11 @@ def twoway_engine(df: pd.DataFrame, a: str, b: str, trait: str, alpha: float) ->
 
     def p_of(term: str) -> Optional[float]:
         m = anova["source"].astype(str).str.contains(term)
-        if m.any():
-            return float(anova.loc[m, "PR(>F)"].iloc[0])
-        return None
+        return float(anova.loc[m, "PR(>F)"].iloc[0]) if m.any() else None
 
     p_map = {
-        a: p_of(f"C({a})"),
-        b: p_of(f"C({b})"),
+        a: p_of(f"C\\({a}\\)"),
+        b: p_of(f"C\\({b}\\)"),
         f"{a}×{b}": p_of(":"),
     }
 
@@ -433,8 +371,6 @@ def twoway_engine(df: pd.DataFrame, a: str, b: str, trait: str, alpha: float) ->
 
 def rcbd_factorial_engine(df: pd.DataFrame, block: str, a: str, b: str, trait: str, alpha: float) -> Dict[str, Any]:
     d = clean_for_model(df, trait, [block, a, b])
-    for c in [block, a, b]:
-        d[c] = d[c].astype(str)
     d["_AB_"] = d[a].astype(str) + ":" + d[b].astype(str)
 
     model = ols(f"{trait} ~ C({block}) + C({a}) * C({b})", data=d).fit()
@@ -453,14 +389,12 @@ def rcbd_factorial_engine(df: pd.DataFrame, block: str, a: str, b: str, trait: s
 
     def p_of(term: str) -> Optional[float]:
         m = anova["source"].astype(str).str.contains(term)
-        if m.any():
-            return float(anova.loc[m, "PR(>F)"].iloc[0])
-        return None
+        return float(anova.loc[m, "PR(>F)"].iloc[0]) if m.any() else None
 
     p_map = {
-        "Block": p_of(f"C({block})"),
-        a: p_of(f"C({a})"),
-        b: p_of(f"C({b})"),
+        "Block": p_of(f"C\\({block}\\)"),
+        a: p_of(f"C\\({a}\\)"),
+        b: p_of(f"C\\({b}\\)"),
         f"{a}×{b}": p_of(":"),
     }
 
@@ -476,6 +410,7 @@ def rcbd_factorial_engine(df: pd.DataFrame, block: str, a: str, b: str, trait: s
             "cv_percent": cv_percent(d[trait]),
         },
         "tables": {
+            # RCBD must show block term (replication)
             "anova": df_to_records(anova[["source", "df", "sum_sq", "ms", "F", "PR(>F)"]]),
             "means": df_to_records(means_letters.rename(columns={"_AB_": "A:B"})),
             "tukey": df_to_records(tukey_df),
@@ -490,19 +425,19 @@ def splitplot_engine(df: pd.DataFrame, block: str, main: str, sub: str, trait: s
     """
     Split-plot correct testing:
       Fit: y ~ block + main*sub + block:main
-      Test main using MS(block:main) as denominator
+      Test main using MS(block:main) denominator
       Test sub and main:sub using residual MS
     """
     d = clean_for_model(df, trait, [block, main, sub])
-    for c in [block, main, sub]:
-        d[c] = d[c].astype(str)
     d["_AB_"] = d[main].astype(str) + ":" + d[sub].astype(str)
 
     formula = f"{trait} ~ C({block}) + C({main}) * C({sub}) + C({block}):C({main})"
     model = ols(formula, data=d).fit()
+
     an0 = sm.stats.anova_lm(model, typ=2).reset_index().rename(columns={"index": "source"})
     an0["ms"] = an0["sum_sq"] / an0["df"]
 
+    # Extract needed terms for corrected p-values
     src = an0["source"].astype(str)
 
     term_A = f"C({main})"
@@ -513,9 +448,7 @@ def splitplot_engine(df: pd.DataFrame, block: str, main: str, sub: str, trait: s
 
     def get_row(term: str) -> Optional[pd.Series]:
         m = src == term
-        if m.any():
-            return an0.loc[m].iloc[0]
-        return None
+        return an0.loc[m].iloc[0] if m.any() else None
 
     row_A = get_row(term_A)
     row_B = get_row(term_B)
@@ -524,7 +457,7 @@ def splitplot_engine(df: pd.DataFrame, block: str, main: str, sub: str, trait: s
     row_resid = get_row(term_resid)
 
     if row_A is None or row_blockA is None or row_resid is None:
-        raise HTTPException(status_code=500, detail="Split-plot ANOVA term parsing failed (check column names).")
+        raise HTTPException(status_code=400, detail="Split-plot term parsing failed. Check factor column names.")
 
     ms_A = float(row_A["ms"])
     df_A = float(row_A["df"])
@@ -534,9 +467,11 @@ def splitplot_engine(df: pd.DataFrame, block: str, main: str, sub: str, trait: s
     ms_resid = float(row_resid["ms"])
     df_resid = float(row_resid["df"])
 
+    # Correct test for main plot factor
     F_A = ms_A / ms_blockA if ms_blockA > 0 else np.nan
     p_A = float(stats.f.sf(F_A, df_A, df_blockA)) if np.isfinite(F_A) else None
 
+    # Sub plot factor and interaction use residual MS
     def f_p(row: Optional[pd.Series]) -> Tuple[Optional[float], Optional[float]]:
         if row is None:
             return None, None
@@ -549,7 +484,7 @@ def splitplot_engine(df: pd.DataFrame, block: str, main: str, sub: str, trait: s
     F_B, p_B = f_p(row_B)
     F_AB, p_AB = f_p(row_AB)
 
-    # Corrected table
+    # Build corrected ANOVA table for reporting
     an_corr = an0.copy()
     an_corr["F_corrected"] = None
     an_corr["p_corrected"] = None
@@ -591,11 +526,14 @@ def splitplot_engine(df: pd.DataFrame, block: str, main: str, sub: str, trait: s
             "alpha": alpha,
             "n_rows_used": int(d.shape[0]),
             "cv_percent": cv_percent(d[trait]),
-            "note": "Main plot factor is tested using Block:Main as the error term (correct split-plot test).",
+            "note": "Main plot factor tested using Block:Main error term (correct split-plot test).",
         },
         "tables": {
+            # Include block + block:main always for split-plot reporting
             "anova_raw": df_to_records(an0.replace({np.nan: None})),
-            "anova_corrected": df_to_records(an_corr[["source", "df", "sum_sq", "ms", "F_corrected", "p_corrected"]].replace({np.nan: None})),
+            "anova_corrected": df_to_records(
+                an_corr[["source", "df", "sum_sq", "ms", "F_corrected", "p_corrected"]].replace({np.nan: None})
+            ),
             "means": df_to_records(means_letters.rename(columns={"_AB_": "Main:Sub"})),
             "tukey": df_to_records(tukey_df),
             "assumptions": [sh, lv],
@@ -606,7 +544,7 @@ def splitplot_engine(df: pd.DataFrame, block: str, main: str, sub: str, trait: s
 
 
 # ----------------------------
-# Endpoints — Descriptive
+# Endpoint — Descriptive
 # ----------------------------
 @app.post("/analyze/descriptive")
 async def descriptive(
@@ -618,7 +556,7 @@ async def descriptive(
     require_cols(df, columns)
     if by is not None:
         require_cols(df, [by])
-        df[by] = df[by].astype(str)
+        df[by] = df[by].astype(str).str.strip()
 
     if by is None:
         rows = []
@@ -642,7 +580,6 @@ async def descriptive(
             "interpretation": "Descriptive statistics computed for the selected columns.",
         }
 
-    # Grouped
     rows = []
     for c in columns:
         d2 = df[[by, c]].copy()
@@ -726,101 +663,12 @@ async def analyze_anova_splitplot(
 
 
 # ----------------------------
-# Endpoint — Multi-trait ANOVA runner (robust, never 500 due to one bad trait)
+# Multi-trait endpoint — DISABLED for V1 stability
 # ----------------------------
 @app.post("/analyze/anova/multitrait")
-async def analyze_anova_multitrait(
-    file: UploadFile = File(...),
-    design: str = Form(...),                     # oneway | twoway | rcbd_factorial | splitplot
-    trait_columns: List[str] = Form(...),        # repeated fields OR comma list (Swagger)
-    factor: Optional[str] = Form(None),
-    factor_a: Optional[str] = Form(None),
-    factor_b: Optional[str] = Form(None),
-    block: Optional[str] = Form(None),
-    main_plot: Optional[str] = Form(None),
-    sub_plot: Optional[str] = Form(None),
-    alpha: float = Form(0.05),
-):
-    df = await load_csv(file)
-
-    design = (design or "").strip().lower()
-    alpha = float(alpha)
-
-    # Normalize trait_columns (Swagger may send one item like "Yield,Brix,Height")
-    normalized: List[str] = []
-    for item in trait_columns or []:
-        if item is None:
-            continue
-        parts = [p.strip() for p in str(item).split(",") if p.strip()]
-        normalized.extend(parts)
-    trait_columns = normalized
-
-    if not trait_columns:
-        raise HTTPException(status_code=400, detail="trait_columns is required (repeat the field or supply comma-separated list).")
-
-    # Validate traits exist
-    for t in trait_columns:
-        if t not in df.columns:
-            raise HTTPException(status_code=400, detail=f"Trait column '{t}' not found in CSV.")
-
-    results_by_trait: Dict[str, Any] = {}
-    summary: List[Dict[str, Any]] = []
-
-    for t in trait_columns:
-        try:
-            if design == "oneway":
-                if not factor:
-                    raise HTTPException(status_code=400, detail="factor is required for design=oneway.")
-                r = oneway_engine(df, factor, t, alpha)
-
-            elif design == "twoway":
-                if not factor_a or not factor_b:
-                    raise HTTPException(status_code=400, detail="factor_a and factor_b are required for design=twoway.")
-                r = twoway_engine(df, factor_a, factor_b, t, alpha)
-
-            elif design == "rcbd_factorial":
-                if not block or not factor_a or not factor_b:
-                    raise HTTPException(status_code=400, detail="block, factor_a and factor_b are required for design=rcbd_factorial.")
-                r = rcbd_factorial_engine(df, block, factor_a, factor_b, t, alpha)
-
-            elif design == "splitplot":
-                if not block or not main_plot or not sub_plot:
-                    raise HTTPException(status_code=400, detail="block, main_plot and sub_plot are required for design=splitplot.")
-                r = splitplot_engine(df, block, main_plot, sub_plot, t, alpha)
-
-            else:
-                raise HTTPException(status_code=400, detail="design must be one of: oneway, twoway, rcbd_factorial, splitplot.")
-
-            results_by_trait[t] = r
-            meta = (r or {}).get("meta", {})
-            summary.append({
-                "trait": t,
-                "design": meta.get("design"),
-                "n_rows_used": meta.get("n_rows_used"),
-                "cv_percent": meta.get("cv_percent"),
-            })
-
-        except HTTPException as e:
-            results_by_trait[t] = {"error": True, "detail": e.detail}
-            summary.append({"trait": t, "error": True, "detail": e.detail})
-
-        except Exception as e:
-            # Never crash the whole request because one trait failed
-            results_by_trait[t] = {"error": True, "detail": str(e)}
-            summary.append({"trait": t, "error": True, "detail": str(e)})
-
-    payload = {
-    "meta": {
-        "design": design,
-        "alpha": alpha,
-        "traits": trait_columns,
-        "n_rows": int(df.shape[0]),
-    },
-    "tables": {"summary": summary},
-    "results_by_trait": results_by_trait,
-    "plots": {},
-    "interpretation": "Multi-trait analysis completed. Any problematic trait is returned as an error object instead of crashing the whole run.",
-}
-
-return JSONResponse(content=to_json_safe(payload))
-
+async def analyze_anova_multitrait_disabled():
+    raise HTTPException(
+        status_code=410,
+        detail="Multi-trait analysis is disabled in VivaSense V1 for stability. "
+               "Run one-way/two-way/RCBD/split-plot per trait (call the single-trait endpoints multiple times)."
+    )
