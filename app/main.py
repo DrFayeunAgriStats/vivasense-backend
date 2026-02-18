@@ -713,11 +713,59 @@ async def analyze_anova_multitrait(
 
     design = (design or "").strip().lower()
     alpha = float(alpha)
+# Normalize trait_columns (Swagger may send "a,b,c" as one item)
+normalized = []
+for item in trait_columns or []:
+    if item is None:
+        continue
+    parts = [p.strip() for p in str(item).split(",") if p.strip()]
+    normalized.extend(parts)
 
+trait_columns = normalized
     # Validate trait columns
     if not trait_columns:
         raise HTTPException(status_code=400, detail="trait_columns is required (repeat the field for each trait).")
-    for t in trait_columns:
+    results_by_trait = {}
+summary = []
+
+for t in trait_columns:
+    try:
+        if design == "oneway":
+            if not factor:
+                raise HTTPException(status_code=400, detail="factor is required for design=oneway.")
+            r = oneway_engine(df, factor, t, alpha)
+
+        elif design == "twoway":
+            if not factor_a or not factor_b:
+                raise HTTPException(status_code=400, detail="factor_a and factor_b are required for design=twoway.")
+            r = twoway_engine(df, factor_a, factor_b, t, alpha)
+
+        elif design == "rcbd_factorial":
+            if not block or not factor_a or not factor_b:
+                raise HTTPException(status_code=400, detail="block, factor_a and factor_b are required.")
+            r = rcbd_factorial_engine(df, block, factor_a, factor_b, t, alpha)
+
+        elif design == "splitplot":
+            if not block or not main_plot or not sub_plot:
+                raise HTTPException(status_code=400, detail="block, main_plot and sub_plot are required.")
+            r = splitplot_engine(df, block, main_plot, sub_plot, t, alpha)
+
+        else:
+            raise HTTPException(status_code=400, detail="design must be one of: oneway, twoway, rcbd_factorial, splitplot.")
+
+        results_by_trait[t] = r
+        meta = r.get("meta", {})
+        summary.append({
+            "trait": t,
+            "design": meta.get("design"),
+            "n_rows_used": meta.get("n_rows_used"),
+            "cv_percent": meta.get("cv_percent"),
+        })
+
+    except Exception as e:
+        results_by_trait[t] = {"error": True, "detail": str(e)}
+        summary.append({"trait": t, "error": True, "detail": str(e)})
+
         if t not in df.columns:
             raise HTTPException(status_code=400, detail=f"Trait column '{t}' not found in CSV.")
 
