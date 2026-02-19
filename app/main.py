@@ -304,14 +304,6 @@ async def health():
         "endpoints": ["/api/chat", "/api/interpret", "/api/followup"]
     }
 
-
-# ══════════════════════════════════════════════════════════════
-#  RUN (for local testing only — Render uses uvicorn directly)
-# ══════════════════════════════════════════════════════════════
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("proxy:app", host="0.0.0.0", port=8000, reload=True)"""
 VivaSense V1 — app/main.py (SIMPLE + STABLE, multi-trait DISABLED)
 
 What this file supports (V1):
