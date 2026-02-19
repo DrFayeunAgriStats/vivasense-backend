@@ -1,58 +1,90 @@
 """
-VivaSense + FIA AI Proxy — FastAPI Backend
+VivaSense V1 + FIA AI Proxy - app/main.py
 ==========================================
-Deployment: Add this file to your existing Render project
-Environment variable required: ANTHROPIC_API_KEY
+Single FastAPI app combining:
+  - VivaSense statistical analysis endpoints
+  - FIA AI proxy endpoints (CSP 811 tutor + VivaSense interpretation)
 
-Endpoints:
-  POST /api/chat        — CSP 811 AI Tutor (Dr. Fayeun)
-  POST /api/interpret   — VivaSense AI interpretation
-  POST /api/followup    — VivaSense post-analysis chat
-  GET  /api/health      — Health check
+Environment variables required (set in Render dashboard):
+  ANTHROPIC_API_KEY = sk-ant-api03-...
 
-Install dependencies (add to requirements.txt):
-  fastapi
-  uvicorn
-  httpx
-  python-dotenv
+Analysis endpoints:
+  GET  /                           - root
+  GET  /health                     - health check
+  POST /analyze/descriptive        - descriptive statistics
+  POST /analyze/anova/oneway       - one-way ANOVA (CRD)
+  POST /analyze/anova/twoway       - two-way ANOVA (CRD factorial)
+  POST /analyze/anova/rcbd_factorial - factorial in RCBD
+  POST /analyze/anova/splitplot    - split-plot ANOVA
+
+AI proxy endpoints:
+  GET  /api/health                 - AI proxy health check
+  POST /api/chat                   - CSP 811 Dr. Fayeun tutor chat
+  POST /api/interpret              - VivaSense AI interpretation
+  POST /api/followup               - VivaSense post-analysis follow-up chat
 """
 
+from __future__ import annotations
+
+import io
 import os
 import json
+import base64
+import warnings
+from typing import Any, Dict, List, Optional, Tuple
+from collections import defaultdict
+from datetime import datetime, timedelta
+
+import numpy as np
+import pandas as pd
 import httpx
-from fastapi import FastAPI, HTTPException, Request
+
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, Optional
-from dotenv import load_dotenv
 
-load_dotenv()
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
-app = FastAPI(title="FIA AI Proxy", version="1.0.0")
+from scipy import stats
+import statsmodels.api as sm
+from statsmodels.formula.api import ols
+from statsmodels.stats.multicomp import pairwise_tukeyhsd
 
-# ── CORS: allow your Lovable domain ────────────────────────────
+warnings.filterwarnings("ignore")
+
+
+# ============================================================
+#  APP SETUP
+# ============================================================
+
+app = FastAPI(title="VivaSense V1 + FIA AI Proxy", version="1.0.0")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://fieldtoinsightacademy.com.ng",
         "https://www.fieldtoinsightacademy.com.ng",
-        "http://localhost:3000",   # for local testing
-        "http://localhost:5173",   # Vite dev server
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "*",
     ],
-    allow_credentials=True,
-    allow_methods=["POST", "GET"],
-    allow_headers=["Content-Type"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# ── Config ──────────────────────────────────────────────────────
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-ANTHROPIC_URL     = "https://api.anthropic.com/v1/messages"
-HAIKU_MODEL       = "claude-haiku-4-5-20251001"   # cost-optimised
-SONNET_MODEL      = "claude-sonnet-4-20250514"     # higher quality
 
-if not ANTHROPIC_API_KEY:
-    raise RuntimeError("ANTHROPIC_API_KEY environment variable not set.")
+# ============================================================
+#  ANTHROPIC CONFIG
+# ============================================================
+
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+HAIKU_MODEL = "claude-haiku-4-5-20251001"
+SONNET_MODEL = "claude-sonnet-4-20250514"
 
 ANTHROPIC_HEADERS = {
     "Content-Type": "application/json",
@@ -60,12 +92,10 @@ ANTHROPIC_HEADERS = {
     "anthropic-version": "2023-06-01",
 }
 
-# ── Rate limiting (simple in-memory — upgrade to Redis for scale) ──
-from collections import defaultdict
-from datetime import datetime, timedelta
-
+# Simple in-memory rate limiting
 request_counts: dict = defaultdict(list)
-MAX_REQUESTS_PER_MINUTE = 20  # per IP
+MAX_REQUESTS_PER_MINUTE = 20
+
 
 def is_rate_limited(ip: str) -> bool:
     now = datetime.now()
@@ -77,17 +107,17 @@ def is_rate_limited(ip: str) -> bool:
     return False
 
 
-# ══════════════════════════════════════════════════════════════
-#  SYSTEM PROMPTS
-# ══════════════════════════════════════════════════════════════
+# ============================================================
+#  AI SYSTEM PROMPTS
+# ============================================================
 
 CSP811_SYSTEM = """You are Dr. Fayeun, AI tutor for CSP 811 Biometrical Genetics at FUTA Nigeria, created by Prof. Lawrence Stephen Fayeun of the Field-to-Insight Academy (www.fieldtoinsightacademy.com.ng).
 
-STYLE: Warm, precise, step-by-step. Use Nigerian crops (cassava, cowpea, maize, sorghum) as examples. Show formula → explain symbols → worked example. End longer answers with "— Dr. Fayeun". Invite follow-up.
+STYLE: Warm, precise, step-by-step. Use Nigerian crops (cassava, cowpea, maize, sorghum) as examples. Show formula, explain symbols, then worked example. End longer answers with "- Dr. Fayeun". Invite follow-up.
 
-EXAM TIPS (share when relevant): State assumptions. Show working. Include units. Check h²≤1. Interpret results for breeding decisions.
+EXAM TIPS (share when relevant): State assumptions. Show working. Include units. Check h2 is less than or equal to 1. Interpret results for breeding decisions.
 
-CORE CONTENT COVERS: variance components, heritability estimation, generation mean analysis, diallel analysis, ANOVA experimental designs, regression and path analysis, G×E interaction, stability analysis (AMMI/WAASB), selection indices (Smith-Hazel), machine learning in plant breeding (rrBLUP, GBLUP, LASSO, Random Forest, Bayesian methods).
+CORE CONTENT COVERS: variance components, heritability estimation, generation mean analysis, diallel analysis, ANOVA experimental designs, regression and path analysis, GxE interaction, stability analysis (AMMI/WAASB), selection indices (Smith-Hazel), machine learning in plant breeding (rrBLUP, GBLUP, LASSO, Random Forest, Bayesian methods).
 
 For R code questions: provide complete runnable code with comments.
 For ANOVA questions: always present the full table.
@@ -96,64 +126,72 @@ Link statistical results to breeding decisions."""
 
 VIVASENSE_INTERPRET_SYSTEM = """You are Dr. Fayeun, Professor of Quantitative Genetics at FUTA and founder of Field-to-Insight Academy. You are interpreting statistical analysis results for a researcher who used VivaSense.
 
-Write as you would supervise a postgraduate student or write in a peer-reviewed paper:
+Write as you would supervise a postgraduate student or write in a peer-reviewed paper.
 
 STRUCTURE YOUR RESPONSE AS:
-1. **Overall Finding** — one sentence stating the key result
-2. **Statistical Evidence** — reference specific F-value, p-value, means from the results
-3. **Treatment/Genotype Comparisons** — interpret the post-hoc groupings specifically
-4. **Assumptions** — comment on whether assumptions were met; flag any violations with advice
-5. **Research Recommendation** — what the researcher should do or conclude
-6. **Thesis/Paper Sentence** — give them one ready-to-use sentence they can copy into their write-up
+1. Overall Finding - one sentence stating the key result
+2. Statistical Evidence - reference specific F-value, p-value, and means from the results
+3. Treatment/Genotype Comparisons - interpret the post-hoc groupings specifically
+4. Assumptions - comment on whether assumptions were met; flag any violations with advice
+5. Research Recommendation - what the researcher should do or conclude
+6. Thesis/Paper Sentence - give them one ready-to-use sentence they can copy into their write-up
 
 RULES:
-- Always reference the actual numbers provided — never speak generally
+- Always reference the actual numbers provided, never speak generally
 - Use Nigerian/West African crop context where the crop is mentioned
 - Keep language accessible to final-year undergraduates and postgraduates
 - If assumptions are violated, suggest the appropriate non-parametric alternative
-- End with: "— Dr. Fayeun, VivaSense"
+- End with: "- Dr. Fayeun, VivaSense"
 
 You are what separates a confused student from a confident researcher."""
 
 
 VIVASENSE_FOLLOWUP_SYSTEM = """You are Dr. Fayeun, Professor of Quantitative Genetics at FUTA. A researcher has run a statistical analysis on VivaSense and you have already provided an interpretation. They are now asking follow-up questions.
 
-You have full knowledge of their analysis results (provided below). Answer their specific question directly and concisely. If they ask about writing for a thesis, give them exact sentences. If they ask about assumption violations, give specific actionable advice. If they ask why a result is unexpected, reason through it with them.
+You have full knowledge of their analysis results provided below. Answer their specific question directly and concisely. If they ask about writing for a thesis, give them exact sentences. If they ask about assumption violations, give specific actionable advice. If they ask why a result is unexpected, reason through it with them.
 
-Always ground your answer in THEIR specific numbers — not generic advice.
-End with "— Dr. Fayeun" on detailed answers."""
+Always ground your answer in THEIR specific numbers, not generic advice.
+End with "- Dr. Fayeun" on detailed answers."""
 
 
-# ══════════════════════════════════════════════════════════════
-#  REQUEST MODELS
-# ══════════════════════════════════════════════════════════════
+# ============================================================
+#  AI REQUEST MODELS
+# ============================================================
 
 class Message(BaseModel):
-    role: str       # "user" or "assistant"
+    role: str
     content: str
+
 
 class ChatRequest(BaseModel):
     messages: List[Message]
-    topic: Optional[str] = None   # e.g. "Topic 2: Heritability"
+    topic: Optional[str] = None
     stream: Optional[bool] = True
+
 
 class InterpretRequest(BaseModel):
-    analysis_type: str            # e.g. "One-way ANOVA"
-    results: dict                 # full results JSON from VivaSense
-    crop: Optional[str] = None    # e.g. "cowpea", "cassava"
+    analysis_type: str
+    results: dict
+    crop: Optional[str] = None
     stream: Optional[bool] = True
+
 
 class FollowupRequest(BaseModel):
-    messages: List[Message]       # conversation history
-    analysis_results: dict        # always include results for context
+    messages: List[Message]
+    analysis_results: dict
     stream: Optional[bool] = True
 
 
-# ══════════════════════════════════════════════════════════════
-#  HELPER: call Anthropic with streaming
-# ══════════════════════════════════════════════════════════════
+# ============================================================
+#  AI HELPERS
+# ============================================================
 
-async def stream_anthropic(system: str, messages: list, model: str = HAIKU_MODEL, max_tokens: int = 1024):
+async def stream_anthropic(
+    system: str,
+    messages: list,
+    model: str = HAIKU_MODEL,
+    max_tokens: int = 1024
+):
     """Stream response from Anthropic API as SSE."""
     payload = {
         "model": model,
@@ -162,11 +200,14 @@ async def stream_anthropic(system: str, messages: list, model: str = HAIKU_MODEL
         "messages": messages,
         "stream": True,
     }
+
     async def generate():
         async with httpx.AsyncClient(timeout=60.0) as client:
-            async with client.stream("POST", ANTHROPIC_URL,
-                                     headers=ANTHROPIC_HEADERS,
-                                     json=payload) as response:
+            async with client.stream(
+                "POST", ANTHROPIC_URL,
+                headers=ANTHROPIC_HEADERS,
+                json=payload
+            ) as response:
                 if response.status_code != 200:
                     error = await response.aread()
                     yield f"data: {json.dumps({'error': error.decode()})}\n\n"
@@ -174,13 +215,21 @@ async def stream_anthropic(system: str, messages: list, model: str = HAIKU_MODEL
                 async for line in response.aiter_lines():
                     if line.startswith("data: "):
                         yield f"{line}\n\n"
-    return StreamingResponse(generate(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache",
-                                      "X-Accel-Buffering": "no"})
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
 
 
-async def call_anthropic(system: str, messages: list, model: str = HAIKU_MODEL, max_tokens: int = 1024) -> str:
-    """Non-streaming call — returns full text."""
+async def call_anthropic(
+    system: str,
+    messages: list,
+    model: str = HAIKU_MODEL,
+    max_tokens: int = 1024
+) -> str:
+    """Non-streaming call - returns full text."""
     payload = {
         "model": model,
         "max_tokens": max_tokens,
@@ -188,27 +237,44 @@ async def call_anthropic(system: str, messages: list, model: str = HAIKU_MODEL, 
         "messages": messages,
     }
     async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(ANTHROPIC_URL, headers=ANTHROPIC_HEADERS, json=payload)
+        response = await client.post(
+            ANTHROPIC_URL,
+            headers=ANTHROPIC_HEADERS,
+            json=payload
+        )
         if response.status_code != 200:
-            raise HTTPException(status_code=response.status_code,
-                                detail=response.json().get("error", {}).get("message", "API error"))
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=response.json().get("error", {}).get("message", "API error")
+            )
         data = response.json()
         return data["content"][0]["text"]
 
 
-# ══════════════════════════════════════════════════════════════
-#  ENDPOINT 1 — CSP 811 AI TUTOR CHAT
-# ══════════════════════════════════════════════════════════════
+# ============================================================
+#  AI ENDPOINTS
+# ============================================================
+
+@app.get("/api/health")
+async def api_health():
+    """Health check for AI proxy."""
+    return {
+        "status": "ok",
+        "service": "FIA AI Proxy",
+        "api_key_configured": bool(ANTHROPIC_API_KEY),
+        "endpoints": ["/api/chat", "/api/interpret", "/api/followup"],
+    }
+
 
 @app.post("/api/chat")
 async def chat(request: Request, body: ChatRequest):
-    """
-    CSP 811 Dr. Fayeun AI tutor chat.
-    Called by the Lovable frontend instead of hitting Anthropic directly.
-    """
+    """CSP 811 Dr. Fayeun AI tutor chat."""
     client_ip = request.client.host
     if is_rate_limited(client_ip):
         raise HTTPException(status_code=429, detail="Too many requests. Please wait a moment.")
+
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(status_code=503, detail="AI service not configured. Contact administrator.")
 
     system = CSP811_SYSTEM
     if body.topic:
@@ -223,21 +289,16 @@ async def chat(request: Request, body: ChatRequest):
         return {"content": text}
 
 
-# ══════════════════════════════════════════════════════════════
-#  ENDPOINT 2 — VIVASENSE AI INTERPRETATION
-# ══════════════════════════════════════════════════════════════
-
 @app.post("/api/interpret")
 async def interpret(request: Request, body: InterpretRequest):
-    """
-    Generate Dr. Fayeun's interpretation of VivaSense analysis results.
-    Called automatically after every analysis run.
-    """
+    """Generate Dr. Fayeun's interpretation of VivaSense analysis results."""
     client_ip = request.client.host
     if is_rate_limited(client_ip):
         raise HTTPException(status_code=429, detail="Too many requests. Please wait a moment.")
 
-    # Build the user message from results
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(status_code=503, detail="AI service not configured. Contact administrator.")
+
     results_text = json.dumps(body.results, indent=2)
     crop_context = f"Crop/study context: {body.crop}" if body.crop else ""
 
@@ -252,31 +313,29 @@ Provide a complete interpretation following your structured format."""
 
     messages = [{"role": "user", "content": user_message}]
 
-    # Use Sonnet for interpretation — higher quality for the key selling point
     if body.stream:
-        return await stream_anthropic(VIVASENSE_INTERPRET_SYSTEM, messages,
-                                      model=SONNET_MODEL, max_tokens=1200)
+        return await stream_anthropic(
+            VIVASENSE_INTERPRET_SYSTEM, messages,
+            model=SONNET_MODEL, max_tokens=1200
+        )
     else:
-        text = await call_anthropic(VIVASENSE_INTERPRET_SYSTEM, messages,
-                                    model=SONNET_MODEL, max_tokens=1200)
+        text = await call_anthropic(
+            VIVASENSE_INTERPRET_SYSTEM, messages,
+            model=SONNET_MODEL, max_tokens=1200
+        )
         return {"interpretation": text}
 
 
-# ══════════════════════════════════════════════════════════════
-#  ENDPOINT 3 — VIVASENSE POST-ANALYSIS FOLLOW-UP CHAT
-# ══════════════════════════════════════════════════════════════
-
 @app.post("/api/followup")
 async def followup(request: Request, body: FollowupRequest):
-    """
-    Post-analysis chat — user asks follow-up questions about their results.
-    Analysis results always included in context so Dr. Fayeun can reference specifics.
-    """
+    """Post-analysis chat - user asks follow-up questions about their results."""
     client_ip = request.client.host
     if is_rate_limited(client_ip):
         raise HTTPException(status_code=429, detail="Too many requests. Please wait a moment.")
 
-    # Inject results into system prompt so every reply is grounded in actual data
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(status_code=503, detail="AI service not configured. Contact administrator.")
+
     results_context = json.dumps(body.analysis_results, indent=2)
     system = VIVASENSE_FOLLOWUP_SYSTEM + f"\n\nANALYSIS RESULTS IN CONTEXT:\n{results_context}"
 
@@ -289,75 +348,9 @@ async def followup(request: Request, body: FollowupRequest):
         return {"content": text}
 
 
-# ══════════════════════════════════════════════════════════════
-#  HEALTH CHECK
-# ══════════════════════════════════════════════════════════════
-
-@app.get("/api/health")
-async def health():
-    """Render will ping this to keep the service alive."""
-    key_set = bool(ANTHROPIC_API_KEY)
-    return {
-        "status": "ok",
-        "service": "FIA AI Proxy",
-        "api_key_configured": key_set,
-        "endpoints": ["/api/chat", "/api/interpret", "/api/followup"]
-    }
-
-VivaSense V1 — app/main.py (SIMPLE + STABLE, multi-trait DISABLED)
-
-What this file supports (V1):
-- Descriptive statistics (optionally grouped)
-- One-way ANOVA (CRD) + Tukey HSD + compact letter display (CLD)
-- Two-way ANOVA (CRD factorial) + Tukey on A:B combinations
-- Factorial in RCBD (Block + A*B) + Tukey on A:B combinations
-- Split-plot ANOVA (correct main-plot test using Block:Main as error) + Tukey on Main:Sub combinations
-- Mean plot (SE) + boxplot
-- Assumption checks (Shapiro, Levene)
-- Plain-English interpretation
-
-Important:
-- All endpoints accept multipart/form-data (Form + File), NOT JSON bodies.
-- Multi-trait endpoint is intentionally DISABLED for V1 stability.
-"""
-
-from __future__ import annotations
-
-import io
-import base64
-import warnings
-from typing import Any, Dict, List, Optional, Tuple
-
-import numpy as np
-import pandas as pd
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
-from scipy import stats
-import statsmodels.api as sm
-from statsmodels.formula.api import ols
-from statsmodels.stats.multicomp import pairwise_tukeyhsd
-
-warnings.filterwarnings("ignore")
-
-
-# ----------------------------
-# FastAPI app
-# ----------------------------
-app = FastAPI(title="VivaSense V1", version="1.0.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+# ============================================================
+#  VIVASENSE ROOT + HEALTH
+# ============================================================
 
 @app.get("/")
 def root():
@@ -369,9 +362,10 @@ def health():
     return {"status": "healthy"}
 
 
-# ----------------------------
-# Helpers
-# ----------------------------
+# ============================================================
+#  VIVASENSE HELPERS
+# ============================================================
+
 def _b64_png(fig) -> str:
     buf = io.BytesIO()
     fig.tight_layout()
@@ -413,20 +407,20 @@ def coerce_numeric(s: pd.Series) -> pd.Series:
 def clean_for_model(df: pd.DataFrame, y: str, x_cols: List[str]) -> pd.DataFrame:
     d = df.copy()
     require_cols(d, [y] + x_cols)
-
     d[y] = coerce_numeric(d[y])
     for c in x_cols:
         d[c] = d[c].astype(str).str.strip()
-
     d = d.dropna(subset=[y] + x_cols)
-
     if d.shape[0] < 3:
-        raise HTTPException(status_code=400, detail=f"Not enough valid rows after cleaning for trait '{y}'.")
-
-    # If single-factor analysis, require >=2 levels
+        raise HTTPException(
+            status_code=400,
+            detail=f"Not enough valid rows after cleaning for trait '{y}'."
+        )
     if len(x_cols) == 1 and d[x_cols[0]].nunique(dropna=True) < 2:
-        raise HTTPException(status_code=400, detail=f"Need at least 2 levels in '{x_cols[0]}' for ANOVA.")
-
+        raise HTTPException(
+            status_code=400,
+            detail=f"Need at least 2 levels in '{x_cols[0]}' for ANOVA."
+        )
     return d
 
 
@@ -506,7 +500,11 @@ def box_plot(df: pd.DataFrame, y: str, group: str, title: str) -> str:
     return _b64_png(fig)
 
 
-def compact_letter_display(groups: List[str], means: Dict[str, float], sig: Dict[Tuple[str, str], bool]) -> Dict[str, str]:
+def compact_letter_display(
+    groups: List[str],
+    means: Dict[str, float],
+    sig: Dict[Tuple[str, str], bool]
+) -> Dict[str, str]:
     ordered = sorted(groups, key=lambda g: means.get(g, -np.inf), reverse=True)
     letters_for = {g: "" for g in ordered}
     letter_sets: List[List[str]] = []
@@ -538,7 +536,12 @@ def compact_letter_display(groups: List[str], means: Dict[str, float], sig: Dict
     return letters_for
 
 
-def tukey_letters(df: pd.DataFrame, y: str, group: str, alpha: float) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def tukey_letters(
+    df: pd.DataFrame,
+    y: str,
+    group: str,
+    alpha: float
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
     mt = mean_table(df, y, group)
 
     if df[group].nunique() < 2:
@@ -546,8 +549,15 @@ def tukey_letters(df: pd.DataFrame, y: str, group: str, alpha: float) -> Tuple[p
     if df[y].dropna().shape[0] < 3:
         raise HTTPException(status_code=400, detail=f"Not enough numeric observations in '{y}' for Tukey.")
 
-    res = pairwise_tukeyhsd(endog=df[y].values, groups=df[group].astype(str).values, alpha=alpha)
-    tukey_df = pd.DataFrame(res._results_table.data[1:], columns=res._results_table.data[0])
+    res = pairwise_tukeyhsd(
+        endog=df[y].values,
+        groups=df[group].astype(str).values,
+        alpha=alpha
+    )
+    tukey_df = pd.DataFrame(
+        res._results_table.data[1:],
+        columns=res._results_table.data[0]
+    )
 
     uniq = mt[group].astype(str).tolist()
     means = {row[group]: float(row["mean"]) for _, row in mt.iterrows()}
@@ -564,7 +574,12 @@ def tukey_letters(df: pd.DataFrame, y: str, group: str, alpha: float) -> Tuple[p
     return tukey_df, mt
 
 
-def interpret_anova(title: str, p_map: Dict[str, Optional[float]], cv: Optional[float], alpha: float) -> str:
+def interpret_anova(
+    title: str,
+    p_map: Dict[str, Optional[float]],
+    cv: Optional[float],
+    alpha: float
+) -> str:
     lines = [f"{title} interpretation:"]
     if cv is not None:
         lines.append(f"- CV = {cv:.2f}%. Lower CV generally indicates more precise measurements.")
@@ -572,30 +587,29 @@ def interpret_anova(title: str, p_map: Dict[str, Optional[float]], cv: Optional[
         if p is None:
             continue
         if p < alpha:
-            lines.append(f"- **{term}** is significant (p = {p:.4f}).")
+            lines.append(f"- {term} is significant (p = {p:.4f}).")
         else:
-            lines.append(f"- **{term}** is not significant (p = {p:.4f}).")
+            lines.append(f"- {term} is not significant (p = {p:.4f}).")
     lines.append("- Assumptions: check Shapiro (normality) and Levene (equal variance).")
     return "\n".join(lines)
 
 
-# ----------------------------
-# Analysis engines
-# ----------------------------
+# ============================================================
+#  VIVASENSE ANALYSIS ENGINES
+# ============================================================
+
 def oneway_engine(df: pd.DataFrame, factor: str, trait: str, alpha: float) -> Dict[str, Any]:
     d = clean_for_model(df, trait, [factor])
-
     model = ols(f"{trait} ~ C({factor})", data=d).fit()
     anova = sm.stats.anova_lm(model, typ=2).reset_index().rename(columns={"index": "source"})
     anova["ms"] = anova["sum_sq"] / anova["df"]
 
     sh = shapiro_test(model.resid)
     lv = levene_test(d, trait, factor)
-
     tukey_df, means_letters = tukey_letters(d, trait, factor, alpha)
 
     plots = {
-        "mean_plot": mean_plot(d, trait, factor, f"Means ± SE by {factor}"),
+        "mean_plot": mean_plot(d, trait, factor, f"Means +/- SE by {factor}"),
         "box_plot": box_plot(d, trait, factor, f"Boxplot of {trait} by {factor}"),
     }
 
@@ -621,11 +635,15 @@ def oneway_engine(df: pd.DataFrame, factor: str, trait: str, alpha: float) -> Di
             "assumptions": [sh, lv],
         },
         "plots": plots,
-        "interpretation": interpret_anova("One-way ANOVA", {factor: p_factor}, cv_percent(d[trait]), alpha),
+        "interpretation": interpret_anova(
+            "One-way ANOVA", {factor: p_factor}, cv_percent(d[trait]), alpha
+        ),
     }
 
 
-def twoway_engine(df: pd.DataFrame, a: str, b: str, trait: str, alpha: float) -> Dict[str, Any]:
+def twoway_engine(
+    df: pd.DataFrame, a: str, b: str, trait: str, alpha: float
+) -> Dict[str, Any]:
     d = clean_for_model(df, trait, [a, b])
     d["_AB_"] = d[a].astype(str) + ":" + d[b].astype(str)
 
@@ -635,11 +653,10 @@ def twoway_engine(df: pd.DataFrame, a: str, b: str, trait: str, alpha: float) ->
 
     sh = shapiro_test(model.resid)
     lv = levene_test(d, trait, "_AB_")
-
     tukey_df, means_letters = tukey_letters(d, trait, "_AB_", alpha)
 
     plots = {
-        "mean_plot": mean_plot(d, trait, "_AB_", f"Means ± SE by {a}:{b}"),
+        "mean_plot": mean_plot(d, trait, "_AB_", f"Means +/- SE by {a}:{b}"),
         "box_plot": box_plot(d, trait, "_AB_", f"Boxplot of {trait} by {a}:{b}"),
     }
 
@@ -650,7 +667,7 @@ def twoway_engine(df: pd.DataFrame, a: str, b: str, trait: str, alpha: float) ->
     p_map = {
         a: p_of(f"C\\({a}\\)"),
         b: p_of(f"C\\({b}\\)"),
-        f"{a}×{b}": p_of(":"),
+        f"{a}x{b}": p_of(":"),
     }
 
     return {
@@ -670,11 +687,15 @@ def twoway_engine(df: pd.DataFrame, a: str, b: str, trait: str, alpha: float) ->
             "assumptions": [sh, lv],
         },
         "plots": plots,
-        "interpretation": interpret_anova("Two-way ANOVA", p_map, cv_percent(d[trait]), alpha),
+        "interpretation": interpret_anova(
+            "Two-way ANOVA", p_map, cv_percent(d[trait]), alpha
+        ),
     }
 
 
-def rcbd_factorial_engine(df: pd.DataFrame, block: str, a: str, b: str, trait: str, alpha: float) -> Dict[str, Any]:
+def rcbd_factorial_engine(
+    df: pd.DataFrame, block: str, a: str, b: str, trait: str, alpha: float
+) -> Dict[str, Any]:
     d = clean_for_model(df, trait, [block, a, b])
     d["_AB_"] = d[a].astype(str) + ":" + d[b].astype(str)
 
@@ -684,11 +705,10 @@ def rcbd_factorial_engine(df: pd.DataFrame, block: str, a: str, b: str, trait: s
 
     sh = shapiro_test(model.resid)
     lv = levene_test(d, trait, "_AB_")
-
     tukey_df, means_letters = tukey_letters(d, trait, "_AB_", alpha)
 
     plots = {
-        "mean_plot": mean_plot(d, trait, "_AB_", f"Means ± SE by {a}:{b} (RCBD)"),
+        "mean_plot": mean_plot(d, trait, "_AB_", f"Means +/- SE by {a}:{b} (RCBD)"),
         "box_plot": box_plot(d, trait, "_AB_", f"Boxplot of {trait} by {a}:{b} (RCBD)"),
     }
 
@@ -700,7 +720,7 @@ def rcbd_factorial_engine(df: pd.DataFrame, block: str, a: str, b: str, trait: s
         "Block": p_of(f"C\\({block}\\)"),
         a: p_of(f"C\\({a}\\)"),
         b: p_of(f"C\\({b}\\)"),
-        f"{a}×{b}": p_of(":"),
+        f"{a}x{b}": p_of(":"),
     }
 
     return {
@@ -715,24 +735,21 @@ def rcbd_factorial_engine(df: pd.DataFrame, block: str, a: str, b: str, trait: s
             "cv_percent": cv_percent(d[trait]),
         },
         "tables": {
-            # RCBD must show block term (replication)
             "anova": df_to_records(anova[["source", "df", "sum_sq", "ms", "F", "PR(>F)"]]),
             "means": df_to_records(means_letters.rename(columns={"_AB_": "A:B"})),
             "tukey": df_to_records(tukey_df),
             "assumptions": [sh, lv],
         },
         "plots": plots,
-        "interpretation": interpret_anova("Factorial RCBD ANOVA", p_map, cv_percent(d[trait]), alpha),
+        "interpretation": interpret_anova(
+            "Factorial RCBD ANOVA", p_map, cv_percent(d[trait]), alpha
+        ),
     }
 
 
-def splitplot_engine(df: pd.DataFrame, block: str, main: str, sub: str, trait: str, alpha: float) -> Dict[str, Any]:
-    """
-    Split-plot correct testing:
-      Fit: y ~ block + main*sub + block:main
-      Test main using MS(block:main) denominator
-      Test sub and main:sub using residual MS
-    """
+def splitplot_engine(
+    df: pd.DataFrame, block: str, main: str, sub: str, trait: str, alpha: float
+) -> Dict[str, Any]:
     d = clean_for_model(df, trait, [block, main, sub])
     d["_AB_"] = d[main].astype(str) + ":" + d[sub].astype(str)
 
@@ -742,9 +759,7 @@ def splitplot_engine(df: pd.DataFrame, block: str, main: str, sub: str, trait: s
     an0 = sm.stats.anova_lm(model, typ=2).reset_index().rename(columns={"index": "source"})
     an0["ms"] = an0["sum_sq"] / an0["df"]
 
-    # Extract needed terms for corrected p-values
     src = an0["source"].astype(str)
-
     term_A = f"C({main})"
     term_B = f"C({sub})"
     term_AB = f"C({main}):C({sub})"
@@ -762,21 +777,21 @@ def splitplot_engine(df: pd.DataFrame, block: str, main: str, sub: str, trait: s
     row_resid = get_row(term_resid)
 
     if row_A is None or row_blockA is None or row_resid is None:
-        raise HTTPException(status_code=400, detail="Split-plot term parsing failed. Check factor column names.")
+        raise HTTPException(
+            status_code=400,
+            detail="Split-plot term parsing failed. Check factor column names."
+        )
 
     ms_A = float(row_A["ms"])
     df_A = float(row_A["df"])
     ms_blockA = float(row_blockA["ms"])
     df_blockA = float(row_blockA["df"])
-
     ms_resid = float(row_resid["ms"])
     df_resid = float(row_resid["df"])
 
-    # Correct test for main plot factor
     F_A = ms_A / ms_blockA if ms_blockA > 0 else np.nan
     p_A = float(stats.f.sf(F_A, df_A, df_blockA)) if np.isfinite(F_A) else None
 
-    # Sub plot factor and interaction use residual MS
     def f_p(row: Optional[pd.Series]) -> Tuple[Optional[float], Optional[float]]:
         if row is None:
             return None, None
@@ -789,7 +804,6 @@ def splitplot_engine(df: pd.DataFrame, block: str, main: str, sub: str, trait: s
     F_B, p_B = f_p(row_B)
     F_AB, p_AB = f_p(row_AB)
 
-    # Build corrected ANOVA table for reporting
     an_corr = an0.copy()
     an_corr["F_corrected"] = None
     an_corr["p_corrected"] = None
@@ -807,18 +821,17 @@ def splitplot_engine(df: pd.DataFrame, block: str, main: str, sub: str, trait: s
 
     sh = shapiro_test(model.resid)
     lv = levene_test(d, trait, "_AB_")
-
     tukey_df, means_letters = tukey_letters(d, trait, "_AB_", alpha)
 
     plots = {
-        "mean_plot": mean_plot(d, trait, "_AB_", f"Means ± SE by {main}:{sub} (Split-plot)"),
+        "mean_plot": mean_plot(d, trait, "_AB_", f"Means +/- SE by {main}:{sub} (Split-plot)"),
         "box_plot": box_plot(d, trait, "_AB_", f"Boxplot of {trait} by {main}:{sub} (Split-plot)"),
     }
 
     p_map = {
         f"Main plot ({main})": p_A,
         f"Sub plot ({sub})": p_B,
-        f"{main}×{sub}": p_AB,
+        f"{main}x{sub}": p_AB,
     }
 
     return {
@@ -834,7 +847,6 @@ def splitplot_engine(df: pd.DataFrame, block: str, main: str, sub: str, trait: s
             "note": "Main plot factor tested using Block:Main error term (correct split-plot test).",
         },
         "tables": {
-            # Include block + block:main always for split-plot reporting
             "anova_raw": df_to_records(an0.replace({np.nan: None})),
             "anova_corrected": df_to_records(
                 an_corr[["source", "df", "sum_sq", "ms", "F_corrected", "p_corrected"]].replace({np.nan: None})
@@ -844,13 +856,16 @@ def splitplot_engine(df: pd.DataFrame, block: str, main: str, sub: str, trait: s
             "assumptions": [sh, lv],
         },
         "plots": plots,
-        "interpretation": interpret_anova("Split-plot ANOVA", p_map, cv_percent(d[trait]), alpha),
+        "interpretation": interpret_anova(
+            "Split-plot ANOVA", p_map, cv_percent(d[trait]), alpha
+        ),
     }
 
 
-# ----------------------------
-# Endpoint — Descriptive
-# ----------------------------
+# ============================================================
+#  VIVASENSE ANALYSIS ENDPOINTS
+# ============================================================
+
 @app.post("/analyze/descriptive")
 async def descriptive(
     file: UploadFile = File(...),
@@ -911,9 +926,6 @@ async def descriptive(
     }
 
 
-# ----------------------------
-# Endpoints — ANOVA single trait
-# ----------------------------
 @app.post("/analyze/anova/oneway")
 async def analyze_anova_oneway(
     file: UploadFile = File(...),
@@ -967,13 +979,12 @@ async def analyze_anova_splitplot(
     return splitplot_engine(df, block, main_plot, sub_plot, trait, float(alpha))
 
 
-# ----------------------------
-# Multi-trait endpoint — DISABLED for V1 stability
-# ----------------------------
 @app.post("/analyze/anova/multitrait")
 async def analyze_anova_multitrait_disabled():
     raise HTTPException(
         status_code=410,
-        detail="Multi-trait analysis is disabled in VivaSense V1 for stability. "
-               "Run one-way/two-way/RCBD/split-plot per trait (call the single-trait endpoints multiple times)."
+        detail=(
+            "Multi-trait analysis is disabled in VivaSense V1 for stability. "
+            "Run one-way/two-way/RCBD/split-plot per trait using the single-trait endpoints."
+        ),
     )
