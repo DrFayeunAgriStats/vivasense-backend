@@ -394,7 +394,27 @@ async def interpret(request: Request, body: InterpretRequest):
     if context_lines:
         context_block = "RESEARCHER'S STUDY CONTEXT:\n" + "\n".join(context_lines) + "\n\n"
 
-    results_text = json.dumps(body.results, indent=2)
+    # Strip base64 plots from results before sending to AI
+    # to avoid exceeding token limits
+    def strip_plots(obj):
+        if isinstance(obj, dict):
+            return {
+                k: strip_plots(v)
+                for k, v in obj.items()
+                if k not in ('mean_plot', 'box_plot', 'interaction_plot',
+                             'significance_heatmap', 'correlation_heatmap',
+                             'pca_biplot', 'plots')
+            }
+        elif isinstance(obj, list):
+            return [strip_plots(i) for i in obj]
+        return obj
+
+    clean_results = strip_plots(body.results)
+    results_text = json.dumps(clean_results, indent=2)
+
+    # Truncate if still too long (keep under ~12000 chars)
+    if len(results_text) > 12000:
+        results_text = results_text[:12000] + "\n... [truncated for brevity]"
 
     user_message = f"""Please interpret these {body.analysis_type} results for the researcher.
 
