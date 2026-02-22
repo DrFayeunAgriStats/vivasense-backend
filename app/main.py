@@ -364,9 +364,9 @@ async def chat(request: Request, body: ChatRequest):
     messages = [{"role": m.role, "content": m.content} for m in body.messages]
 
     if body.stream:
-        return await stream_anthropic(system, messages, model=HAIKU_MODEL, max_tokens=1024)
+        return await stream_anthropic(system, messages, model=HAIKU_MODEL, max_tokens=1500)
     else:
-        text = await call_anthropic(system, messages, model=HAIKU_MODEL, max_tokens=1024)
+        text = await call_anthropic(system, messages, model=HAIKU_MODEL, max_tokens=1500)
         return {"content": text}
 
 
@@ -440,9 +440,9 @@ async def followup(request: Request, body: FollowupRequest):
     messages = [{"role": m.role, "content": m.content} for m in body.messages]
 
     if body.stream:
-        return await stream_anthropic(system, messages, model=HAIKU_MODEL, max_tokens=1000)
+        return await stream_anthropic(system, messages, model=HAIKU_MODEL, max_tokens=1500)
     else:
-        text = await call_anthropic(system, messages, model=HAIKU_MODEL, max_tokens=1000)
+        text = await call_anthropic(system, messages, model=HAIKU_MODEL, max_tokens=1500)
         return {"content": text}
 
 
