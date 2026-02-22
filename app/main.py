@@ -421,6 +421,15 @@ async def interpret(request: Request, body: InterpretRequest):
 {context_block}Statistical Results:
 {results_text}
 
+CRITICAL ACCURACY INSTRUCTIONS:
+1. Every number you write MUST be copied exactly from the Statistical Results above
+2. Do NOT round, estimate, or recall numbers from memory
+3. Before stating any mean value, find it in the results and copy it precisely
+4. Plant heights in the 180-250cm range are correct for cassava - do not alter them
+5. If a mean is 242.67, write 242.67 - not 24.27, not 72.67
+6. Double-check every statistic before including it in your interpretation
+7. If you are unsure of a number, quote it directly from the results rather than paraphrasing
+
 Provide a complete, personalised interpretation using the study context provided above."""
 
     messages = [{"role": "user", "content": user_message}]
