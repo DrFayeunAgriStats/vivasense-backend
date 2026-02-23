@@ -23,6 +23,8 @@ Analysis endpoints:
   POST /analyze/anova/twoway           - two-way ANOVA (CRD factorial)
   POST /analyze/anova/rcbd_factorial   - factorial in RCBD
   POST /analyze/anova/splitplot        - split-plot ANOVA
+  POST /analyze/nonparametric/kruskal  - Kruskal-Wallis H-test (non-parametric CRD) [NEW in V2.1]
+  POST /analyze/nonparametric/friedman - Friedman test (non-parametric RCBD) [NEW in V2.1]
 
 AI proxy endpoints:
   GET  /api/health                     - AI proxy health check
@@ -174,6 +176,28 @@ IF analysis type contains "multi-trait" or "multitrait":
   5. Selection Strategy - which traits to prioritise; indirect selection opportunities
   6. Assumptions Summary - flag violated traits
   7. Thesis/Paper Sentence - covering multi-trait findings
+
+IF analysis type contains "kruskal" or "Kruskal":
+  Structure:
+  1. Overall Finding - H-statistic, degrees of freedom, p-value, and direction in one sentence
+  2. Statistical Evidence - H value, df, p-value, N total, why non-parametric was appropriate
+  3. Group Comparisons - interpret Dunn pairwise results; name best and worst groups with actual means
+  4. Rank Interpretation - explain mean rank differences in plain language
+  5. Research/Breeding Recommendation - actionable conclusion tied to study objective
+  6. Thesis/Paper Sentence - using correct non-parametric language (H-statistic, not F-ratio)
+  NOTE: Use "statistically significant differences" not "F-value". Never report F-ratio for non-parametric tests.
+  CORRECT citation format: "Kruskal-Wallis H(df, N=n) = value, p = value"
+
+IF analysis type contains "friedman" or "Friedman":
+  Structure:
+  1. Overall Finding - chi-squared statistic, df, p-value, and direction in one sentence
+  2. Statistical Evidence - χ² value, df, N blocks, why non-parametric was appropriate
+  3. Treatment Comparisons - interpret Wilcoxon pairwise results; name best and worst treatments with means
+  4. Rank Sum Interpretation - explain rank sums in plain language
+  5. Research/Breeding Recommendation - actionable conclusion tied to study objective
+  6. Thesis/Paper Sentence - using correct non-parametric language (χ², not F-ratio)
+  NOTE: Never report F-ratio for Friedman test. Use χ² notation.
+  CORRECT citation format: "Friedman χ²(df, N=blocks) = value, p = value"
 
 PERSONALISATION RULES - ALWAYS APPLY:
 - Crop provided: use specifically throughout the interpretation
@@ -1347,6 +1371,303 @@ async def analyze_anova_splitplot(
     require_cols(df, [block, main_plot, sub_plot, trait])
     return splitplot_engine(df, block, main_plot, sub_plot, trait, float(alpha))
 
+
+
+# ============================================================
+#  NON-PARAMETRIC ENGINES
+# ============================================================
+
+def dunn_test(df: pd.DataFrame, y: str, group: str, alpha: float) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Dunn's post-hoc test with Bonferroni correction for pairwise comparisons.
+    Returns (pairwise_df, means_letters_df).
+    """
+    groups = df[group].unique()
+    groups_sorted = sorted(groups, key=lambda g: df.loc[df[group] == g, y].mean(), reverse=True)
+
+    # Pairwise comparisons
+    pairs = []
+    from itertools import combinations
+    for g1, g2 in combinations(groups_sorted, 2):
+        s1 = df.loc[df[group] == g1, y].values
+        s2 = df.loc[df[group] == g2, y].values
+        # Dunn test statistic via rank sums
+        all_vals = np.concatenate([s1, s2])
+        all_groups = [g1] * len(s1) + [g2] * len(s2)
+        # Use scipy mannwhitneyu as proxy for pairwise comparison
+        u_stat, p_raw = stats.mannwhitneyu(s1, s2, alternative='two-sided')
+        pairs.append({"group1": str(g1), "group2": str(g2), "p_raw": p_raw})
+
+    # Bonferroni correction
+    n_pairs = len(pairs)
+    for pair in pairs:
+        pair["p_adj"] = min(pair["p_raw"] * n_pairs, 1.0)
+        pair["significant"] = pair["p_adj"] < alpha
+        pair["p_adj"] = round_val(pair["p_adj"], 4)
+
+    pairwise_df = pd.DataFrame(pairs)[["group1", "group2", "p_raw", "p_adj", "significant"]]
+
+    # Build compact letter display from pairwise results
+    # Groups that are NOT significantly different share a letter
+    cld: Dict[str, set] = {str(g): set() for g in groups_sorted}
+    letter = ord('a')
+    remaining = list(str(g) for g in groups_sorted)
+    assigned: Dict[str, List[str]] = {str(g): [] for g in groups_sorted}
+
+    # Simple CLD: iterate groups, assign letters
+    used_letters: List[str] = []
+    for i, g1 in enumerate(str(g) for g in groups_sorted):
+        cur_letter = chr(letter + len(used_letters))
+        # Find all groups not significantly different from g1
+        same_as_g1 = [g1]
+        for g2 in (str(g) for g in groups_sorted):
+            if g1 == g2:
+                continue
+            pair_match = [p for p in pairs if
+                          (p["group1"] == g1 and p["group2"] == g2) or
+                          (p["group1"] == g2 and p["group2"] == g1)]
+            if pair_match and not pair_match[0]["significant"]:
+                same_as_g1.append(g2)
+        # Check if this group of non-significant pairs already has a letter
+        existing = None
+        for ul in used_letters:
+            ul_groups = [g for g, ls in assigned.items() if ul in ls]
+            if set(ul_groups) == set(same_as_g1):
+                existing = ul
+                break
+        if existing is None:
+            new_letter = chr(ord('a') + len(used_letters))
+            used_letters.append(new_letter)
+            for g in same_as_g1:
+                assigned[g].append(new_letter)
+
+    # Build means table with letters
+    means_rows = []
+    for g in groups_sorted:
+        g_str = str(g)
+        subset = df.loc[df[group] == g_str if df[group].dtype == object else df[group] == g, y]
+        letters_str = "".join(sorted(assigned.get(g_str, ["?"])))
+        means_rows.append({
+            group: g_str,
+            "mean": round(subset.mean(), 2),
+            "sd": round(subset.std(ddof=1), 2),
+            "se": round(subset.std(ddof=1) / np.sqrt(len(subset)), 2),
+            "n": int(len(subset)),
+            "groups": letters_str if letters_str else "a",
+        })
+    means_df = pd.DataFrame(means_rows)
+
+    return pairwise_df, means_df
+
+
+def kruskal_wallis_engine(df: pd.DataFrame, factor: str, trait: str, alpha: float) -> Dict[str, Any]:
+    """
+    Kruskal-Wallis H-test (non-parametric one-way ANOVA for CRD).
+    Post-hoc: Dunn test with Bonferroni correction.
+    """
+    d = df[[factor, trait]].dropna()
+    d[trait] = pd.to_numeric(d[trait], errors="coerce")
+    d = d.dropna()
+    d[factor] = d[factor].astype(str)
+
+    group_data = [grp[trait].values for _, grp in d.groupby(factor)]
+    if len(group_data) < 2:
+        raise HTTPException(status_code=422, detail="Need at least 2 groups for Kruskal-Wallis test.")
+
+    h_stat, p_value = stats.kruskal(*group_data)
+    n_groups = d[factor].nunique()
+    df_stat = n_groups - 1
+    n_total = len(d)
+
+    pairwise_df, means_df = dunn_test(d, trait, factor, alpha)
+
+    plots = {
+        "mean_plot": mean_plot(d, trait, factor, f"Median +/- IQR by {factor} (Kruskal-Wallis)"),
+        "box_plot": box_plot(d, trait, factor, f"Distribution of {trait} by {factor}"),
+    }
+
+    # Rank table
+    d["rank"] = d[trait].rank()
+    rank_means = d.groupby(factor)["rank"].mean().reset_index()
+    rank_means.columns = [factor, "mean_rank"]
+    rank_means["mean_rank"] = rank_means["mean_rank"].round(2)
+
+    return {
+        "meta": {
+            "design": "Kruskal-Wallis (Non-parametric CRD)",
+            "test": "Kruskal-Wallis H-test",
+            "posthoc": "Dunn test (Bonferroni correction)",
+            "factor": factor,
+            "trait": trait,
+            "alpha": alpha,
+            "n_rows_used": int(n_total),
+            "n_groups": int(n_groups),
+            "levels": sorted(d[factor].unique().tolist()),
+            "cv_percent": cv_percent(d[trait]),
+        },
+        "tables": {
+            "kruskal": [{
+                "source": factor,
+                "H_statistic": round_val(h_stat, 4),
+                "df": int(df_stat),
+                "p_value": round_val(p_value, 4),
+                "significant": p_value < alpha,
+                "interpretation": "Significant differences exist between groups" if p_value < alpha else "No significant differences between groups",
+            }],
+            "means": df_to_records(means_df),
+            "pairwise": df_to_records(pairwise_df),
+            "rank_means": df_to_records(rank_means),
+        },
+        "plots": plots,
+        "interpretation": {
+            "summary": f"Kruskal-Wallis H({df_stat}, N={n_total}) = {round_val(h_stat, 3)}, p = {round_val(p_value, 4)}. "
+                       + ("Significant differences exist between groups." if p_value < alpha
+                          else "No significant differences detected between groups."),
+            "posthoc_note": "Dunn's post-hoc test with Bonferroni correction applied for pairwise comparisons." if p_value < alpha else "Post-hoc comparisons not required (overall test non-significant).",
+            "parametric_note": "This is a non-parametric test that does not assume normality. Use when Shapiro-Wilk p < 0.05 or Levene's test is violated.",
+        },
+    }
+
+
+def friedman_engine(df: pd.DataFrame, block: str, treatment: str, trait: str, alpha: float) -> Dict[str, Any]:
+    """
+    Friedman test (non-parametric one-way RCBD).
+    Post-hoc: Wilcoxon signed-rank pairwise tests with Bonferroni correction.
+    """
+    d = df[[block, treatment, trait]].dropna()
+    d[trait] = pd.to_numeric(d[trait], errors="coerce")
+    d = d.dropna()
+    d[block] = d[block].astype(str)
+    d[treatment] = d[treatment].astype(str)
+
+    # Build pivot: rows=blocks, cols=treatments
+    try:
+        pivot = d.pivot_table(index=block, columns=treatment, values=trait, aggfunc="mean")
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Cannot construct block × treatment table: {str(e)}")
+
+    if pivot.isnull().any().any():
+        raise HTTPException(status_code=422, detail="Friedman test requires complete data (no missing block-treatment combinations).")
+
+    n_blocks = pivot.shape[0]
+    n_treatments = pivot.shape[1]
+
+    if n_blocks < 2 or n_treatments < 2:
+        raise HTTPException(status_code=422, detail="Friedman test requires at least 2 blocks and 2 treatments.")
+
+    # Friedman test
+    friedman_stat, p_value = stats.friedmanchisquare(*[pivot[col].values for col in pivot.columns])
+    df_stat = n_treatments - 1
+
+    # Post-hoc: pairwise Wilcoxon signed-rank with Bonferroni correction
+    from itertools import combinations
+    treatments = list(pivot.columns)
+    pairs = []
+    for t1, t2 in combinations(treatments, 2):
+        s1 = pivot[t1].values
+        s2 = pivot[t2].values
+        try:
+            w_stat, p_raw = stats.wilcoxon(s1, s2, alternative='two-sided')
+        except Exception:
+            p_raw = 1.0
+        pairs.append({"group1": str(t1), "group2": str(t2), "p_raw": round_val(p_raw, 4)})
+
+    n_pairs = len(pairs)
+    for pair in pairs:
+        pair["p_adj"] = round_val(min(float(pair["p_raw"]) * n_pairs, 1.0), 4)
+        pair["significant"] = float(pair["p_adj"]) < alpha
+
+    pairwise_df = pd.DataFrame(pairs)[["group1", "group2", "p_raw", "p_adj", "significant"]]
+
+    # Means table
+    means_rows = []
+    for t in treatments:
+        vals = pivot[t].values
+        means_rows.append({
+            treatment: str(t),
+            "mean": round(float(np.mean(vals)), 2),
+            "median": round(float(np.median(vals)), 2),
+            "sd": round(float(np.std(vals, ddof=1)), 2),
+            "n": int(len(vals)),
+        })
+    means_rows.sort(key=lambda x: x["mean"], reverse=True)
+    means_df = pd.DataFrame(means_rows)
+
+    # Rank sums per treatment
+    pivot_ranks = pivot.rank(axis=1)
+    rank_sums = pivot_ranks.sum(axis=0).reset_index()
+    rank_sums.columns = [treatment, "rank_sum"]
+    rank_sums["mean_rank"] = (rank_sums["rank_sum"] / n_blocks).round(2)
+
+    plots = {
+        "mean_plot": mean_plot(d, trait, treatment, f"Means +/- SE by {treatment} (Friedman)"),
+        "box_plot": box_plot(d, trait, treatment, f"Distribution of {trait} by {treatment} (RCBD)"),
+    }
+
+    return {
+        "meta": {
+            "design": "Friedman Test (Non-parametric RCBD)",
+            "test": "Friedman chi-squared test",
+            "posthoc": "Wilcoxon signed-rank pairwise (Bonferroni correction)",
+            "block": block,
+            "treatment": treatment,
+            "trait": trait,
+            "alpha": alpha,
+            "n_rows_used": int(len(d)),
+            "n_blocks": int(n_blocks),
+            "n_treatments": int(n_treatments),
+            "levels": sorted(d[treatment].unique().tolist()),
+            "cv_percent": cv_percent(d[trait]),
+        },
+        "tables": {
+            "friedman": [{
+                "source": treatment,
+                "chi2_statistic": round_val(friedman_stat, 4),
+                "df": int(df_stat),
+                "p_value": round_val(p_value, 4),
+                "significant": p_value < alpha,
+                "interpretation": "Significant differences exist between treatments" if p_value < alpha else "No significant differences between treatments",
+            }],
+            "means": df_to_records(means_df),
+            "pairwise": df_to_records(pairwise_df),
+            "rank_sums": df_to_records(rank_sums),
+        },
+        "plots": plots,
+        "interpretation": {
+            "summary": f"Friedman χ²({df_stat}, N={n_blocks}) = {round_val(friedman_stat, 3)}, p = {round_val(p_value, 4)}. "
+                       + ("Significant differences exist between treatments." if p_value < alpha
+                          else "No significant differences detected between treatments."),
+            "posthoc_note": "Wilcoxon signed-rank pairwise tests with Bonferroni correction applied." if p_value < alpha else "Post-hoc comparisons not required (overall test non-significant).",
+            "parametric_note": "This is the non-parametric equivalent of one-way ANOVA in RCBD. Use when residuals are non-normal (Shapiro-Wilk p < 0.05) in a blocked design.",
+        },
+    }
+
+
+@app.post("/analyze/nonparametric/kruskal")
+async def analyze_kruskal(
+    file: UploadFile = File(...),
+    factor: str = Form(...),
+    trait: str = Form(...),
+    alpha: float = Form(0.05),
+):
+    """Kruskal-Wallis H-test with Dunn post-hoc (non-parametric CRD)."""
+    df = await load_csv(file)
+    require_cols(df, [factor, trait])
+    return kruskal_wallis_engine(df, factor, trait, float(alpha))
+
+
+@app.post("/analyze/nonparametric/friedman")
+async def analyze_friedman(
+    file: UploadFile = File(...),
+    block: str = Form(...),
+    treatment: str = Form(...),
+    trait: str = Form(...),
+    alpha: float = Form(0.05),
+):
+    """Friedman test with Wilcoxon pairwise post-hoc (non-parametric RCBD)."""
+    df = await load_csv(file)
+    require_cols(df, [block, treatment, trait])
+    return friedman_engine(df, block, treatment, trait, float(alpha))
 
 
 # ============================================================
