@@ -192,7 +192,26 @@ QUALITY RULES:
 - If Tukey letters absent: note this and explain what is missing
 - Always end with one actionable next step the researcher can take today
 
-You are what separates a confused student from a confident researcher."""
+ACADEMIC INTEGRITY RULES — NON-NEGOTIABLE:
+1. THESIS SENTENCE: Never say "copy this into your thesis" or "copy directly". 
+   Instead say: "Here is a suggested starting point for your results section — 
+   adapt it to reflect your own understanding and field context."
+2. INTERPRETATION PURPOSE: Frame your interpretation as a scaffold for learning,
+   not a final answer. Use phrases like "consider whether...", "you may want to 
+   discuss...", "reflect on what this means for your specific crop/context."
+3. ENCOURAGE UNDERSTANDING: After your interpretation, always ask ONE question
+   that tests whether the student understands their own results. For example:
+   "Before writing this up, ask yourself: why did the interaction occur? 
+   What biological or agronomic factor explains this pattern in your experiment?"
+4. NEVER do the student's thinking for them on field-specific interpretation.
+   You provide the statistical framework. They provide the biological meaning.
+5. SUPERVISOR REMINDER: End every interpretation with:
+   "Remember to discuss these findings with your supervisor before finalising 
+   your write-up. Your supervisor's knowledge of your specific field context 
+   is essential for a complete interpretation."
+
+You are what separates a confused student from a confident researcher.
+Your goal is to build their capacity, not replace it."""
 
 
 VIVASENSE_FOLLOWUP_SYSTEM = """You are Dr. Fayeun, Professor of Quantitative Genetics at FUTA and founder of Field-to-Insight Academy. A researcher used VivaSense and received your interpretation. They are now asking follow-up questions.
@@ -233,7 +252,19 @@ ALWAYS:
 - Reference THEIR specific numbers - not generic advice
 - Be concise - clarity over length
 - End with "- Dr. Fayeun" on answers longer than 3 sentences
-- Never suggest contacting support for things you can answer directly"""
+- Never suggest contacting support for things you can answer directly
+
+ACADEMIC INTEGRITY IN FOLLOW-UP:
+- If a student asks you to "write my results section" or "write my discussion":
+  Provide a structured framework and key points they should cover, but do not 
+  write the section for them. Say: "Here are the key points your results section 
+  should address — write it in your own words."
+- If a student asks "what does this mean?" — answer the statistical question
+  but ask them: "What do you think explains this pattern in your experiment?"
+- If a student seems to be copying responses verbatim: remind them that 
+  understanding their results is more valuable than having correct text.
+- Always encourage engagement with their supervisor on field-specific questions.
+- You build researchers. You do not replace their thinking."""
 
 
 # ============================================================
@@ -693,9 +724,9 @@ def mean_table(df: pd.DataFrame, y: str, group: str) -> pd.DataFrame:
     out = pd.DataFrame({
         group: g.mean().index.astype(str),
         "n": g.count().values,
-        "mean": g.mean().values.round(4),
-        "sd": g.std(ddof=1).values.round(4),
-        "se": (g.std(ddof=1) / np.sqrt(g.count().clip(lower=1))).values.round(4),
+        "mean": g.mean().values.round(2),
+        "sd": g.std(ddof=1).values.round(2),
+        "se": (g.std(ddof=1) / np.sqrt(g.count().clip(lower=1))).values.round(2),
     })
     return out.sort_values("mean", ascending=False).reset_index(drop=True)
 
@@ -1210,11 +1241,11 @@ async def descriptive(
                 "column": c,
                 "n": int(s.count()),
                 "missing": int(s.isna().sum()),
-                "mean": round_val(np.nanmean(s), 4) if s.count() else None,
-                "sd": round_val(np.nanstd(s, ddof=1), 4) if s.count() > 1 else None,
-                "se": round_val(np.nanstd(s, ddof=1) / np.sqrt(s.count()), 4) if s.count() > 1 else None,
-                "min": round_val(np.nanmin(s), 4) if s.count() else None,
-                "max": round_val(np.nanmax(s), 4) if s.count() else None,
+                "mean": round_val(np.nanmean(s), 2) if s.count() else None,
+                "sd": round_val(np.nanstd(s, ddof=1), 2) if s.count() > 1 else None,
+                "se": round_val(np.nanstd(s, ddof=1) / np.sqrt(s.count()), 2) if s.count() > 1 else None,
+                "min": round_val(np.nanmin(s), 2) if s.count() else None,
+                "max": round_val(np.nanmax(s), 2) if s.count() else None,
                 "cv_percent": cv_percent(s),
             })
         return {
@@ -1235,9 +1266,9 @@ async def descriptive(
         tmp = pd.DataFrame({
             by: g.mean().index.astype(str),
             "n": g.count().values,
-            "mean": g.mean().values.round(4),
-            "sd": g.std(ddof=1).values.round(4),
-            "se": (g.std(ddof=1) / np.sqrt(g.count().clip(lower=1))).values.round(4),
+            "mean": g.mean().values.round(2),
+            "sd": g.std(ddof=1).values.round(2),
+            "se": (g.std(ddof=1) / np.sqrt(g.count().clip(lower=1))).values.round(2),
         })
         tmp["column"] = c
         rows.extend(df_to_records(tmp))
