@@ -1,14 +1,7 @@
 """
-VivaSense V2.2 + FIA AI Proxy - app/main.py
+VivaSense V2 + FIA AI Proxy - app/main.py
 ==========================================
-V2.2 improvements:
-  - Non-parametric tests: Kruskal-Wallis (CRD) + Friedman (RCBD) with post-hoc [V2.1]
-  - Usage logger with /admin/usage and /admin/usage/summary endpoints [V2.1]
-  - LOCKED assumption verdict: single function, zero contradictions across all outputs [V2.2]
-  - Executive Insight block: deterministic one-paragraph 'big story' per trait [V2.2]
-  - Reviewer Radar block: rule-based likely reviewer questions per trait [V2.2]
-  - Decision Rules block: ranked means converted to practical recommendations [V2.2]
-  - Intelligence blocks shipped in every engine response under 'intelligence' key [V2.2]
+V2 improvements over V1:
   - Number rounding (all floats to 4dp, CV to 2dp)
   - RCBD one-way ANOVA added (most common Nigerian field trial design)
   - Assumption guidance: plain-English verdict + specific alternative test recommendation
@@ -317,26 +310,15 @@ IF analysis type contains "factorial" or "two-way" or "split":
   6. Research/Breeding Recommendation - specific and actionable
   7. Thesis/Paper Sentence - with all key statistics
 
-IF analysis type contains "multi-trait" or "multitrait" or "synthesis":
-  CRITICAL: The facts contain pre-computed flags. Use ONLY these — never guess.
-  Required structure:
-  1. Overall Finding
-     - "X of Y traits showed significant [treatment] effects."
-     - "Significant interactions detected for: [list] / No significant interactions detected."
-     - Use n_trt_sig and total_traits from facts.
-  2. Trait-by-Trait Summary
-     - One sentence per trait: effect significant? F-value? CV from cv_values dict only.
-  3. Block Effects
-     - "Block effects significant for X of Y traits (use n_block_sig)."
-  4. Assumptions Summary — CRITICAL: use assumption_flags, never guess
-     - If n_shapiro_fail == 0: "Normality satisfied for all traits."
-     - If n_shapiro_fail > 0: "Normality violated for X traits: [list trait names where normality_passed is False]."
-     - If n_levene_fail == 0: "Homogeneity satisfied for all traits."
-     - If n_levene_fail > 0: "Homogeneity violated for X traits: [list names]."
-     - NEVER write "all assumptions passed" without checking assumption_flags.
-  5. Selection Strategy — only if significant effects found
-     - Based on means from summary_table, not invented.
-  6. Thesis/Paper Sentence — one sentence, only computed values.
+IF analysis type contains "multi-trait" or "multitrait":
+  Structure:
+  1. Overall Finding - traits significant out of total; strongest responders named
+  2. Trait-by-Trait Evidence - p-value and CV% for each trait
+  3. Correlation Insights - strongly correlated pairs (r > 0.7) and selection efficiency implications
+  4. PCA Insights - PC1 variance and which traits drive most variation
+  5. Selection Strategy - which traits to prioritise; indirect selection opportunities
+  6. Assumptions Summary - flag violated traits
+  7. Thesis/Paper Sentence - covering multi-trait findings
 
 IF analysis type contains "kruskal" or "Kruskal":
   Structure:
@@ -376,59 +358,6 @@ QUALITY RULES:
 - If CV > 30% flag it explicitly and explain reliability implications
 - If Tukey letters absent: note this and explain what is missing
 - Always end with one actionable next step the researcher can take today
-
-INTELLIGENCE BLOCKS — USE WHEN PROVIDED:
-The results may include an 'intelligence' object with four pre-computed blocks.
-When present, incorporate them as follows:
-- assumptions_verdict: USE THIS EXACT TEXT for the assumptions section. Never override or contradict it.
-- executive_insight: Use as the basis for your Overall Finding — expand it with biological context.
-- reviewer_radar: Present these verbatim under a 'Reviewer Radar' heading. Do not soften or omit any question.
-- decision_rules: Present these under 'Decision Rules' heading. Add one sentence of agronomic context per rule.
-
-ASSUMPTIONS — CRITICAL RULE:
-The assumptions_verdict field is generated deterministically from Shapiro-Wilk and Levene test statistics.
-It is always correct. NEVER contradict it, NEVER say "assumptions were met" if the verdict says otherwise.
-If assumptions_verdict is not provided, state: "Assumption results not available for this analysis."
-
-OPERATING MODES:
-STRICT MODE (always active by default):
-- Only facts provable from the grounded facts provided.
-- Never use: "because", "therefore", "leads to", "due to", mechanism words.
-- Never use: "dominant", "robust", "dramatic", "overwhelming", "food safety", "drought tolerance", "farmer adoption".
-- Never invent CV values — use only the cv_percent from the facts.
-- If a statistic is missing: write "Not available from analysis output."
-
-DISCUSSION MODE (only when researcher explicitly provides location, season, and objective):
-- May discuss agronomic interpretation after completing the strict statistical summary.
-- Must clearly label the section "Agronomic Discussion (researcher context required)".
-- Still cannot invent statistics or contradict assumption verdicts.
-
-DEFAULT: STRICT MODE unless researcher context is explicitly provided.
-
-
-1. EVERY number you write must exist in the Statistical Results provided. Never invent, round differently, or recall from memory.
-2. p-values: NEVER write "p = 0". When p_display field shows "< 0.001", write "p < 0.001" — not "p = 0".
-3. If Tukey groupings are NOT in the results: do not mention letters, groups, or "Tukey".
-4. If correlation is NOT in the results: do not use "correlated", "relationship", or imply association.
-5. If trend test NOT computed: do not use "dose-response", "increasing trend", "declined steadily".
-6. If a field is missing from the results: write "Not available from analysis output." — never guess.
-
-BANNED PHRASES — never use regardless of context:
-- Causality: "because", "due to", "caused by", "leads to", "results from"
-- Unsupported strength: "massive effect", "dominant factor", "profound", "overwhelmingly"
-- Generalisation without user context: "for farmers", "in your study area", "for smallholders"
-- Impossible statistics: "p = 0", "100% significant", "perfect results"
-- Trend without test: "dose-response", "linear increase", "declined steadily"
-
-SAFE REPLACEMENTS:
-- "strong evidence" → "F(df,df) = value, p < 0.001"
-- "dominant factor" → "had the largest F-value among tested effects (F = value)"
-- "p = 0" → "p < 0.001"
-- Causal language → "was associated with" or "differed significantly across"
-
-INTERACTION RULE — for every factorial and split-plot analysis, report interaction FIRST:
-- If p(interaction) < α: "Interaction was significant (F=…, p=…). Interpret treatment combinations, not main effects alone."
-- If p(interaction) ≥ α: "No evidence of interaction (F=…, p=…). Main effects are interpreted independently."
 
 ACADEMIC INTEGRITY RULES — NON-NEGOTIABLE:
 1. THESIS SENTENCE: Never say "copy this into your thesis" or "copy directly". 
@@ -678,84 +607,26 @@ async def interpret(request: Request, body: InterpretRequest):
             return [strip_plots(i) for i in obj]
         return obj
 
-    # ── Fact-first pipeline (spec §2) ───────────────────────────────────────
-    # Extract grounded facts from result JSON.
-    # LLM receives fact-bullets, not raw JSON — hallucination structurally reduced.
-    results_obj = body.results if isinstance(body.results, dict) else {}
+    clean_results = strip_plots(body.results)
+    results_text = json.dumps(clean_results, indent=2)
 
-    # Determine if result is a single-trait or multi-trait synthesis call
-    is_synthesis = "summary_table" in results_obj or "per_trait" in results_obj
-
-    if is_synthesis:
-        # Multi-trait synthesis: build computed flags — never guess assumptions
-        per_trait = results_obj.get("per_trait", {})
-        n_shapiro_fail = sum(
-            1 for t_result in per_trait.values()
-            if not (t_result.get("tables", {}).get("assumptions", [{}]) or [{}])[0].get("passed", True)
-        )
-        n_levene_fail = sum(
-            1 for t_result in per_trait.values()
-            if not (t_result.get("tables", {}).get("assumptions", [{},{}]) or [{},{}])[1].get("passed", True)
-        )
-        n_block_sig = sum(
-            1 for row in results_obj.get("summary_table", [])
-            if "Block" in str(row.get("factor", "")) and row.get("significant")
-        )
-        n_trt_sig = sum(
-            1 for row in results_obj.get("summary_table", [])
-            if "Block" not in str(row.get("factor", "")) and row.get("significant")
-        )
-        total_traits = results_obj.get("meta", {}).get("n_traits_successful", 0)
-        cv_values = {
-            row["trait"]: row.get("cv_percent")
-            for row in results_obj.get("summary_table", [])
-            if row.get("cv_percent") is not None
-        }
-        # Build assumption summary per trait for synthesis
-        assumption_flags = {}
-        for tname, tr in per_trait.items():
-            assump = tr.get("tables", {}).get("assumptions", [])
-            sh = next((a for a in assump if a.get("test") == "Shapiro-Wilk"), {})
-            lv = next((a for a in assump if a.get("test") == "Levene"), {})
-            guidance = tr.get("tables", {}).get("assumption_guidance", {})
-            assumption_flags[tname] = {
-                "normality_passed":   sh.get("passed"),
-                "normality_p":        sh.get("p_value"),
-                "homogeneity_passed": lv.get("passed"),
-                "verdict":            guidance.get("overall", "Not available."),
-                "verdict_code":       guidance.get("verdict_code", "unknown"),
-                "cv":                 tr.get("meta", {}).get("cv_percent"),
-            }
-
-        synthesis_facts = {
-            "total_traits":     total_traits,
-            "n_trt_sig":        n_trt_sig,
-            "n_shapiro_fail":   n_shapiro_fail,
-            "n_levene_fail":    n_levene_fail,
-            "n_block_sig":      n_block_sig,
-            "assumption_flags": assumption_flags,
-            "cv_values":        cv_values,
-            "summary_table":    results_obj.get("summary_table", []),
-        }
-        facts_text = f"MULTI-TRAIT SYNTHESIS FACTS:\n{json.dumps(synthesis_facts, indent=2)}"
-        cv_actual = None
-    else:
-        # Single-trait: extract grounded facts
-        facts = extract_facts(results_obj, alpha=0.05)
-        facts_text = facts_to_prompt_text(facts)
-        cv_actual = facts.get("cv")
+    # Truncate if still too long (keep under ~12000 chars)
+    if len(results_text) > 12000:
+        results_text = results_text[:12000] + "\n... [truncated for brevity]"
 
     user_message = f"""Please interpret these {body.analysis_type} results for the researcher.
 
-{context_block}GROUNDED FACTS (use ONLY these — do not invent additional statistics):
-{facts_text}
+{context_block}Statistical Results:
+{results_text}
 
-STRICT MODE INSTRUCTIONS:
-- Use only the facts listed above. Every sentence must reference a fact above.
-- CV value: if mentioned, use ONLY the cv_percent value from the facts. Do not compute your own.
-- Assumptions: copy the ASSUMPTIONS VERDICT text exactly. Do not contradict it.
-- p-values: use the p_display values provided. Never write 'p = 0'.
-- If a statistic is not in the facts above: write 'Not available from analysis output.'
+CRITICAL ACCURACY INSTRUCTIONS:
+1. Every number you write MUST be copied exactly from the Statistical Results above
+2. Do NOT round, estimate, or recall numbers from memory
+3. Before stating any mean value, find it in the results and copy it precisely
+4. Plant heights in the 180-250cm range are correct for cassava - do not alter them
+5. If a mean is 242.67, write 242.67 - not 24.27, not 72.67
+6. Double-check every statistic before including it in your interpretation
+7. If you are unsure of a number, quote it directly from the results rather than paraphrasing
 
 Provide a complete, personalised interpretation using the study context provided above."""
 
@@ -771,30 +642,7 @@ Provide a complete, personalised interpretation using the study context provided
             VIVASENSE_INTERPRET_SYSTEM, messages,
             model=SONNET_MODEL, max_tokens=1500
         )
-        # Run grounding validator on returned text
-        has_tukey = bool(results_obj.get("tables", {}).get("tukey"))
-        has_corr  = bool(results_obj.get("correlation", {}).get("table"))
-        grounding = validate_interpretation(
-            text,
-            has_tukey=has_tukey,
-            has_correlation=has_corr,
-            cv_actual=cv_actual,
-        )
-        # If validation fails and not synthesis: fall back to minimal safe output
-        if not grounding["passed"] and not is_synthesis and not body.stream:
-            facts_local = extract_facts(results_obj, alpha=0.05) if not is_synthesis else {}
-            fallback = fallback_interpretation(facts_local) if facts_local else text
-            return {
-                "interpretation": text,
-                "fallback_used":  False,
-                "grounding_check": grounding,
-                "fallback_available": fallback,
-            }
-        return {
-            "interpretation": text,
-            "fallback_used":  False,
-            "grounding_check": grounding,
-        }
+        return {"interpretation": text}
 
 
 @app.post("/api/followup")
@@ -856,32 +704,12 @@ def round_val(v, decimals: int = 4):
 
 
 def fmt_p(p) -> Optional[float]:
-    """
-    Format p-value to 4dp. Returns 0.0001 as floor for very small values
-    so downstream JSON never contains literal 0 (which is statistically impossible).
-    """
     if p is None:
         return None
     f = float(p)
     if np.isnan(f):
         return None
-    if f < 0.0001:
-        return 0.0001   # floor — display as "< 0.001" in interpretation
     return round(f, 4)
-
-
-def fmt_p_display(p) -> str:
-    """Human-readable p-value string for interpretation text."""
-    if p is None:
-        return "p = N/A"
-    f = float(p)
-    if np.isnan(f):
-        return "p = N/A"
-    if f < 0.001:
-        return "p < 0.001"
-    if f < 0.01:
-        return f"p = {f:.3f}"
-    return f"p = {f:.4f}"
 
 
 def df_to_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
@@ -1008,291 +836,54 @@ def levene_test(df: pd.DataFrame, y: str, group: str) -> Dict[str, Any]:
 def assumption_guidance(
     shapiro: Dict, levene: Dict, design: str
 ) -> Dict[str, Any]:
-    """
-    LOCKED assumption verdict — single source of truth.
-    Every table, every interpretation, every synthesis pulls from here.
-    No freehand text anywhere else.
-    """
+    """Plain-English assumption verdict with specific alternative test recommendation."""
     s_pass = shapiro.get("passed")
     l_pass = levene.get("passed")
-    s_p    = shapiro.get("p_value")
-    l_p    = levene.get("p_value")
-    s_stat = shapiro.get("stat")
 
     alternatives = {
-        "CRD one-way":            "Kruskal-Wallis test",
-        "RCBD one-way":           "Friedman test",
-        "CRD two-way (factorial)":"Log or square-root transformation, then re-run ANOVA",
-        "Factorial in RCBD":      "Log or square-root transformation, then re-run ANOVA",
-        "Split-plot":             "Log or square-root transformation, then re-run ANOVA",
+        "CRD one-way": "Kruskal-Wallis test",
+        "RCBD one-way": "Friedman test",
+        "CRD two-way (factorial)": "Log or square-root data transformation, then re-run ANOVA",
+        "Factorial in RCBD": "Log or square-root data transformation, then re-run ANOVA",
+        "Split-plot": "Log or square-root data transformation, then re-run ANOVA",
     }
     alt = alternatives.get(design, "Data transformation or non-parametric method")
 
     if s_pass is None or l_pass is None:
-        return {
-            "overall": "Assumptions could not be evaluated.",
-            "normality_ok": None,
-            "homogeneity_ok": None,
-            "shapiro_p": s_p,
-            "levene_p": l_p,
-            "shapiro_stat": s_stat,
-            "alternative": None,
-            "action": None,
-            "verdict_code": "unknown",
-        }
+        return {"overall": "Assumptions could not be evaluated.", "alternative": None, "action": None}
 
     if s_pass and l_pass:
         return {
-            "overall": "Normality and homogeneity satisfied. ANOVA fully valid.",
+            "overall": "Both assumptions met. ANOVA results are valid and reliable.",
             "normality_ok": True,
             "homogeneity_ok": True,
-            "shapiro_p": s_p,
-            "levene_p": l_p,
-            "shapiro_stat": s_stat,
             "alternative": None,
             "action": None,
-            "verdict_code": "both_met",
         }
     elif not s_pass and l_pass:
         return {
-            "overall": "Normality violated but equal variances met. ANOVA is moderately robust; results likely reliable. Transformation recommended for confirmation.",
+            "overall": "Normality violated but equal variances met. ANOVA is moderately robust; results are likely valid. Verify with the recommended alternative.",
             "normality_ok": False,
             "homogeneity_ok": True,
-            "shapiro_p": s_p,
-            "levene_p": l_p,
-            "shapiro_stat": s_stat,
             "alternative": alt,
             "action": f"Recommended: run {alt} to confirm your findings.",
-            "verdict_code": "normality_violated",
         }
     elif s_pass and not l_pass:
         return {
-            "overall": "Equal variances violated. Consider Welch ANOVA or transformation.",
+            "overall": "Normality met but equal variances violated. This affects ANOVA validity more seriously.",
             "normality_ok": True,
             "homogeneity_ok": False,
-            "shapiro_p": s_p,
-            "levene_p": l_p,
-            "shapiro_stat": s_stat,
             "alternative": alt,
             "action": f"Recommended: use {alt} as your primary analysis.",
-            "verdict_code": "homogeneity_violated",
         }
     else:
         return {
-            "overall": "Both assumptions violated. Use transformation or non-parametric alternative.",
+            "overall": "Both assumptions violated. ANOVA results should be treated with caution.",
             "normality_ok": False,
             "homogeneity_ok": False,
-            "shapiro_p": s_p,
-            "levene_p": l_p,
-            "shapiro_stat": s_stat,
             "alternative": alt,
             "action": f"Recommended: use {alt} as your primary analysis.",
-            "verdict_code": "both_violated",
         }
-
-
-# ============================================================
-#  INTELLIGENCE BLOCKS  (deterministic — no AI, no free text)
-# ============================================================
-
-def build_executive_insight(
-    p_map: Dict[str, Optional[float]],
-    cv: Optional[float],
-    trait: str,
-    best_combination: Optional[str],
-    alpha: float = 0.05,
-) -> str:
-    """
-    Block 1 — Executive Insight.
-    One paragraph answering: 'What is the big story of this analysis?'
-    Fully deterministic — built from p-values and ranked means.
-    """
-    sig_factors   = [k for k, v in p_map.items() if v is not None and v < alpha]
-    insig_factors = [k for k, v in p_map.items() if v is not None and v >= alpha]
-
-    # Identify dominant factor (smallest p-value among significant)
-    sig_sorted = sorted(
-        [(k, v) for k, v in p_map.items() if v is not None and v < alpha],
-        key=lambda x: x[1]
-    )
-    dominant = sig_sorted[0][0] if sig_sorted else None
-
-    # Interaction presence
-    interaction_keys = [k for k in p_map if "x" in k.lower() or ":" in k or "interaction" in k.lower()]
-    interaction_sig  = any(p_map.get(k, 1) < alpha for k in interaction_keys)
-
-    # CV quality
-    cv_note = ""
-    if cv is not None:
-        if cv < 15:
-            cv_note = f" Experimental precision was excellent (CV = {cv:.1f}%)."
-        elif cv < 25:
-            cv_note = f" Experimental precision was acceptable (CV = {cv:.1f}%)."
-        else:
-            cv_note = f" Experimental variability was high (CV = {cv:.1f}%), warranting cautious interpretation."
-
-    parts = []
-
-    if dominant:
-        parts.append(f"{dominant} emerged as the dominant source of variation in {trait}.")
-
-    if len(sig_factors) > 1:
-        secondary = [f for f in sig_factors if f != dominant]
-        parts.append(f"{', '.join(secondary)} also showed significant effects.")
-
-    if insig_factors:
-        parts.append(
-            f"The absence of significant {'interaction' if interaction_keys else 'effects'} "
-            f"({'p ≥ ' + str(alpha) + ' for ' + ', '.join(insig_factors)}) indicates that "
-            f"treatment rankings remain stable across factor levels, simplifying recommendations."
-        )
-
-    if interaction_sig:
-        parts.append(
-            "A significant interaction was detected, meaning the effect of one factor "
-            "depends on the level of the other — interpret treatment combinations, not main effects alone."
-        )
-
-    if best_combination:
-        parts.append(f"The optimal treatment combination was {best_combination}, which maximised performance.")
-
-    parts.append(cv_note.strip()) if cv_note.strip() else None
-
-    return " ".join(p for p in parts if p)
-
-
-def build_reviewer_radar(
-    shapiro: Dict,
-    levene: Dict,
-    p_map: Dict[str, Optional[float]],
-    cv: Optional[float],
-    n_locations: int = 1,
-    n_seasons: int = 1,
-    alpha: float = 0.05,
-) -> List[str]:
-    """
-    Block 2 — Reviewer Radar.
-    Rule-based generator of likely peer-reviewer questions.
-    Students walk into their defence pre-armed.
-    """
-    questions = []
-
-    # Normality violation
-    if shapiro.get("passed") is False:
-        w  = shapiro.get("stat", "?")
-        p  = shapiro.get("p_value", "?")
-        questions.append(
-            f"Why were the data not normally distributed (Shapiro-Wilk W = {w}, p = {p})? "
-            f"Were data transformations (log, square-root) attempted before analysis?"
-        )
-
-    # Homogeneity violation
-    if levene.get("passed") is False:
-        p = levene.get("p_value", "?")
-        questions.append(
-            f"Levene's test indicates unequal variances (p = {p}). "
-            f"Was Welch's ANOVA or a variance-stabilising transformation considered?"
-        )
-
-    # Non-significant interaction — reviewer wants biological justification
-    interaction_keys = [k for k in p_map if "x" in k.lower() or ":" in k or "interaction" in k.lower()]
-    interaction_insig = any(
-        p_map.get(k) is not None and p_map.get(k, 0) >= alpha
-        for k in interaction_keys
-    )
-    if interaction_insig:
-        questions.append(
-            "The interaction effect was not significant. What biological or physiological "
-            "mechanism supports the independence of these factors in your crop system?"
-        )
-
-    # High CV
-    if cv is not None and cv > 20:
-        questions.append(
-            f"The coefficient of variation is {cv:.1f}%, indicating moderate-to-high field "
-            f"variability. What environmental or management factors contributed to this variability?"
-        )
-
-    # Single location / season
-    if n_locations == 1:
-        questions.append(
-            "Results are from a single location. Can these findings be generalised across "
-            "different agro-ecological zones or environments?"
-        )
-    if n_seasons == 1:
-        questions.append(
-            "Data represent a single growing season. How confident are you that these results "
-            "are repeatable across seasons or years?"
-        )
-
-    # Very high F-values (potential data entry issues)
-    high_f_factors = [k for k, v in p_map.items() if v is not None and v < 0.0001]
-    if len(high_f_factors) >= 2:
-        questions.append(
-            "Exceptionally high F-values were observed. Please confirm data entry accuracy "
-            "and verify that replication was conducted independently."
-        )
-
-    return questions
-
-
-def build_decision_rules(
-    means_df: pd.DataFrame,
-    group_col: str,
-    trait: str,
-    alpha: float = 0.05,
-) -> List[str]:
-    """
-    Block 3 — Decision Rules.
-    Converts ranked means into practical, actionable recommendations.
-    """
-    if means_df.empty or "mean" not in means_df.columns:
-        return ["Insufficient data to generate decision rules."]
-
-    sorted_df = means_df.sort_values("mean", ascending=False).reset_index(drop=True)
-    best      = sorted_df.iloc[0]
-    second    = sorted_df.iloc[1] if len(sorted_df) > 1 else None
-    worst     = sorted_df.iloc[-1]
-
-    best_name   = str(best[group_col])
-    best_mean   = float(best["mean"])
-    worst_name  = str(worst[group_col])
-    worst_mean  = float(worst["mean"])
-
-    rules = []
-
-    rules.append(
-        f"To maximise {trait}: select {best_name} "
-        f"(mean = {best_mean:.2f}, highest performing combination)."
-    )
-
-    if second is not None:
-        second_name = str(second[group_col])
-        second_mean = float(second["mean"])
-        diff = best_mean - second_mean
-        rules.append(
-            f"If {best_name} is unavailable or cost-prohibitive: {second_name} "
-            f"(mean = {second_mean:.2f}) is the next-best option "
-            f"({diff:.2f} units below the optimum)."
-        )
-
-    rules.append(
-        f"Avoid {worst_name} for {trait} optimisation "
-        f"(mean = {worst_mean:.2f}, lowest performing; "
-        f"{best_mean - worst_mean:.2f} units below optimum)."
-    )
-
-    # Letter-based advice if available
-    if "letters" in sorted_df.columns or "groups" in sorted_df.columns:
-        letter_col = "letters" if "letters" in sorted_df.columns else "groups"
-        top_letter = str(best.get(letter_col, ""))
-        if top_letter:
-            rules.append(
-                f"Treatments sharing Tukey letter '{top_letter[0]}' with {best_name} "
-                f"are statistically equivalent and interchangeable for {trait}."
-            )
-
-    return rules
 
 
 def mean_table(df: pd.DataFrame, y: str, group: str) -> pd.DataFrame:
@@ -1449,927 +1040,9 @@ def interpret_anova(
     return "\n".join(lines)
 
 
-
 # ============================================================
-#  GROUNDING VALIDATOR  (strict template compliance)
+#  ANALYSIS ENGINES
 # ============================================================
-
-# Phrases that imply causality, mechanism, or economics — banned in strict mode
-_BANNED_CAUSAL = [
-    "because", "due to", "therefore", "caused by", "leads to", "results from",
-]
-
-# Strength adjectives that require computed effect sizes — banned without them
-_BANNED_STRENGTH = [
-    "massive", "dominant effect", "profound", "robust evidence", "overwhelmingly",
-    "dramatic improvement", "exceptional precision",
-]
-
-# Domain-specific claims banned unless user provides context (spec §3 / §5C)
-_BANNED_DOMAIN = [
-    "drought tolerance", "food safety", "farmer adoption", "mechanised harvesting",
-    "smallholder", "food security", "genetic basis", "physiological mechanism",
-    "uptake efficiency", "vigour traits",
-]
-
-# Generalisation phrases banned unless user provides location/context
-_BANNED_GENERALISATION = [
-    "in your study area", "for smallholders", "in sub-saharan africa",
-    "across nigeria", "for farmers in",
-]
-
-# Trend language banned unless trend test was computed
-_BANNED_TREND = [
-    "dose-response", "increasing trend", "declined steadily",
-    "linear increase", "linear decrease",
-]
-
-def validate_interpretation(
-    text: str,
-    has_tukey: bool,
-    has_correlation: bool,
-    cv_actual: Optional[float] = None,
-) -> Dict[str, Any]:
-    """
-    Full grounding validator (spec §5 hard validation checklist).
-    A. Numbers check — p=0 detection
-    B. Contradiction check — assumption consistency
-    C. Phrase blacklist — causal, domain, trend, generalisation
-    D. CV accuracy check — catches computed-from-scratch CV errors
-    Returns {passed, warning_count, warnings[]}
-    """
-    import re
-    warnings_list = []
-
-    # A. p=0 detection (statistically impossible)
-    if re.search(r"p\s*[=<>]\s*0(?!\.\d)", text):
-        warnings_list.append(
-            "GROUNDING A: 'p = 0' detected — statistically impossible. Use 'p < 0.001'."
-        )
-
-    # B. Tukey letters mentioned but not computed
-    if not has_tukey:
-        for phrase in ["tukey letter", "group a", "group b", "hsd grouping"]:
-            if phrase in text.lower():
-                warnings_list.append(
-                    f"GROUNDING B: Tukey groupings not computed but text references '{phrase}'."
-                )
-
-    # B. Correlation language without computed correlation
-    if not has_correlation:
-        for phrase in ["were correlated", "positive correlation", "negative correlation"]:
-            if phrase in text.lower():
-                warnings_list.append(
-                    f"GROUNDING B: Correlation not computed but text references '{phrase}'."
-                )
-
-    # C. Banned causal phrases
-    for phrase in _BANNED_CAUSAL:
-        if f" {phrase} " in f" {text.lower()} ":
-            warnings_list.append(
-                f"STRICT C: Causal phrase '{phrase}' detected. Replace with statistical language."
-            )
-
-    # C. Banned strength adjectives
-    for phrase in _BANNED_STRENGTH:
-        if phrase in text.lower():
-            warnings_list.append(
-                f"STRICT C: Strength adjective '{phrase}' detected. Replace with F-value evidence."
-            )
-
-    # C. Banned domain claims
-    for phrase in _BANNED_DOMAIN:
-        if phrase in text.lower():
-            warnings_list.append(
-                f"STRICT C: Domain claim '{phrase}' detected without user-provided context."
-            )
-
-    # C. Banned generalisation
-    for phrase in _BANNED_GENERALISATION:
-        if phrase in text.lower():
-            warnings_list.append(
-                f"STRICT C: Generalisation '{phrase}' detected without user-provided location context."
-            )
-
-    # C. Banned trend language
-    for phrase in _BANNED_TREND:
-        if phrase in text.lower():
-            warnings_list.append(
-                f"STRICT C: Trend language '{phrase}' detected without computed trend test."
-            )
-
-    # D. CV accuracy check — catches hallucinated CV values (e.g., 3.47% vs 6.48%)
-    if cv_actual is not None:
-        cv_matches = re.findall(r"cv\s*[=:]\s*([\d.]+)\s*%|cv\s+of\s+([\d.]+)\s*%|([\d.]+)\s*%\s*cv|([\d.]+)%.*cv", text.lower())
-        for match_groups in cv_matches:
-            cv_text_str = next((g for g in match_groups if g), None)
-            if cv_text_str:
-                try:
-                    cv_text_val = float(cv_text_str)
-                    if abs(cv_text_val - cv_actual) > 1.0:
-                        warnings_list.append(
-                            f"GROUNDING D: CV in text ({cv_text_val}%) does not match computed CV ({cv_actual}%). "
-                            f"Use the provided cv_percent = {cv_actual}%."
-                        )
-                except ValueError:
-                    pass
-
-    return {
-        "passed": len(warnings_list) == 0,
-        "warning_count": len(warnings_list),
-        "warnings": warnings_list,
-    }
-
-
-def fallback_interpretation(facts: Dict[str, Any]) -> str:
-    """
-    Minimal safe interpretation used when LLM output fails validation.
-    100% grounded — built entirely from facts dict, no free text.
-    Spec §2: 'If validate fails → fallback to minimal safe summary.'
-    """
-    trait  = facts.get("trait", "trait")
-    design = facts.get("design", "ANOVA")
-    cv     = facts.get("cv")
-    lines  = [f"Statistical Summary: {trait} ({design})"]
-    lines.append("")
-
-    # Significance facts
-    for e in facts.get("significant_effects", []):
-        F_str = f"F = {e['F']}, " if e.get("F") else ""
-        lines.append(f"• {e['source']}: significant ({F_str}{e['p_display']})")
-    for e in facts.get("nonsignificant_effects", []):
-        F_str = f"F = {e['F']}, " if e.get("F") else ""
-        lines.append(f"• {e['source']}: not significant ({F_str}{e['p_display']})")
-
-    # Best and worst
-    best  = facts.get("best_treatment")
-    worst = facts.get("worst_treatment")
-    if best:
-        group_col = next((k for k in best if k not in ("n","mean","sd","se","letters","groups")), "treatment")
-        lines.append(f"• Highest mean: {best.get(group_col)} = {best.get('mean')} (Tukey: {best.get('letters','N/A')})")
-    if worst and worst != best:
-        group_col = next((k for k in worst if k not in ("n","mean","sd","se","letters","groups")), "treatment")
-        lines.append(f"• Lowest mean: {worst.get(group_col)} = {worst.get('mean')} (Tukey: {worst.get('letters','N/A')})")
-
-    # CV
-    if cv:
-        lines.append(f"• CV = {cv}%")
-
-    # Locked assumption verdict
-    lines.append("")
-    lines.append("Assumptions: " + facts.get("assumptions_verdict", "Not available."))
-
-    lines.append("")
-    lines.append("— VivaSense (minimal safe output)")
-    return "\n".join(lines)
-
-
-def add_p_display_to_anova(records: List[Dict]) -> List[Dict]:
-    """
-    Post-process ANOVA table records to add a 'p_display' field:
-    e.g.  0.0001  →  '< 0.001'
-          0.0234  →  '0.0234'
-    This prevents Dr. Fayeun from ever writing 'p = 0'.
-    """
-    out = []
-    for row in records:
-        r = dict(row)
-        for key in ["PR(>F)", "p_value", "p_corrected", "p_adj"]:
-            if key in r and r[key] is not None:
-                r[f"{key}_display"] = fmt_p_display(float(r[key]))
-        out.append(r)
-    return out
-
-
-
-# ============================================================
-#  STRICT TEMPLATE ENGINE  (spec: strict-templates.v1)
-#  Zero LLM in rendering path — pure string substitution.
-#  Hallucination structurally impossible for templated output.
-# ============================================================
-
-import json as _json
-from pathlib import Path as _Path
-
-_STRICT_TEMPLATES_PATH = _Path(__file__).parent / "strict_templates.json"
-_strict_cfg_cache: Optional[Dict[str, Any]] = None
-
-def _load_strict_cfg() -> Dict[str, Any]:
-    global _strict_cfg_cache
-    if _strict_cfg_cache is None:
-        with open(_STRICT_TEMPLATES_PATH, "r", encoding="utf-8") as f:
-            _strict_cfg_cache = _json.load(f)
-    return _strict_cfg_cache
-
-
-def _tget(d: Any, dotted: str) -> Any:
-    """Dot-notation access into nested dict. Raises KeyError if missing."""
-    cur: Any = d
-    for part in dotted.split("."):
-        if not isinstance(cur, dict) or part not in cur:
-            raise KeyError(f"Missing context key: {dotted}")
-        cur = cur[part]
-    return cur
-
-
-def _safe_format(text: str, ctx: Dict[str, Any]) -> str:
-    """Replace {a.b.c} placeholders from context dict."""
-    import re as _re
-    def repl(m):
-        key = m.group(1)
-        try:
-            val = _tget(ctx, key)
-            return str(val)
-        except KeyError:
-            return f"[MISSING:{key}]"
-    return _re.sub(r"\{([A-Za-z0-9_\.]+)\}", repl, text)
-
-
-def _choose_template(cfg: Dict[str, Any], ctx: Dict[str, Any]) -> str:
-    for rule in cfg["rules"]["decision_tree"]:
-        ok = True
-        for cond in rule["when"]["all"]:
-            var, op, val = cond["var"], cond["op"], cond.get("value")
-            try:
-                left = _tget(ctx, var)
-            except KeyError:
-                ok = False; break
-            right = _tget(ctx, val) if isinstance(val, str) and "." in str(val) else val
-            if op == "==" and left != right: ok = False; break
-            if op == "!=" and left == right: ok = False; break
-            if op == "<"  and not (left <  right): ok = False; break
-            if op == "<=" and not (left <= right): ok = False; break
-            if op == ">"  and not (left >  right): ok = False; break
-            if op == ">=" and not (left >= right): ok = False; break
-        if ok:
-            return rule["use_template"]
-    raise ValueError("No matching strict template for this context.")
-
-
-def _render_template(cfg: Dict[str, Any], ctx: Dict[str, Any], template_id: str) -> str:
-    tpl = cfg["templates"][template_id]
-    missing = []
-    for ph in tpl["placeholders"]:
-        try:
-            _tget(ctx, ph)
-        except KeyError:
-            missing.append(ph)
-    if missing:
-        raise ValueError(f"STRICT BLOCKED — missing placeholders: {missing}")
-    parts = []
-    for sec in tpl["sections"]:
-        title = _safe_format(sec["title"], ctx).strip()
-        body  = _safe_format(sec["body"],  ctx).strip()
-        if "[MISSING:" not in body:
-            parts.append(f"{title}\n{body}")
-    return "\n\n".join(parts).strip()
-
-
-def _validate_strict(cfg: Dict[str, Any], ctx: Dict[str, Any], rendered: str) -> Tuple[bool, str]:
-    import re as _re
-    txt = rendered.lower()
-    for phrase in cfg["banned_phrases"]:
-        if phrase.lower() in txt:
-            return False, f"BANNED_PHRASE: {phrase}"
-    if _re.search(r"\{[A-Za-z0-9_\.]+\}", rendered):
-        return False, "UNRESOLVED_PLACEHOLDER"
-    return True, "OK"
-
-
-def _means_to_text(means_rows: List[Dict], treatment_col: str) -> str:
-    """Convert means table to readable string for template insertion."""
-    if not means_rows:
-        return "Not available."
-    header_cols = [treatment_col, "mean", "letters"]
-    lines = []
-    for row in means_rows:
-        name    = row.get(treatment_col, row.get("Main:Sub", "?"))
-        mean_v  = row.get("mean", "?")
-        letters = row.get("letters", row.get("groups", ""))
-        lines.append(f"  {name}: {mean_v} ({letters})")
-    return "\n".join(lines)
-
-
-def build_strict_ctx(
-    result: Dict[str, Any],
-    design_family: str,
-    alpha: float = 0.05,
-) -> Dict[str, Any]:
-    """
-    Build a STRICT context from a single-trait result JSON.
-
-    - All values are taken directly from the computed analysis output OR deterministically derived from it.
-    - No biological/external claims.
-    - A parallel ctx["_sources"] map records where every placeholder value came from.
-    """
-    meta_in   = result.get("meta", {}) or {}
-    tables_in = result.get("tables", {}) or {}
-
-    ctx: Dict[str, Any] = {}
-    sources: Dict[str, str] = {}
-    ctx["_sources"] = sources
-
-    # ── basics ──
-    trait = meta_in.get("trait", "trait")
-    ctx["Trait"] = trait
-    sources["Trait"] = "meta.trait"
-
-    cv = meta_in.get("cv_percent", None)
-    ctx["CV"] = (str(round(float(cv), 2)) if cv is not None else "N/A")
-    sources["CV"] = "meta.cv_percent"
-
-    # ── factor names ──
-    factor_a = meta_in.get("main_plot_factor") or meta_in.get("factor_a") or meta_in.get("factor", "Factor A")
-    factor_b = meta_in.get("sub_plot_factor")  or meta_in.get("factor_b") or meta_in.get("factor", "Factor B")
-    factor   = meta_in.get("factor", meta_in.get("treatment", "Treatment"))
-
-    ctx["FactorA"] = str(factor_a)
-    sources["FactorA"] = "meta.(main_plot_factor|factor_a|factor)"
-    ctx["FactorB"] = str(factor_b)
-    sources["FactorB"] = "meta.(sub_plot_factor|factor_b|factor)"
-    ctx["Factor"]  = str(factor)
-    sources["Factor"] = "meta.(factor|treatment)"
-
-    # ── ANOVA rows (prefer corrected) ──
-    anova_rows = tables_in.get("anova_corrected") or tables_in.get("anova") or []
-    # Map sources -> row
-    row_map: Dict[str, Dict[str, Any]] = {}
-    for row in anova_rows:
-        src = str(row.get("source", ""))
-        row_map[src] = row
-
-    def _pick_row_contains(substr: str) -> Optional[Tuple[str, Dict[str, Any]]]:
-        for src, row in row_map.items():
-            if substr.lower() in src.lower():
-                return src, row
-        return None
-
-    def _set_stat(prefix: str, src_key: str, row: Dict[str, Any], row_src_path: str) -> None:
-        # F + p + df
-        F_val = row.get("F_corrected") if row.get("F_corrected") is not None else row.get("F")
-        p_val = row.get("p_corrected") if row.get("p_corrected") is not None else row.get("PR(>F)")
-        df_val = row.get("df")
-        ctx[f"F_{prefix}"] = (str(round(float(F_val), 2)) if F_val is not None else "N/A")
-        sources[f"F_{prefix}"] = f"{row_src_path}.(F_corrected|F)"
-        ctx[f"p_{prefix}"] = fmt_p_display(p_val) if p_val is not None else "N/A"
-        sources[f"p_{prefix}"] = f"{row_src_path}.(p_corrected|PR(>F))"
-        ctx[f"df_{prefix}"] = (str(int(df_val)) if df_val is not None else "N/A")
-        sources[f"df_{prefix}"] = f"{row_src_path}.df"
-
-    # One-way designs: Factor, Block (optional)
-    # Two-factor / split-plot: A, B, AxB; plus Block, Block:A (if present)
-    if design_family in ("oneway", "oneway_rcbd"):
-        # treatment row
-        pick = _pick_row_contains("C(" + str(factor) + ")") or _pick_row_contains(str(factor))
-        if pick:
-            src, row = pick
-            _set_stat("Factor", src, row, f"tables.anova*(source='{src}')")
-        # block row (rcbd)
-        pick_b = _pick_row_contains("Block")
-        if pick_b:
-            src, row = pick_b
-            _set_stat("Block", src, row, f"tables.anova*(source='{src}')")
-
-    else:
-        # Factor A
-        pick_a = _pick_row_contains("C(" + str(factor_a) + ")") or _pick_row_contains(str(factor_a))
-        if pick_a:
-            src, row = pick_a
-            _set_stat("A", src, row, f"tables.anova*(source='{src}')")
-        # Factor B
-        pick_b = _pick_row_contains("C(" + str(factor_b) + ")") or _pick_row_contains(str(factor_b))
-        if pick_b:
-            src, row = pick_b
-            _set_stat("B", src, row, f"tables.anova*(source='{src}')")
-        # Interaction
-        # try explicit pattern first, else any ":" containing both factors
-        inter_pick = None
-        for src, row in row_map.items():
-            s = src.lower()
-            if ":" in s and (str(factor_a).lower() in s) and (str(factor_b).lower() in s):
-                inter_pick = (src, row)
-                break
-        if inter_pick:
-            src, row = inter_pick
-            _set_stat("AxB", src, row, f"tables.anova*(source='{src}')")
-
-    # ── Assumptions ──
-    ass = tables_in.get("assumptions", []) or []
-    sh = next((r for r in ass if str(r.get("test", "")).lower().startswith("shapiro")), None)
-    lv = next((r for r in ass if str(r.get("test", "")).lower().startswith("levene")), None)
-
-    ctx["Shapiro_p"] = fmt_p_display(sh.get("p_value")) if sh and sh.get("p_value") is not None else "N/A"
-    sources["Shapiro_p"] = "tables.assumptions[Shapiro].p_value"
-    ctx["Levene_p"]  = fmt_p_display(lv.get("p_value")) if lv and lv.get("p_value") is not None else "N/A"
-    sources["Levene_p"] = "tables.assumptions[Levene].p_value"
-
-    # ── Means table and derived best/worst ──
-    means_rows = tables_in.get("means", []) or []
-    # The means tables sometimes use "A:B" or "Main:Sub" or the factor column name.
-    # Keep a canonical list.
-    ctx["MeansText"] = _means_to_text(means_rows, treatment_col="Main:Sub")
-    sources["MeansText"] = "tables.means (rendered)"
-
-    # Best and worst by mean (ties: first after sorting)
-    best = None
-    worst = None
-    if means_rows and all(("mean" in r) for r in means_rows):
-        try:
-            sorted_rows = sorted(means_rows, key=lambda r: float(r.get("mean", float("nan"))))
-            worst = sorted_rows[0]
-            best  = sorted_rows[-1]
-        except Exception:
-            best = worst = None
-
-    def _treatment_label(row: Dict[str, Any]) -> str:
-        return str(row.get("Main:Sub") or row.get("A:B") or row.get(factor) or row.get("Genotype") or row.get("Treatment") or "?")
-
-    if best and worst:
-        ctx["BestTreatment"] = _treatment_label(best)
-        sources["BestTreatment"] = "derived: argmax(tables.means.mean)"
-        ctx["BestMean"] = str(best.get("mean"))
-        sources["BestMean"] = "tables.means[best].mean"
-        ctx["WorstTreatment"] = _treatment_label(worst)
-        sources["WorstTreatment"] = "derived: argmin(tables.means.mean)"
-        ctx["WorstMean"] = str(worst.get("mean"))
-        sources["WorstMean"] = "tables.means[worst].mean"
-
-        try:
-            diff = float(best.get("mean")) - float(worst.get("mean"))
-            ctx["BestMinusWorst"] = str(round(diff, 4))
-            sources["BestMinusWorst"] = "derived: BestMean - WorstMean"
-        except Exception:
-            ctx["BestMinusWorst"] = "N/A"
-            sources["BestMinusWorst"] = "derived: BestMean - WorstMean (failed)"
-
-    else:
-        ctx["BestTreatment"] = "N/A"
-        sources["BestTreatment"] = "tables.means (missing)"
-        ctx["BestMean"] = "N/A"
-        sources["BestMean"] = "tables.means (missing)"
-        ctx["WorstTreatment"] = "N/A"
-        sources["WorstTreatment"] = "tables.means (missing)"
-        ctx["WorstMean"] = "N/A"
-        sources["WorstMean"] = "tables.means (missing)"
-        ctx["BestMinusWorst"] = "N/A"
-        sources["BestMinusWorst"] = "tables.means (missing)"
-
-    return ctx
-
-def _strict_confidence(result: Dict[str, Any], template_ok: bool, missing: List[str]) -> Dict[str, Any]:
-    """
-    Deterministic confidence meter.
-    NOTE: This does NOT claim biological truth; it only reports coverage + assumption status.
-    """
-    if not template_ok:
-        return {
-            "score": 0.0,
-            "level": "Blocked",
-            "reasons": ["STRICT_BLOCKED"] + ([f"MISSING:{m}" for m in missing] if missing else []),
-        }
-
-    score = 1.0
-    reasons: List[str] = []
-
-    ass = (result.get("tables", {}) or {}).get("assumptions", []) or []
-    sh = next((r for r in ass if str(r.get("test", "")).lower().startswith("shapiro")), None)
-    lv = next((r for r in ass if str(r.get("test", "")).lower().startswith("levene")), None)
-
-    if sh and (sh.get("passed") is False):
-        score -= 0.1
-        reasons.append("NORMALITY_NOT_MET")
-    if lv and (lv.get("passed") is False):
-        score -= 0.2
-        reasons.append("HOMOGENEITY_NOT_MET")
-
-    # Keep in [0,1]
-    score = max(0.0, min(1.0, round(score, 2)))
-    level = "High" if score >= 0.9 else ("Medium" if score >= 0.75 else "Low")
-    return {"score": score, "level": level, "reasons": reasons}
-
-
-def render_strict_per_trait(
-    result: Dict[str, Any],
-    design_family: str,
-    alpha: float = 0.05,
-) -> Dict[str, Any]:
-    """
-    Render STRICT interpretation text for a single trait.
-
-    Output includes:
-      - text (strictly templated)
-      - badge (STRICT MODE VERIFIED / BLOCKED)
-      - confidence (deterministic meter)
-      - audit_log (every placeholder -> value + source)
-    """
-    cfg = _load_strict_cfg()
-    ctx = build_strict_ctx(result, design_family=design_family, alpha=alpha)
-
-    # Choose template based on design + interaction
-    template_id = None
-    if design_family == "oneway":
-        template_id = "one_way"
-    elif design_family == "oneway_rcbd":
-        template_id = "one_way_rcbd"
-    else:
-        # Two-factor (includes split-plot summary at the interpretation layer)
-        # Determine interaction significance if p_AxB is available
-        p_axb = None
-        for key in ("p_AxB",):
-            if key in ctx and ctx[key] not in ("N/A", None):
-                p_axb = ctx[key]
-                break
-        # ctx p values are formatted strings; we need raw p for significance, so re-read from tables if possible
-        p_raw = None
-        anova_rows = (result.get("tables", {}) or {}).get("anova_corrected") or (result.get("tables", {}) or {}).get("anova") or []
-        for row in anova_rows:
-            src = str(row.get("source", ""))
-            s = src.lower()
-            if ":" in s and (str(ctx.get("FactorA","")).lower() in s) and (str(ctx.get("FactorB","")).lower() in s):
-                p_raw = row.get("p_corrected") if row.get("p_corrected") is not None else row.get("PR(>F)")
-                break
-        is_sig = (p_raw is not None) and (float(p_raw) < float(alpha))
-        template_id = "two_factor_interaction_sig" if is_sig else "two_factor_no_interaction"
-
-    # Render + validate
-    missing: List[str] = []
-    try:
-        rendered = _render_template(cfg, ctx, template_id)
-    except Exception as e:
-        rendered = f"STRICT BLOCKED — {e}"
-        # best-effort parse missing placeholders
-        msg = str(e)
-        m = re.search(r"missing placeholders: \[(.*)\]", msg)
-        if m:
-            inner = m.group(1)
-            missing = [x.strip().strip("'\"") for x in inner.split(",") if x.strip()]
-        ok = False
-        reason = "RENDER_ERROR"
-        confidence = _strict_confidence(result, template_ok=False, missing=missing)
-        return {
-            "ok": ok,
-            "reason": reason,
-            "template_id": template_id,
-            "badge": {"text": "STRICT MODE BLOCKED", "status": "blocked"},
-            "confidence": confidence,
-            "audit_log": [],
-            "text": rendered,
-        }
-
-    ok, reason = _validate_strict(cfg, ctx, rendered)
-    confidence = _strict_confidence(result, template_ok=ok, missing=missing)
-
-    badge = {"text": "STRICT MODE VERIFIED" if ok else "STRICT MODE BLOCKED",
-             "status": "verified" if ok else "blocked"}
-
-    # Audit log: every placeholder in template -> value + source
-    audit_log = []
-    tpl = cfg["templates"][template_id]
-    for ph in tpl.get("placeholders", []):
-        val = ctx.get(ph, None)
-        src = (ctx.get("_sources", {}) or {}).get(ph, "unknown")
-        audit_log.append({"placeholder": ph, "value": val, "source": src})
-
-    return {
-        "ok": ok,
-        "reason": reason,
-        "template_id": template_id,
-        "badge": badge,
-        "confidence": confidence,
-        "audit_log": audit_log,
-        "text": rendered.strip(),
-    }
-
-def render_strict_synthesis(per_trait: Dict[str, Any], alpha: float = 0.05) -> Dict[str, Any]:
-    """
-    Multi-trait synthesis — deterministic, STRICT, and audit-able.
-    Uses ONLY computed values present in per-trait outputs.
-    """
-    n_traits = len(per_trait)
-    n_trt_sig = 0
-    n_interaction_sig = 0
-    n_shapiro_fail = 0
-    n_levene_fail = 0
-
-    shapiro_fail_names: List[str] = []
-    levene_fail_names:  List[str] = []
-
-    lines_out: List[str] = []
-    audit_log: List[Dict[str, Any]] = []
-
-    for tname, tr in per_trait.items():
-        tables   = tr.get("tables", {}) or {}
-        meta_tr  = tr.get("meta", {}) or {}
-        assump   = tables.get("assumptions", []) or []
-
-        sh = next((a for a in assump if str(a.get("test","")).lower().startswith("shapiro")), None)
-        lv = next((a for a in assump if str(a.get("test","")).lower().startswith("levene")), None)
-
-        # Significance flags (computed from ANOVA table)
-        anova_rows = tables.get("anova_corrected") or tables.get("anova") or []
-        trt_sig = False
-        ix_sig  = False
-        for row in anova_rows:
-            src   = str(row.get("source", ""))
-            p_raw = row.get("p_corrected") if row.get("p_corrected") is not None else row.get("PR(>F)")
-            if p_raw is None or "Residual" in src:
-                continue
-            if "Block" in src:
-                continue
-            try:
-                p_float = float(p_raw)
-            except Exception:
-                continue
-            if ":" in src:
-                if p_float < alpha:
-                    ix_sig = True
-            else:
-                if p_float < alpha:
-                    trt_sig = True
-
-        if trt_sig: n_trt_sig += 1
-        if ix_sig:  n_interaction_sig += 1
-
-        # Assumptions flags
-        sh_passed = True if sh is None else bool(sh.get("passed", True))
-        lv_passed = True if lv is None else bool(lv.get("passed", True))
-        if not sh_passed:
-            n_shapiro_fail += 1
-            shapiro_fail_names.append(tname)
-        if not lv_passed:
-            n_levene_fail += 1
-            levene_fail_names.append(tname)
-
-        cv = meta_tr.get("cv_percent", None)
-
-        sh_p = sh.get("p_value") if sh else None
-        lv_p = lv.get("p_value") if lv else None
-
-        lines_out.append(
-            f"- {tname}: treatment_significant={trt_sig}, interaction_significant={ix_sig}, "
-            f"CV_percent={cv}, Shapiro_p={sh_p}, Levene_p={lv_p}"
-        )
-
-        audit_log.append({
-            "trait": tname,
-            "source": "per_trait[trait]",
-            "fields": {
-                "treatment_significant": "tables.(anova_corrected|anova) p-values (non-Block, non-Residual, non-interaction)",
-                "interaction_significant": "tables.(anova_corrected|anova) p-values (interaction rows containing ':')",
-                "CV_percent": "meta.cv_percent",
-                "Shapiro_p": "tables.assumptions[Shapiro].p_value",
-                "Levene_p": "tables.assumptions[Levene].p_value",
-            }
-        })
-
-    # Summaries
-    if n_shapiro_fail == 0:
-        norm_summary = f"Normality: all {n_traits}/{n_traits} traits passed Shapiro-Wilk."
-    else:
-        norm_summary = f"Normality: {n_traits - n_shapiro_fail}/{n_traits} traits passed Shapiro-Wilk; failed traits: {', '.join(shapiro_fail_names)}."
-    if n_levene_fail == 0:
-        homo_summary = f"Homogeneity: all {n_traits}/{n_traits} traits passed Levene."
-    else:
-        homo_summary = f"Homogeneity: {n_traits - n_levene_fail}/{n_traits} traits passed Levene; failed traits: {', '.join(levene_fail_names)}."
-
-    text = "\n".join([
-        "STRICT MODE MULTI-TRAIT SUMMARY",
-        f"alpha = {alpha}",
-        f"n_traits = {n_traits}",
-        f"n_traits_with_significant_treatment_effect = {n_trt_sig}",
-        f"n_traits_with_significant_interaction = {n_interaction_sig}",
-        norm_summary,
-        homo_summary,
-        "Per-trait flags:",
-        *lines_out,
-    ]).strip()
-
-    # Confidence: coverage-only (not biological truth)
-    ok = True
-    score = 1.0
-    reasons: List[str] = []
-    if n_traits == 0:
-        ok = False
-        score = 0.0
-        reasons.append("NO_TRAITS")
-    else:
-        if n_shapiro_fail > 0:
-            score -= 0.1
-            reasons.append("SOME_NORMALITY_FAIL")
-        if n_levene_fail > 0:
-            score -= 0.2
-            reasons.append("SOME_HOMOGENEITY_FAIL")
-        score = max(0.0, min(1.0, round(score, 2)))
-
-    level = "High" if score >= 0.9 else ("Medium" if score >= 0.75 else "Low")
-    badge = {"text": "STRICT MODE VERIFIED" if ok else "STRICT MODE BLOCKED",
-             "status": "verified" if ok else "blocked"}
-
-    return {
-        "ok": ok,
-        "badge": badge,
-        "confidence": {"score": score, "level": level, "reasons": reasons},
-        "audit_log": audit_log,
-        "text": text,
-        "mode": "strict_deterministic",
-        "flags": {
-            "n_traits": n_traits,
-            "n_trt_sig": n_trt_sig,
-            "n_interaction_sig": n_interaction_sig,
-            "n_shapiro_fail": n_shapiro_fail,
-            "n_levene_fail": n_levene_fail,
-        }
-    }
-
-def extract_facts(result: Dict[str, Any], alpha: float = 0.05) -> Dict[str, Any]:
-    """
-    Extract canonical bullet-facts from a single-trait result JSON.
-    ONLY facts provable from computed output.
-    LLM receives this — not raw JSON.
-    """
-    facts: Dict[str, Any] = {}
-    meta   = result.get("meta", {})
-    tables = result.get("tables", {})
-    intel  = result.get("intelligence", {})
-
-    # ── Design context ──
-    facts["design"]  = meta.get("design", "Unknown")
-    facts["trait"]   = meta.get("trait", "Unknown")
-    facts["alpha"]   = alpha
-    facts["cv"]      = meta.get("cv_percent")
-
-    # ── ANOVA significance (grounded from ANOVA table) ──
-    anova_rows = tables.get("anova", tables.get("anova_corrected", []))
-    sig_effects = []
-    insig_effects = []
-    for row in anova_rows:
-        src = str(row.get("source", ""))
-        if "Residual" in src:
-            continue
-        p_raw = row.get("PR(>F)") or row.get("p_corrected") or row.get("p_value")
-        p_disp = row.get("PR(>F)_display") or row.get("p_corrected_display") or fmt_p_display(p_raw)
-        F_val  = row.get("F") or row.get("F_corrected")
-        df_val = row.get("df")
-        if p_raw is None:
-            continue
-        entry = {
-            "source":    src,
-            "F":         round_val(F_val, 2) if F_val else None,
-            "df":        df_val,
-            "p":         round_val(p_raw, 4),
-            "p_display": p_disp,
-            "significant": bool(float(p_raw) < alpha),
-        }
-        if float(p_raw) < alpha:
-            sig_effects.append(entry)
-        else:
-            insig_effects.append(entry)
-    facts["significant_effects"]   = sig_effects
-    facts["nonsignificant_effects"] = insig_effects
-
-    # ── Interaction present? (critical for factorial/split-plot) ──
-    interaction_row = next(
-        (r for r in sig_effects   if ":" in str(r["source"]) or "x" in str(r["source"]).lower()),
-        None
-    )
-    insig_interaction = next(
-        (r for r in insig_effects if ":" in str(r["source"]) or "x" in str(r["source"]).lower()),
-        None
-    )
-    facts["interaction_significant"] = interaction_row is not None
-    facts["interaction_row"]         = interaction_row or insig_interaction
-
-    # ── Means table (grounded) ──
-    means_rows = tables.get("means", [])
-    if means_rows:
-        sorted_means = sorted(
-            [r for r in means_rows if r.get("mean") is not None],
-            key=lambda r: float(r["mean"]),
-            reverse=True
-        )
-        facts["best_treatment"]  = sorted_means[0]  if sorted_means else None
-        facts["worst_treatment"] = sorted_means[-1] if sorted_means else None
-        facts["all_means"]       = sorted_means
-        facts["has_tukey"]       = any("letters" in r or "groups" in r for r in means_rows)
-    else:
-        facts["best_treatment"]  = None
-        facts["worst_treatment"] = None
-        facts["all_means"]       = []
-        facts["has_tukey"]       = False
-
-    # ── Assumptions (locked verdict — never guessed) ──
-    assumptions = tables.get("assumptions", [])
-    shapiro = next((a for a in assumptions if a.get("test") == "Shapiro-Wilk"), {})
-    levene  = next((a for a in assumptions if a.get("test") == "Levene"), {})
-    guidance = tables.get("assumption_guidance", {})
-    facts["assumptions"] = {
-        "shapiro_stat":    shapiro.get("stat"),
-        "shapiro_p":       shapiro.get("p_value"),
-        "shapiro_passed":  shapiro.get("passed"),
-        "levene_stat":     levene.get("stat"),
-        "levene_p":        levene.get("p_value"),
-        "levene_passed":   levene.get("passed"),
-        "verdict":         guidance.get("overall", "Assumption results not available."),
-        "verdict_code":    guidance.get("verdict_code", "unknown"),
-        "alternative":     guidance.get("alternative"),
-    }
-
-    # ── Intelligence blocks (pre-computed, grounded) ──
-    facts["assumptions_verdict"] = intel.get("assumptions_verdict", guidance.get("overall", "Not available."))
-    facts["decision_rules"]      = intel.get("decision_rules", [])
-    facts["reviewer_radar"]      = intel.get("reviewer_radar", [])
-    facts["executive_insight"]   = intel.get("executive_insight", "")
-
-    return facts
-
-
-def facts_to_prompt_text(facts: Dict[str, Any]) -> str:
-    """
-    Render fact-bullets into a structured prompt block.
-    LLM can only rewrite these bullets — it cannot invent new facts.
-    """
-    lines = []
-    lines.append(f"ANALYSIS: {facts['design']} — Trait: {facts['trait']}")
-    if facts.get("cv"):
-        lines.append(f"CV: {facts['cv']}%")
-
-    lines.append("")
-    lines.append("SIGNIFICANCE FACTS (use only these):")
-    for e in facts.get("significant_effects", []):
-        F_str = f"F = {e['F']}" if e.get("F") else ""
-        lines.append(f"  ✓ {e['source']}: significant ({F_str}, {e['p_display']})")
-    for e in facts.get("nonsignificant_effects", []):
-        F_str = f"F = {e['F']}" if e.get("F") else ""
-        lines.append(f"  ✗ {e['source']}: NOT significant ({F_str}, {e['p_display']})")
-
-    if facts.get("interaction_row"):
-        ix = facts["interaction_row"]
-        status = "SIGNIFICANT" if facts["interaction_significant"] else "NOT significant"
-        F_str = f"F = {ix['F']}" if ix.get("F") else ""
-        lines.append(f"  → INTERACTION ({ix['source']}): {status} ({F_str}, {ix['p_display']}) — report this FIRST")
-
-    lines.append("")
-    lines.append("MEANS FACTS (use only these):")
-    for m in facts.get("all_means", []):
-        group_col = next((k for k in m if k not in ("n","mean","sd","se","letters","groups")), "treatment")
-        name    = m.get(group_col, "?")
-        mean_v  = m.get("mean", "?")
-        letters = m.get("letters") or m.get("groups", "")
-        lines.append(f"  {name}: mean = {mean_v}, Tukey letter = {letters or 'N/A'}")
-
-    lines.append("")
-    lines.append(f"ASSUMPTIONS VERDICT (use exactly this text, do not contradict):")
-    lines.append(f"  {facts['assumptions_verdict']}")
-    if facts["assumptions"].get("shapiro_stat"):
-        lines.append(f"  Shapiro-Wilk: W = {facts['assumptions']['shapiro_stat']}, p = {facts['assumptions']['shapiro_p']}")
-    if facts["assumptions"].get("levene_stat") is not None:
-        lines.append(f"  Levene: F = {facts['assumptions']['levene_stat']}, p = {facts['assumptions']['levene_p']}")
-
-    if facts.get("decision_rules"):
-        lines.append("")
-        lines.append("DECISION RULES (present verbatim under 'Decision Rules' heading):")
-        for rule in facts["decision_rules"]:
-            lines.append(f"  • {rule}")
-
-    if facts.get("reviewer_radar"):
-        lines.append("")
-        lines.append("REVIEWER RADAR (present verbatim under 'Reviewer Radar' heading):")
-        for q in facts["reviewer_radar"]:
-            lines.append(f"  ? {q}")
-
-    return "\n".join(lines)
-
-
-
-# ============================================================
-#  DESIGN FAMILY MAP — used by strict template engine
-# ============================================================
-
-_DESIGN_FAMILY_MAP = {
-    "CRD one-way":          "one_way",
-    "RCBD one-way":         "one_way",
-    "One-way ANOVA (CRD)":  "one_way",
-    "One-way ANOVA (RCBD)": "one_way",
-    "Two-way Factorial":    "twoway",
-    "Factorial RCBD":       "twoway",
-    "Split-plot":           "splitplot",
-}
-
-def attach_strict_template(result: Dict[str, Any], design_family: str) -> Dict[str, Any]:
-    """
-    Attach STRICT MODE block to a single-trait result.
-    This is deterministic (no LLM) and includes auditability.
-    """
-    strict_block = render_strict_per_trait(result, design_family=design_family, alpha=float(result.get("meta", {}).get("alpha", 0.05) or 0.05))
-    result.setdefault("strict_mode", {})
-    result["strict_mode"] = strict_block
-    # If STRICT verified, use it as the primary interpretation payload
-    if strict_block.get("ok") is True:
-        result["interpretation"] = strict_block.get("text", "")
-        result.setdefault("meta", {})["interpretation_mode"] = "strict_verified"
-    else:
-        result.setdefault("meta", {})["interpretation_mode"] = "non_strict"
-    return result
 
 def oneway_engine(df: pd.DataFrame, factor: str, trait: str, alpha: float) -> Dict[str, Any]:
     d = clean_for_model(df, trait, [factor])
@@ -2392,10 +1065,6 @@ def oneway_engine(df: pd.DataFrame, factor: str, trait: str, alpha: float) -> Di
     if m.any():
         p_factor = fmt_p(anova.loc[m, "PR(>F)"].iloc[0])
 
-    p_map = {factor: p_factor}
-    cv    = cv_percent(d[trait])
-    best  = str(means_letters.iloc[0][factor]) if not means_letters.empty else None
-
     return {
         "meta": {
             "design": "CRD one-way",
@@ -2404,24 +1073,19 @@ def oneway_engine(df: pd.DataFrame, factor: str, trait: str, alpha: float) -> Di
             "alpha": alpha,
             "n_rows_used": int(d.shape[0]),
             "levels": sorted(d[factor].unique().tolist()),
-            "cv_percent": cv,
+            "cv_percent": cv_percent(d[trait]),
         },
         "tables": {
-            "anova": add_p_display_to_anova(df_to_records(anova[["source", "df", "sum_sq", "ms", "F", "PR(>F)"]])),
+            "anova": df_to_records(anova[["source", "df", "sum_sq", "ms", "F", "PR(>F)"]]),
             "means": df_to_records(means_letters),
             "tukey": df_to_records(tukey_df),
             "assumptions": [sh, lv],
             "assumption_guidance": guidance,
         },
         "plots": plots,
-        "interpretation": interpret_anova("One-way ANOVA (CRD)", p_map, cv, alpha),
-        "strict_template": {},  # populated by attach_strict_template below
-        "intelligence": {
-            "executive_insight":   build_executive_insight(p_map, cv, trait, best, alpha),
-            "reviewer_radar":      build_reviewer_radar(sh, lv, p_map, cv, alpha=alpha),
-            "decision_rules":      build_decision_rules(means_letters, factor, trait, alpha),
-            "assumptions_verdict": guidance["overall"],
-        },
+        "interpretation": interpret_anova(
+            "One-way ANOVA (CRD)", {factor: p_factor}, cv_percent(d[trait]), alpha
+        ),
     }
 
 
@@ -2461,10 +1125,6 @@ def oneway_rcbd_engine(
         t_crit = stats.t.ppf(1 - alpha / 2, df_error)
         lsd = round_val(t_crit * np.sqrt(2 * ms_error / r), 4)
 
-    p_map = {f"Block ({block})": p_block, treatment: p_treatment}
-    cv    = cv_percent(d[trait])
-    best  = str(means_letters.iloc[0][treatment]) if not means_letters.empty else None
-
     return {
         "meta": {
             "design": "RCBD one-way",
@@ -2476,25 +1136,23 @@ def oneway_rcbd_engine(
             "n_blocks": int(d[block].nunique()),
             "n_treatments": int(d[treatment].nunique()),
             "levels": sorted(d[treatment].unique().tolist()),
-            "cv_percent": cv,
+            "cv_percent": cv_percent(d[trait]),
             "lsd": lsd,
         },
         "tables": {
-            "anova": add_p_display_to_anova(df_to_records(anova[["source", "df", "sum_sq", "ms", "F", "PR(>F)"]])),
+            "anova": df_to_records(anova[["source", "df", "sum_sq", "ms", "F", "PR(>F)"]]),
             "means": df_to_records(means_letters),
             "tukey": df_to_records(tukey_df),
             "assumptions": [sh, lv],
             "assumption_guidance": guidance,
         },
         "plots": plots,
-        "interpretation": interpret_anova("One-way ANOVA (RCBD)", p_map, cv, alpha),
-        "strict_template": {},  # populated by attach_strict_template below
-        "intelligence": {
-            "executive_insight":   build_executive_insight(p_map, cv, trait, best, alpha),
-            "reviewer_radar":      build_reviewer_radar(sh, lv, p_map, cv, alpha=alpha),
-            "decision_rules":      build_decision_rules(means_letters, treatment, trait, alpha),
-            "assumptions_verdict": guidance["overall"],
-        },
+        "interpretation": interpret_anova(
+            "One-way ANOVA (RCBD)",
+            {f"Block ({block})": p_block, treatment: p_treatment},
+            cv_percent(d[trait]),
+            alpha
+        ),
     }
 
 
@@ -2528,10 +1186,6 @@ def twoway_engine(
         f"{a}x{b} interaction": p_of(":"),
     }
 
-    cv   = cv_percent(d[trait])
-    ml   = means_letters.rename(columns={"_AB_": "A:B"})
-    best = str(ml.iloc[0]["A:B"]) if not ml.empty else None
-
     return {
         "meta": {
             "design": "CRD two-way (factorial)",
@@ -2540,24 +1194,19 @@ def twoway_engine(
             "trait": trait,
             "alpha": alpha,
             "n_rows_used": int(d.shape[0]),
-            "cv_percent": cv,
+            "cv_percent": cv_percent(d[trait]),
         },
         "tables": {
-            "anova": add_p_display_to_anova(df_to_records(anova[["source", "df", "sum_sq", "ms", "F", "PR(>F)"]])),
-            "means": df_to_records(ml),
+            "anova": df_to_records(anova[["source", "df", "sum_sq", "ms", "F", "PR(>F)"]]),
+            "means": df_to_records(means_letters.rename(columns={"_AB_": "A:B"})),
             "tukey": df_to_records(tukey_df),
             "assumptions": [sh, lv],
             "assumption_guidance": guidance,
         },
         "plots": plots,
-        "interpretation": interpret_anova("Two-way Factorial ANOVA (CRD)", p_map, cv, alpha),
-        "strict_template": {},  # populated by attach_strict_template below
-        "intelligence": {
-            "executive_insight":   build_executive_insight(p_map, cv, trait, best, alpha),
-            "reviewer_radar":      build_reviewer_radar(sh, lv, p_map, cv, alpha=alpha),
-            "decision_rules":      build_decision_rules(ml, "A:B", trait, alpha),
-            "assumptions_verdict": guidance["overall"],
-        },
+        "interpretation": interpret_anova(
+            "Two-way Factorial ANOVA (CRD)", p_map, cv_percent(d[trait]), alpha
+        ),
     }
 
 
@@ -2592,10 +1241,6 @@ def rcbd_factorial_engine(
         f"{a}x{b} interaction": p_of(":"),
     }
 
-    cv   = cv_percent(d[trait])
-    ml   = means_letters.rename(columns={"_AB_": "A:B"})
-    best = str(ml.iloc[0]["A:B"]) if not ml.empty else None
-
     return {
         "meta": {
             "design": "Factorial in RCBD",
@@ -2605,24 +1250,19 @@ def rcbd_factorial_engine(
             "trait": trait,
             "alpha": alpha,
             "n_rows_used": int(d.shape[0]),
-            "cv_percent": cv,
+            "cv_percent": cv_percent(d[trait]),
         },
         "tables": {
-            "anova": add_p_display_to_anova(df_to_records(anova[["source", "df", "sum_sq", "ms", "F", "PR(>F)"]])),
-            "means": df_to_records(ml),
+            "anova": df_to_records(anova[["source", "df", "sum_sq", "ms", "F", "PR(>F)"]]),
+            "means": df_to_records(means_letters.rename(columns={"_AB_": "A:B"})),
             "tukey": df_to_records(tukey_df),
             "assumptions": [sh, lv],
             "assumption_guidance": guidance,
         },
         "plots": plots,
-        "interpretation": interpret_anova("Factorial RCBD ANOVA", p_map, cv, alpha),
-        "strict_template": {},  # populated by attach_strict_template below
-        "intelligence": {
-            "executive_insight":   build_executive_insight(p_map, cv, trait, best, alpha),
-            "reviewer_radar":      build_reviewer_radar(sh, lv, p_map, cv, alpha=alpha),
-            "decision_rules":      build_decision_rules(ml, "A:B", trait, alpha),
-            "assumptions_verdict": guidance["overall"],
-        },
+        "interpretation": interpret_anova(
+            "Factorial RCBD ANOVA", p_map, cv_percent(d[trait]), alpha
+        ),
     }
 
 
@@ -2727,29 +1367,20 @@ def splitplot_engine(
             "note": "Main plot factor tested against Block:Main error (correct split-plot test).",
         },
         "tables": {
-            "anova_raw": add_p_display_to_anova(df_to_records(an0.replace({np.nan: None}))),
-            "anova_corrected": add_p_display_to_anova(df_to_records(
+            "anova_raw": df_to_records(an0.replace({np.nan: None})),
+            "anova_corrected": df_to_records(
                 an_corr[["source", "df", "sum_sq", "ms",
                           "F_corrected", "p_corrected"]].replace({np.nan: None})
-            )),
+            ),
             "means": df_to_records(means_letters.rename(columns={"_AB_": "Main:Sub"})),
             "tukey": df_to_records(tukey_df),
             "assumptions": [sh, lv],
             "assumption_guidance": guidance,
         },
         "plots": plots,
-        "interpretation": interpret_anova("Split-plot ANOVA", p_map, cv_percent(d[trait]), alpha),
-        "strict_template": {},  # populated by attach_strict_template below
-        "intelligence": {
-            "executive_insight":   build_executive_insight(p_map, cv_percent(d[trait]), trait,
-                                       str(means_letters.iloc[0]["_AB_"]) if not means_letters.empty else None,
-                                       alpha),
-            "reviewer_radar":      build_reviewer_radar(sh, lv, p_map, cv_percent(d[trait]), alpha=alpha),
-            "decision_rules":      build_decision_rules(
-                                       means_letters.rename(columns={"_AB_": "Main:Sub"}),
-                                       "Main:Sub", trait, alpha),
-            "assumptions_verdict": guidance["overall"],
-        },
+        "interpretation": interpret_anova(
+            "Split-plot ANOVA", p_map, cv_percent(d[trait]), alpha
+        ),
     }
 
 
@@ -2826,7 +1457,7 @@ async def analyze_anova_oneway(
 ):
     df = await load_csv(file)
     require_cols(df, [factor, trait])
-    return attach_strict_template(oneway_engine(df, factor, trait, float(alpha)), float(alpha))
+    return oneway_engine(df, factor, trait, float(alpha))
 
 
 @app.post("/analyze/anova/oneway_rcbd")
@@ -2840,7 +1471,7 @@ async def analyze_anova_oneway_rcbd(
     """One-way ANOVA in RCBD - most common Nigerian field trial design."""
     df = await load_csv(file)
     require_cols(df, [block, treatment, trait])
-    return attach_strict_template(oneway_rcbd_engine(df, block, treatment, trait, float(alpha)), float(alpha))
+    return oneway_rcbd_engine(df, block, treatment, trait, float(alpha))
 
 
 @app.post("/analyze/anova/twoway")
@@ -2853,7 +1484,7 @@ async def analyze_anova_twoway(
 ):
     df = await load_csv(file)
     require_cols(df, [factor_a, factor_b, trait])
-    return attach_strict_template(twoway_engine(df, factor_a, factor_b, trait, float(alpha)), float(alpha))
+    return twoway_engine(df, factor_a, factor_b, trait, float(alpha))
 
 
 @app.post("/analyze/anova/rcbd_factorial")
@@ -2867,7 +1498,7 @@ async def analyze_anova_rcbd_factorial(
 ):
     df = await load_csv(file)
     require_cols(df, [block, factor_a, factor_b, trait])
-    return attach_strict_template(rcbd_factorial_engine(df, block, factor_a, factor_b, trait, float(alpha)), float(alpha))
+    return rcbd_factorial_engine(df, block, factor_a, factor_b, trait, float(alpha))
 
 
 @app.post("/analyze/anova/splitplot")
@@ -2881,7 +1512,7 @@ async def analyze_anova_splitplot(
 ):
     df = await load_csv(file)
     require_cols(df, [block, main_plot, sub_plot, trait])
-    return attach_strict_template(splitplot_engine(df, block, main_plot, sub_plot, trait, float(alpha)), float(alpha))
+    return splitplot_engine(df, block, main_plot, sub_plot, trait, float(alpha))
 
 
 
@@ -3418,10 +2049,7 @@ def multitrait_engine(
             else:
                 raise HTTPException(status_code=400, detail=f"Unknown design: {design}")
 
-            # Attach strict template to per-trait result
-            # Attach strict template to per-trait result
-            design_family = ('oneway' if design in ('oneway', 'oneway_crd') else ('oneway_rcbd' if design in ('oneway_rcbd', 'rcbd') else 'twofactor'))
-            per_trait_results[trait] = attach_strict_template(result, design_family)
+            per_trait_results[trait] = result
 
             # Build summary row for this trait
             for factor_key, p_val in p_map.items():
@@ -3535,7 +2163,6 @@ def multitrait_engine(
             "correlation_heatmap": corr_plot,
             "pca_biplot": pca_plot,
         },
-        "strict_synthesis": render_strict_synthesis(per_trait_results, alpha),
     }
 
 
