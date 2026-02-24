@@ -1,0 +1,202 @@
+{
+  "version": "1.0.0",
+  "mode": "strict",
+
+  "banned_phrases": [
+    "suggests", "may be", "might be", "could be", "possibly",
+    "mechanism", "physiology", "water stress", "yield penalty",
+    "recommend", "preferred", "suitable", "select", "choose", "prioritise",
+    "because", "due to", "therefore", "leads to", "results from",
+    "food safety", "drought tolerance", "farmer adoption",
+    "mechanised harvesting", "smallholder", "food security",
+    "genetic basis", "physiological mechanism", "uptake efficiency",
+    "vigour traits", "dose-response", "increasing trend",
+    "declined steadily", "linear increase", "linear decrease",
+    "dominant effect", "robust evidence", "overwhelmingly",
+    "massive", "dramatic improvement", "exceptional precision",
+    "p = 0"
+  ],
+
+  "rules": {
+    "alpha_key": "meta.alpha",
+    "decision_tree": [
+      {
+        "id": "two_factor_interaction_sig",
+        "when": { "all": [
+          { "var": "meta.interaction_exists", "op": "==", "value": true },
+          { "var": "meta.p_interaction_sig",  "op": "==", "value": true }
+        ]},
+        "use_template": "two_factor_interaction_sig"
+      },
+      {
+        "id": "two_factor_no_interaction",
+        "when": { "all": [
+          { "var": "meta.interaction_exists", "op": "==", "value": true },
+          { "var": "meta.p_interaction_sig",  "op": "==", "value": false }
+        ]},
+        "use_template": "two_factor_no_interaction"
+      },
+      {
+        "id": "one_way_rcbd",
+        "when": { "all": [
+          { "var": "meta.design_family", "op": "==", "value": "one_way_rcbd" }
+        ]},
+        "use_template": "one_way_rcbd"
+      },
+      {
+        "id": "one_way",
+        "when": { "all": [
+          { "var": "meta.design_family", "op": "==", "value": "one_way" }
+        ]},
+        "use_template": "one_way"
+      }
+    ],
+    "required_evidence": {
+      "anova_rows": [],
+      "means_rows": [],
+      "assumption_tests": ["Shapiro-Wilk", "Levene"]
+    }
+  },
+
+  "templates": {
+    "one_way": {
+      "id": "one_way",
+      "description": "One-way ANOVA (CRD). Single factor, no blocks.",
+      "placeholders": [
+        "meta.trait", "meta.factor", "meta.alpha", "meta.cv_percent",
+        "stats.factor.F", "stats.factor.p_display",
+        "derived.best.label", "derived.best.mean", "derived.best.letter",
+        "derived.worst.label", "derived.worst.mean", "derived.worst.letter",
+        "derived.best_minus_worst",
+        "assumptions.normality.verdict", "assumptions.variance.verdict"
+      ],
+      "sections": [
+        {
+          "title": "Overall Finding",
+          "body": "{meta.factor} had a significant effect on {meta.trait} (F = {stats.factor.F}, p {stats.factor.p_display}; alpha = {meta.alpha})."
+        },
+        {
+          "title": "Key Comparison",
+          "body": "Highest mean: {derived.best.label} = {derived.best.mean} (Tukey group {derived.best.letter}). Lowest mean: {derived.worst.label} = {derived.worst.mean} (Tukey group {derived.worst.letter}). Difference = {derived.best_minus_worst}."
+        },
+        {
+          "title": "Assumptions",
+          "body": "{assumptions.normality.verdict} {assumptions.variance.verdict}"
+        },
+        {
+          "title": "Experimental Precision",
+          "body": "CV = {meta.cv_percent}%."
+        }
+      ]
+    },
+
+    "one_way_rcbd": {
+      "id": "one_way_rcbd",
+      "description": "One-way ANOVA (RCBD). Treatment + Block effects.",
+      "placeholders": [
+        "meta.trait", "meta.treatment", "meta.block", "meta.alpha", "meta.cv_percent",
+        "stats.treatment.F", "stats.treatment.p_display",
+        "stats.block.F", "stats.block.p_display",
+        "derived.best.label", "derived.best.mean", "derived.best.letter",
+        "derived.worst.label", "derived.worst.mean", "derived.worst.letter",
+        "derived.best_minus_worst",
+        "assumptions.normality.verdict", "assumptions.variance.verdict"
+      ],
+      "sections": [
+        {
+          "title": "Overall Finding",
+          "body": "{meta.treatment} had a significant effect on {meta.trait} (F = {stats.treatment.F}, p {stats.treatment.p_display}; alpha = {meta.alpha})."
+        },
+        {
+          "title": "Block Effect",
+          "body": "{meta.block} effect: F = {stats.block.F}, p {stats.block.p_display}."
+        },
+        {
+          "title": "Key Comparison",
+          "body": "Highest mean: {derived.best.label} = {derived.best.mean} (Tukey group {derived.best.letter}). Lowest mean: {derived.worst.label} = {derived.worst.mean} (Tukey group {derived.worst.letter}). Difference = {derived.best_minus_worst}."
+        },
+        {
+          "title": "Assumptions",
+          "body": "{assumptions.normality.verdict} {assumptions.variance.verdict}"
+        },
+        {
+          "title": "Experimental Precision",
+          "body": "CV = {meta.cv_percent}%."
+        }
+      ]
+    },
+
+    "two_factor_interaction_sig": {
+      "id": "two_factor_interaction_sig",
+      "description": "Two-factor/split-plot: interaction significant. Combinations only.",
+      "placeholders": [
+        "meta.trait", "meta.factor_a", "meta.factor_b", "meta.alpha", "meta.cv_percent",
+        "stats.factor_a.F", "stats.factor_a.p_display",
+        "stats.factor_b.F", "stats.factor_b.p_display",
+        "stats.interaction.F", "stats.interaction.p_display",
+        "derived.best.label", "derived.best.mean", "derived.best.letter",
+        "derived.worst.label", "derived.worst.mean", "derived.worst.letter",
+        "derived.best_minus_worst",
+        "assumptions.normality.verdict", "assumptions.variance.verdict"
+      ],
+      "sections": [
+        {
+          "title": "Overall Finding",
+          "body": "The {meta.factor_a} x {meta.factor_b} interaction was significant (F = {stats.interaction.F}, p {stats.interaction.p_display}; alpha = {meta.alpha}). Treatment combinations were interpreted rather than main effects alone."
+        },
+        {
+          "title": "Main Effects (context only)",
+          "body": "{meta.factor_a}: F = {stats.factor_a.F}, p {stats.factor_a.p_display}. {meta.factor_b}: F = {stats.factor_b.F}, p {stats.factor_b.p_display}."
+        },
+        {
+          "title": "Best and Worst Combinations",
+          "body": "Best combination for {meta.trait}: {derived.best.label} (mean = {derived.best.mean}, Tukey group {derived.best.letter}). Worst combination: {derived.worst.label} (mean = {derived.worst.mean}, Tukey group {derived.worst.letter}). Difference = {derived.best_minus_worst}."
+        },
+        {
+          "title": "Assumptions",
+          "body": "{assumptions.normality.verdict} {assumptions.variance.verdict}"
+        },
+        {
+          "title": "Experimental Precision",
+          "body": "CV = {meta.cv_percent}%."
+        }
+      ]
+    },
+
+    "two_factor_no_interaction": {
+      "id": "two_factor_no_interaction",
+      "description": "Two-factor/split-plot: interaction NOT significant. Main effects only.",
+      "placeholders": [
+        "meta.trait", "meta.factor_a", "meta.factor_b", "meta.alpha", "meta.cv_percent",
+        "stats.factor_a.F", "stats.factor_a.p_display",
+        "stats.factor_b.F", "stats.factor_b.p_display",
+        "stats.interaction.F", "stats.interaction.p_display",
+        "derived.best_a.label", "derived.best_a.mean", "derived.best_a.letter",
+        "derived.best_b.label", "derived.best_b.mean", "derived.best_b.letter",
+        "assumptions.normality.verdict", "assumptions.variance.verdict"
+      ],
+      "sections": [
+        {
+          "title": "Overall Finding",
+          "body": "The {meta.factor_a} x {meta.factor_b} interaction was not significant (F = {stats.interaction.F}, p {stats.interaction.p_display}; alpha = {meta.alpha}). Main effects were interpreted independently."
+        },
+        {
+          "title": "Main Effect: {meta.factor_a}",
+          "body": "F = {stats.factor_a.F}, p {stats.factor_a.p_display}. Highest level: {derived.best_a.label} (mean = {derived.best_a.mean}, Tukey group {derived.best_a.letter})."
+        },
+        {
+          "title": "Main Effect: {meta.factor_b}",
+          "body": "F = {stats.factor_b.F}, p {stats.factor_b.p_display}. Highest level: {derived.best_b.label} (mean = {derived.best_b.mean}, Tukey group {derived.best_b.letter})."
+        },
+        {
+          "title": "Assumptions",
+          "body": "{assumptions.normality.verdict} {assumptions.variance.verdict}"
+        },
+        {
+          "title": "Experimental Precision",
+          "body": "CV = {meta.cv_percent}%."
+        }
+      ]
+    }
+  }
+}
