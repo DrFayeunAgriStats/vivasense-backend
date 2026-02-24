@@ -1641,9 +1641,545 @@ def add_p_display_to_anova(records: List[Dict]) -> List[Dict]:
     return out
 
 
+
 # ============================================================
-#  FACT EXTRACTION PIPELINE  (spec §2 — fact-first architecture)
+#  STRICT TEMPLATE ENGINE  (spec: strict-templates.v1)
+#  Zero LLM in rendering path — pure string substitution.
+#  Hallucination structurally impossible for templated output.
 # ============================================================
+
+import json as _json
+from pathlib import Path as _Path
+
+_STRICT_TEMPLATES_PATH = _Path(__file__).parent / "strict_templates.json"
+_strict_cfg_cache: Optional[Dict[str, Any]] = None
+
+def _load_strict_cfg() -> Dict[str, Any]:
+    global _strict_cfg_cache
+    if _strict_cfg_cache is None:
+        with open(_STRICT_TEMPLATES_PATH, "r", encoding="utf-8") as f:
+            _strict_cfg_cache = _json.load(f)
+    return _strict_cfg_cache
+
+
+def _tget(d: Any, dotted: str) -> Any:
+    """Dot-notation access into nested dict. Raises KeyError if missing."""
+    cur: Any = d
+    for part in dotted.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            raise KeyError(f"Missing context key: {dotted}")
+        cur = cur[part]
+    return cur
+
+
+def _safe_format(text: str, ctx: Dict[str, Any]) -> str:
+    """Replace {a.b.c} placeholders from context dict."""
+    import re as _re
+    def repl(m):
+        key = m.group(1)
+        try:
+            val = _tget(ctx, key)
+            return str(val)
+        except KeyError:
+            return f"[MISSING:{key}]"
+    return _re.sub(r"\{([A-Za-z0-9_\.]+)\}", repl, text)
+
+
+def _choose_template(cfg: Dict[str, Any], ctx: Dict[str, Any]) -> str:
+    for rule in cfg["rules"]["decision_tree"]:
+        ok = True
+        for cond in rule["when"]["all"]:
+            var, op, val = cond["var"], cond["op"], cond.get("value")
+            try:
+                left = _tget(ctx, var)
+            except KeyError:
+                ok = False; break
+            right = _tget(ctx, val) if isinstance(val, str) and "." in str(val) else val
+            if op == "==" and left != right: ok = False; break
+            if op == "!=" and left == right: ok = False; break
+            if op == "<"  and not (left <  right): ok = False; break
+            if op == "<=" and not (left <= right): ok = False; break
+            if op == ">"  and not (left >  right): ok = False; break
+            if op == ">=" and not (left >= right): ok = False; break
+        if ok:
+            return rule["use_template"]
+    raise ValueError("No matching strict template for this context.")
+
+
+def _render_template(cfg: Dict[str, Any], ctx: Dict[str, Any], template_id: str) -> str:
+    tpl = cfg["templates"][template_id]
+    missing = []
+    for ph in tpl["placeholders"]:
+        try:
+            _tget(ctx, ph)
+        except KeyError:
+            missing.append(ph)
+    if missing:
+        raise ValueError(f"STRICT BLOCKED — missing placeholders: {missing}")
+    parts = []
+    for sec in tpl["sections"]:
+        title = _safe_format(sec["title"], ctx).strip()
+        body  = _safe_format(sec["body"],  ctx).strip()
+        if "[MISSING:" not in body:
+            parts.append(f"{title}\n{body}")
+    return "\n\n".join(parts).strip()
+
+
+def _validate_strict(cfg: Dict[str, Any], ctx: Dict[str, Any], rendered: str) -> Tuple[bool, str]:
+    import re as _re
+    txt = rendered.lower()
+    for phrase in cfg["banned_phrases"]:
+        if phrase.lower() in txt:
+            return False, f"BANNED_PHRASE: {phrase}"
+    if _re.search(r"\{[A-Za-z0-9_\.]+\}", rendered):
+        return False, "UNRESOLVED_PLACEHOLDER"
+    return True, "OK"
+
+
+def _means_to_text(means_rows: List[Dict], treatment_col: str) -> str:
+    """Convert means table to readable string for template insertion."""
+    if not means_rows:
+        return "Not available."
+    header_cols = [treatment_col, "mean", "letters"]
+    lines = []
+    for row in means_rows:
+        name    = row.get(treatment_col, row.get("Main:Sub", "?"))
+        mean_v  = row.get("mean", "?")
+        letters = row.get("letters", row.get("groups", ""))
+        lines.append(f"  {name}: {mean_v} ({letters})")
+    return "\n".join(lines)
+
+
+def build_strict_ctx(
+    result: Dict[str, Any],
+    design_family: str,
+    alpha: float = 0.05,
+) -> Dict[str, Any]:
+    """
+    Build a STRICT context from a single-trait result JSON.
+
+    - All values are taken directly from the computed analysis output OR deterministically derived from it.
+    - No biological/external claims.
+    - A parallel ctx["_sources"] map records where every placeholder value came from.
+    """
+    meta_in   = result.get("meta", {}) or {}
+    tables_in = result.get("tables", {}) or {}
+
+    ctx: Dict[str, Any] = {}
+    sources: Dict[str, str] = {}
+    ctx["_sources"] = sources
+
+    # ── basics ──
+    trait = meta_in.get("trait", "trait")
+    ctx["Trait"] = trait
+    sources["Trait"] = "meta.trait"
+
+    cv = meta_in.get("cv_percent", None)
+    ctx["CV"] = (str(round(float(cv), 2)) if cv is not None else "N/A")
+    sources["CV"] = "meta.cv_percent"
+
+    # ── factor names ──
+    factor_a = meta_in.get("main_plot_factor") or meta_in.get("factor_a") or meta_in.get("factor", "Factor A")
+    factor_b = meta_in.get("sub_plot_factor")  or meta_in.get("factor_b") or meta_in.get("factor", "Factor B")
+    factor   = meta_in.get("factor", meta_in.get("treatment", "Treatment"))
+
+    ctx["FactorA"] = str(factor_a)
+    sources["FactorA"] = "meta.(main_plot_factor|factor_a|factor)"
+    ctx["FactorB"] = str(factor_b)
+    sources["FactorB"] = "meta.(sub_plot_factor|factor_b|factor)"
+    ctx["Factor"]  = str(factor)
+    sources["Factor"] = "meta.(factor|treatment)"
+
+    # ── ANOVA rows (prefer corrected) ──
+    anova_rows = tables_in.get("anova_corrected") or tables_in.get("anova") or []
+    # Map sources -> row
+    row_map: Dict[str, Dict[str, Any]] = {}
+    for row in anova_rows:
+        src = str(row.get("source", ""))
+        row_map[src] = row
+
+    def _pick_row_contains(substr: str) -> Optional[Tuple[str, Dict[str, Any]]]:
+        for src, row in row_map.items():
+            if substr.lower() in src.lower():
+                return src, row
+        return None
+
+    def _set_stat(prefix: str, src_key: str, row: Dict[str, Any], row_src_path: str) -> None:
+        # F + p + df
+        F_val = row.get("F_corrected") if row.get("F_corrected") is not None else row.get("F")
+        p_val = row.get("p_corrected") if row.get("p_corrected") is not None else row.get("PR(>F)")
+        df_val = row.get("df")
+        ctx[f"F_{prefix}"] = (str(round(float(F_val), 2)) if F_val is not None else "N/A")
+        sources[f"F_{prefix}"] = f"{row_src_path}.(F_corrected|F)"
+        ctx[f"p_{prefix}"] = fmt_p_display(p_val) if p_val is not None else "N/A"
+        sources[f"p_{prefix}"] = f"{row_src_path}.(p_corrected|PR(>F))"
+        ctx[f"df_{prefix}"] = (str(int(df_val)) if df_val is not None else "N/A")
+        sources[f"df_{prefix}"] = f"{row_src_path}.df"
+
+    # One-way designs: Factor, Block (optional)
+    # Two-factor / split-plot: A, B, AxB; plus Block, Block:A (if present)
+    if design_family in ("oneway", "oneway_rcbd"):
+        # treatment row
+        pick = _pick_row_contains("C(" + str(factor) + ")") or _pick_row_contains(str(factor))
+        if pick:
+            src, row = pick
+            _set_stat("Factor", src, row, f"tables.anova*(source='{src}')")
+        # block row (rcbd)
+        pick_b = _pick_row_contains("Block")
+        if pick_b:
+            src, row = pick_b
+            _set_stat("Block", src, row, f"tables.anova*(source='{src}')")
+
+    else:
+        # Factor A
+        pick_a = _pick_row_contains("C(" + str(factor_a) + ")") or _pick_row_contains(str(factor_a))
+        if pick_a:
+            src, row = pick_a
+            _set_stat("A", src, row, f"tables.anova*(source='{src}')")
+        # Factor B
+        pick_b = _pick_row_contains("C(" + str(factor_b) + ")") or _pick_row_contains(str(factor_b))
+        if pick_b:
+            src, row = pick_b
+            _set_stat("B", src, row, f"tables.anova*(source='{src}')")
+        # Interaction
+        # try explicit pattern first, else any ":" containing both factors
+        inter_pick = None
+        for src, row in row_map.items():
+            s = src.lower()
+            if ":" in s and (str(factor_a).lower() in s) and (str(factor_b).lower() in s):
+                inter_pick = (src, row)
+                break
+        if inter_pick:
+            src, row = inter_pick
+            _set_stat("AxB", src, row, f"tables.anova*(source='{src}')")
+
+    # ── Assumptions ──
+    ass = tables_in.get("assumptions", []) or []
+    sh = next((r for r in ass if str(r.get("test", "")).lower().startswith("shapiro")), None)
+    lv = next((r for r in ass if str(r.get("test", "")).lower().startswith("levene")), None)
+
+    ctx["Shapiro_p"] = fmt_p_display(sh.get("p_value")) if sh and sh.get("p_value") is not None else "N/A"
+    sources["Shapiro_p"] = "tables.assumptions[Shapiro].p_value"
+    ctx["Levene_p"]  = fmt_p_display(lv.get("p_value")) if lv and lv.get("p_value") is not None else "N/A"
+    sources["Levene_p"] = "tables.assumptions[Levene].p_value"
+
+    # ── Means table and derived best/worst ──
+    means_rows = tables_in.get("means", []) or []
+    # The means tables sometimes use "A:B" or "Main:Sub" or the factor column name.
+    # Keep a canonical list.
+    ctx["MeansText"] = _means_to_text(means_rows, treatment_col="Main:Sub")
+    sources["MeansText"] = "tables.means (rendered)"
+
+    # Best and worst by mean (ties: first after sorting)
+    best = None
+    worst = None
+    if means_rows and all(("mean" in r) for r in means_rows):
+        try:
+            sorted_rows = sorted(means_rows, key=lambda r: float(r.get("mean", float("nan"))))
+            worst = sorted_rows[0]
+            best  = sorted_rows[-1]
+        except Exception:
+            best = worst = None
+
+    def _treatment_label(row: Dict[str, Any]) -> str:
+        return str(row.get("Main:Sub") or row.get("A:B") or row.get(factor) or row.get("Genotype") or row.get("Treatment") or "?")
+
+    if best and worst:
+        ctx["BestTreatment"] = _treatment_label(best)
+        sources["BestTreatment"] = "derived: argmax(tables.means.mean)"
+        ctx["BestMean"] = str(best.get("mean"))
+        sources["BestMean"] = "tables.means[best].mean"
+        ctx["WorstTreatment"] = _treatment_label(worst)
+        sources["WorstTreatment"] = "derived: argmin(tables.means.mean)"
+        ctx["WorstMean"] = str(worst.get("mean"))
+        sources["WorstMean"] = "tables.means[worst].mean"
+
+        try:
+            diff = float(best.get("mean")) - float(worst.get("mean"))
+            ctx["BestMinusWorst"] = str(round(diff, 4))
+            sources["BestMinusWorst"] = "derived: BestMean - WorstMean"
+        except Exception:
+            ctx["BestMinusWorst"] = "N/A"
+            sources["BestMinusWorst"] = "derived: BestMean - WorstMean (failed)"
+
+    else:
+        ctx["BestTreatment"] = "N/A"
+        sources["BestTreatment"] = "tables.means (missing)"
+        ctx["BestMean"] = "N/A"
+        sources["BestMean"] = "tables.means (missing)"
+        ctx["WorstTreatment"] = "N/A"
+        sources["WorstTreatment"] = "tables.means (missing)"
+        ctx["WorstMean"] = "N/A"
+        sources["WorstMean"] = "tables.means (missing)"
+        ctx["BestMinusWorst"] = "N/A"
+        sources["BestMinusWorst"] = "tables.means (missing)"
+
+    return ctx
+
+def _strict_confidence(result: Dict[str, Any], template_ok: bool, missing: List[str]) -> Dict[str, Any]:
+    """
+    Deterministic confidence meter.
+    NOTE: This does NOT claim biological truth; it only reports coverage + assumption status.
+    """
+    if not template_ok:
+        return {
+            "score": 0.0,
+            "level": "Blocked",
+            "reasons": ["STRICT_BLOCKED"] + ([f"MISSING:{m}" for m in missing] if missing else []),
+        }
+
+    score = 1.0
+    reasons: List[str] = []
+
+    ass = (result.get("tables", {}) or {}).get("assumptions", []) or []
+    sh = next((r for r in ass if str(r.get("test", "")).lower().startswith("shapiro")), None)
+    lv = next((r for r in ass if str(r.get("test", "")).lower().startswith("levene")), None)
+
+    if sh and (sh.get("passed") is False):
+        score -= 0.1
+        reasons.append("NORMALITY_NOT_MET")
+    if lv and (lv.get("passed") is False):
+        score -= 0.2
+        reasons.append("HOMOGENEITY_NOT_MET")
+
+    # Keep in [0,1]
+    score = max(0.0, min(1.0, round(score, 2)))
+    level = "High" if score >= 0.9 else ("Medium" if score >= 0.75 else "Low")
+    return {"score": score, "level": level, "reasons": reasons}
+
+
+def render_strict_per_trait(
+    result: Dict[str, Any],
+    design_family: str,
+    alpha: float = 0.05,
+) -> Dict[str, Any]:
+    """
+    Render STRICT interpretation text for a single trait.
+
+    Output includes:
+      - text (strictly templated)
+      - badge (STRICT MODE VERIFIED / BLOCKED)
+      - confidence (deterministic meter)
+      - audit_log (every placeholder -> value + source)
+    """
+    cfg = _load_strict_cfg()
+    ctx = build_strict_ctx(result, design_family=design_family, alpha=alpha)
+
+    # Choose template based on design + interaction
+    template_id = None
+    if design_family == "oneway":
+        template_id = "one_way"
+    elif design_family == "oneway_rcbd":
+        template_id = "one_way_rcbd"
+    else:
+        # Two-factor (includes split-plot summary at the interpretation layer)
+        # Determine interaction significance if p_AxB is available
+        p_axb = None
+        for key in ("p_AxB",):
+            if key in ctx and ctx[key] not in ("N/A", None):
+                p_axb = ctx[key]
+                break
+        # ctx p values are formatted strings; we need raw p for significance, so re-read from tables if possible
+        p_raw = None
+        anova_rows = (result.get("tables", {}) or {}).get("anova_corrected") or (result.get("tables", {}) or {}).get("anova") or []
+        for row in anova_rows:
+            src = str(row.get("source", ""))
+            s = src.lower()
+            if ":" in s and (str(ctx.get("FactorA","")).lower() in s) and (str(ctx.get("FactorB","")).lower() in s):
+                p_raw = row.get("p_corrected") if row.get("p_corrected") is not None else row.get("PR(>F)")
+                break
+        is_sig = (p_raw is not None) and (float(p_raw) < float(alpha))
+        template_id = "two_factor_interaction_sig" if is_sig else "two_factor_no_interaction"
+
+    # Render + validate
+    missing: List[str] = []
+    try:
+        rendered = _render_template(cfg, ctx, template_id)
+    except Exception as e:
+        rendered = f"STRICT BLOCKED — {e}"
+        # best-effort parse missing placeholders
+        msg = str(e)
+        m = re.search(r"missing placeholders: \[(.*)\]", msg)
+        if m:
+            inner = m.group(1)
+            missing = [x.strip().strip("'\"") for x in inner.split(",") if x.strip()]
+        ok = False
+        reason = "RENDER_ERROR"
+        confidence = _strict_confidence(result, template_ok=False, missing=missing)
+        return {
+            "ok": ok,
+            "reason": reason,
+            "template_id": template_id,
+            "badge": {"text": "STRICT MODE BLOCKED", "status": "blocked"},
+            "confidence": confidence,
+            "audit_log": [],
+            "text": rendered,
+        }
+
+    ok, reason = _validate_strict(cfg, ctx, rendered)
+    confidence = _strict_confidence(result, template_ok=ok, missing=missing)
+
+    badge = {"text": "STRICT MODE VERIFIED" if ok else "STRICT MODE BLOCKED",
+             "status": "verified" if ok else "blocked"}
+
+    # Audit log: every placeholder in template -> value + source
+    audit_log = []
+    tpl = cfg["templates"][template_id]
+    for ph in tpl.get("placeholders", []):
+        val = ctx.get(ph, None)
+        src = (ctx.get("_sources", {}) or {}).get(ph, "unknown")
+        audit_log.append({"placeholder": ph, "value": val, "source": src})
+
+    return {
+        "ok": ok,
+        "reason": reason,
+        "template_id": template_id,
+        "badge": badge,
+        "confidence": confidence,
+        "audit_log": audit_log,
+        "text": rendered.strip(),
+    }
+
+def render_strict_synthesis(per_trait: Dict[str, Any], alpha: float = 0.05) -> Dict[str, Any]:
+    """
+    Multi-trait synthesis — deterministic, STRICT, and audit-able.
+    Uses ONLY computed values present in per-trait outputs.
+    """
+    n_traits = len(per_trait)
+    n_trt_sig = 0
+    n_interaction_sig = 0
+    n_shapiro_fail = 0
+    n_levene_fail = 0
+
+    shapiro_fail_names: List[str] = []
+    levene_fail_names:  List[str] = []
+
+    lines_out: List[str] = []
+    audit_log: List[Dict[str, Any]] = []
+
+    for tname, tr in per_trait.items():
+        tables   = tr.get("tables", {}) or {}
+        meta_tr  = tr.get("meta", {}) or {}
+        assump   = tables.get("assumptions", []) or []
+
+        sh = next((a for a in assump if str(a.get("test","")).lower().startswith("shapiro")), None)
+        lv = next((a for a in assump if str(a.get("test","")).lower().startswith("levene")), None)
+
+        # Significance flags (computed from ANOVA table)
+        anova_rows = tables.get("anova_corrected") or tables.get("anova") or []
+        trt_sig = False
+        ix_sig  = False
+        for row in anova_rows:
+            src   = str(row.get("source", ""))
+            p_raw = row.get("p_corrected") if row.get("p_corrected") is not None else row.get("PR(>F)")
+            if p_raw is None or "Residual" in src:
+                continue
+            if "Block" in src:
+                continue
+            try:
+                p_float = float(p_raw)
+            except Exception:
+                continue
+            if ":" in src:
+                if p_float < alpha:
+                    ix_sig = True
+            else:
+                if p_float < alpha:
+                    trt_sig = True
+
+        if trt_sig: n_trt_sig += 1
+        if ix_sig:  n_interaction_sig += 1
+
+        # Assumptions flags
+        sh_passed = True if sh is None else bool(sh.get("passed", True))
+        lv_passed = True if lv is None else bool(lv.get("passed", True))
+        if not sh_passed:
+            n_shapiro_fail += 1
+            shapiro_fail_names.append(tname)
+        if not lv_passed:
+            n_levene_fail += 1
+            levene_fail_names.append(tname)
+
+        cv = meta_tr.get("cv_percent", None)
+
+        sh_p = sh.get("p_value") if sh else None
+        lv_p = lv.get("p_value") if lv else None
+
+        lines_out.append(
+            f"- {tname}: treatment_significant={trt_sig}, interaction_significant={ix_sig}, "
+            f"CV_percent={cv}, Shapiro_p={sh_p}, Levene_p={lv_p}"
+        )
+
+        audit_log.append({
+            "trait": tname,
+            "source": "per_trait[trait]",
+            "fields": {
+                "treatment_significant": "tables.(anova_corrected|anova) p-values (non-Block, non-Residual, non-interaction)",
+                "interaction_significant": "tables.(anova_corrected|anova) p-values (interaction rows containing ':')",
+                "CV_percent": "meta.cv_percent",
+                "Shapiro_p": "tables.assumptions[Shapiro].p_value",
+                "Levene_p": "tables.assumptions[Levene].p_value",
+            }
+        })
+
+    # Summaries
+    if n_shapiro_fail == 0:
+        norm_summary = f"Normality: all {n_traits}/{n_traits} traits passed Shapiro-Wilk."
+    else:
+        norm_summary = f"Normality: {n_traits - n_shapiro_fail}/{n_traits} traits passed Shapiro-Wilk; failed traits: {', '.join(shapiro_fail_names)}."
+    if n_levene_fail == 0:
+        homo_summary = f"Homogeneity: all {n_traits}/{n_traits} traits passed Levene."
+    else:
+        homo_summary = f"Homogeneity: {n_traits - n_levene_fail}/{n_traits} traits passed Levene; failed traits: {', '.join(levene_fail_names)}."
+
+    text = "\n".join([
+        "STRICT MODE MULTI-TRAIT SUMMARY",
+        f"alpha = {alpha}",
+        f"n_traits = {n_traits}",
+        f"n_traits_with_significant_treatment_effect = {n_trt_sig}",
+        f"n_traits_with_significant_interaction = {n_interaction_sig}",
+        norm_summary,
+        homo_summary,
+        "Per-trait flags:",
+        *lines_out,
+    ]).strip()
+
+    # Confidence: coverage-only (not biological truth)
+    ok = True
+    score = 1.0
+    reasons: List[str] = []
+    if n_traits == 0:
+        ok = False
+        score = 0.0
+        reasons.append("NO_TRAITS")
+    else:
+        if n_shapiro_fail > 0:
+            score -= 0.1
+            reasons.append("SOME_NORMALITY_FAIL")
+        if n_levene_fail > 0:
+            score -= 0.2
+            reasons.append("SOME_HOMOGENEITY_FAIL")
+        score = max(0.0, min(1.0, round(score, 2)))
+
+    level = "High" if score >= 0.9 else ("Medium" if score >= 0.75 else "Low")
+    badge = {"text": "STRICT MODE VERIFIED" if ok else "STRICT MODE BLOCKED",
+             "status": "verified" if ok else "blocked"}
+
+    return {
+        "ok": ok,
+        "badge": badge,
+        "confidence": {"score": score, "level": level, "reasons": reasons},
+        "audit_log": audit_log,
+        "text": text,
+        "mode": "strict_deterministic",
+        "flags": {
+            "n_traits": n_traits,
+            "n_trt_sig": n_trt_sig,
+            "n_interaction_sig": n_interaction_sig,
+            "n_shapiro_fail": n_shapiro_fail,
+            "n_levene_fail": n_levene_fail,
+        }
+    }
 
 def extract_facts(result: Dict[str, Any], alpha: float = 0.05) -> Dict[str, Any]:
     """
@@ -1803,9 +2339,37 @@ def facts_to_prompt_text(facts: Dict[str, Any]) -> str:
 
     return "\n".join(lines)
 
+
+
 # ============================================================
-#  ANALYSIS ENGINES
+#  DESIGN FAMILY MAP — used by strict template engine
 # ============================================================
+
+_DESIGN_FAMILY_MAP = {
+    "CRD one-way":          "one_way",
+    "RCBD one-way":         "one_way",
+    "One-way ANOVA (CRD)":  "one_way",
+    "One-way ANOVA (RCBD)": "one_way",
+    "Two-way Factorial":    "twoway",
+    "Factorial RCBD":       "twoway",
+    "Split-plot":           "splitplot",
+}
+
+def attach_strict_template(result: Dict[str, Any], design_family: str) -> Dict[str, Any]:
+    """
+    Attach STRICT MODE block to a single-trait result.
+    This is deterministic (no LLM) and includes auditability.
+    """
+    strict_block = render_strict_per_trait(result, design_family=design_family, alpha=float(result.get("meta", {}).get("alpha", 0.05) or 0.05))
+    result.setdefault("strict_mode", {})
+    result["strict_mode"] = strict_block
+    # If STRICT verified, use it as the primary interpretation payload
+    if strict_block.get("ok") is True:
+        result["interpretation"] = strict_block.get("text", "")
+        result.setdefault("meta", {})["interpretation_mode"] = "strict_verified"
+    else:
+        result.setdefault("meta", {})["interpretation_mode"] = "non_strict"
+    return result
 
 def oneway_engine(df: pd.DataFrame, factor: str, trait: str, alpha: float) -> Dict[str, Any]:
     d = clean_for_model(df, trait, [factor])
@@ -1851,6 +2415,7 @@ def oneway_engine(df: pd.DataFrame, factor: str, trait: str, alpha: float) -> Di
         },
         "plots": plots,
         "interpretation": interpret_anova("One-way ANOVA (CRD)", p_map, cv, alpha),
+        "strict_template": {},  # populated by attach_strict_template below
         "intelligence": {
             "executive_insight":   build_executive_insight(p_map, cv, trait, best, alpha),
             "reviewer_radar":      build_reviewer_radar(sh, lv, p_map, cv, alpha=alpha),
@@ -1923,6 +2488,7 @@ def oneway_rcbd_engine(
         },
         "plots": plots,
         "interpretation": interpret_anova("One-way ANOVA (RCBD)", p_map, cv, alpha),
+        "strict_template": {},  # populated by attach_strict_template below
         "intelligence": {
             "executive_insight":   build_executive_insight(p_map, cv, trait, best, alpha),
             "reviewer_radar":      build_reviewer_radar(sh, lv, p_map, cv, alpha=alpha),
@@ -1985,6 +2551,7 @@ def twoway_engine(
         },
         "plots": plots,
         "interpretation": interpret_anova("Two-way Factorial ANOVA (CRD)", p_map, cv, alpha),
+        "strict_template": {},  # populated by attach_strict_template below
         "intelligence": {
             "executive_insight":   build_executive_insight(p_map, cv, trait, best, alpha),
             "reviewer_radar":      build_reviewer_radar(sh, lv, p_map, cv, alpha=alpha),
@@ -2049,6 +2616,7 @@ def rcbd_factorial_engine(
         },
         "plots": plots,
         "interpretation": interpret_anova("Factorial RCBD ANOVA", p_map, cv, alpha),
+        "strict_template": {},  # populated by attach_strict_template below
         "intelligence": {
             "executive_insight":   build_executive_insight(p_map, cv, trait, best, alpha),
             "reviewer_radar":      build_reviewer_radar(sh, lv, p_map, cv, alpha=alpha),
@@ -2171,6 +2739,7 @@ def splitplot_engine(
         },
         "plots": plots,
         "interpretation": interpret_anova("Split-plot ANOVA", p_map, cv_percent(d[trait]), alpha),
+        "strict_template": {},  # populated by attach_strict_template below
         "intelligence": {
             "executive_insight":   build_executive_insight(p_map, cv_percent(d[trait]), trait,
                                        str(means_letters.iloc[0]["_AB_"]) if not means_letters.empty else None,
@@ -2257,7 +2826,7 @@ async def analyze_anova_oneway(
 ):
     df = await load_csv(file)
     require_cols(df, [factor, trait])
-    return oneway_engine(df, factor, trait, float(alpha))
+    return attach_strict_template(oneway_engine(df, factor, trait, float(alpha)), float(alpha))
 
 
 @app.post("/analyze/anova/oneway_rcbd")
@@ -2271,7 +2840,7 @@ async def analyze_anova_oneway_rcbd(
     """One-way ANOVA in RCBD - most common Nigerian field trial design."""
     df = await load_csv(file)
     require_cols(df, [block, treatment, trait])
-    return oneway_rcbd_engine(df, block, treatment, trait, float(alpha))
+    return attach_strict_template(oneway_rcbd_engine(df, block, treatment, trait, float(alpha)), float(alpha))
 
 
 @app.post("/analyze/anova/twoway")
@@ -2284,7 +2853,7 @@ async def analyze_anova_twoway(
 ):
     df = await load_csv(file)
     require_cols(df, [factor_a, factor_b, trait])
-    return twoway_engine(df, factor_a, factor_b, trait, float(alpha))
+    return attach_strict_template(twoway_engine(df, factor_a, factor_b, trait, float(alpha)), float(alpha))
 
 
 @app.post("/analyze/anova/rcbd_factorial")
@@ -2298,7 +2867,7 @@ async def analyze_anova_rcbd_factorial(
 ):
     df = await load_csv(file)
     require_cols(df, [block, factor_a, factor_b, trait])
-    return rcbd_factorial_engine(df, block, factor_a, factor_b, trait, float(alpha))
+    return attach_strict_template(rcbd_factorial_engine(df, block, factor_a, factor_b, trait, float(alpha)), float(alpha))
 
 
 @app.post("/analyze/anova/splitplot")
@@ -2312,7 +2881,7 @@ async def analyze_anova_splitplot(
 ):
     df = await load_csv(file)
     require_cols(df, [block, main_plot, sub_plot, trait])
-    return splitplot_engine(df, block, main_plot, sub_plot, trait, float(alpha))
+    return attach_strict_template(splitplot_engine(df, block, main_plot, sub_plot, trait, float(alpha)), float(alpha))
 
 
 
@@ -2849,7 +3418,10 @@ def multitrait_engine(
             else:
                 raise HTTPException(status_code=400, detail=f"Unknown design: {design}")
 
-            per_trait_results[trait] = result
+            # Attach strict template to per-trait result
+            # Attach strict template to per-trait result
+            design_family = ('oneway' if design in ('oneway', 'oneway_crd') else ('oneway_rcbd' if design in ('oneway_rcbd', 'rcbd') else 'twofactor'))
+            per_trait_results[trait] = attach_strict_template(result, design_family)
 
             # Build summary row for this trait
             for factor_key, p_val in p_map.items():
@@ -2963,6 +3535,7 @@ def multitrait_engine(
             "correlation_heatmap": corr_plot,
             "pca_biplot": pca_plot,
         },
+        "strict_synthesis": render_strict_synthesis(per_trait_results, alpha),
     }
 
 
