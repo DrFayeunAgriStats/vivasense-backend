@@ -1,7 +1,14 @@
 """
-VivaSense V2 + FIA AI Proxy - app/main.py
+VivaSense V2.2 + FIA AI Proxy - app/main.py
 ==========================================
-V2 improvements over V1:
+V2.2 improvements:
+  - Non-parametric tests: Kruskal-Wallis (CRD) + Friedman (RCBD) with post-hoc [V2.1]
+  - Usage logger with /admin/usage and /admin/usage/summary endpoints [V2.1]
+  - LOCKED assumption verdict: single function, zero contradictions across all outputs [V2.2]
+  - Executive Insight block: deterministic one-paragraph 'big story' per trait [V2.2]
+  - Reviewer Radar block: rule-based likely reviewer questions per trait [V2.2]
+  - Decision Rules block: ranked means converted to practical recommendations [V2.2]
+  - Intelligence blocks shipped in every engine response under 'intelligence' key [V2.2]
   - Number rounding (all floats to 4dp, CV to 2dp)
   - RCBD one-way ANOVA added (most common Nigerian field trial design)
   - Assumption guidance: plain-English verdict + specific alternative test recommendation
@@ -359,6 +366,44 @@ QUALITY RULES:
 - If Tukey letters absent: note this and explain what is missing
 - Always end with one actionable next step the researcher can take today
 
+INTELLIGENCE BLOCKS — USE WHEN PROVIDED:
+The results may include an 'intelligence' object with four pre-computed blocks.
+When present, incorporate them as follows:
+- assumptions_verdict: USE THIS EXACT TEXT for the assumptions section. Never override or contradict it.
+- executive_insight: Use as the basis for your Overall Finding — expand it with biological context.
+- reviewer_radar: Present these verbatim under a 'Reviewer Radar' heading. Do not soften or omit any question.
+- decision_rules: Present these under 'Decision Rules' heading. Add one sentence of agronomic context per rule.
+
+ASSUMPTIONS — CRITICAL RULE:
+The assumptions_verdict field is generated deterministically from Shapiro-Wilk and Levene test statistics.
+It is always correct. NEVER contradict it, NEVER say "assumptions were met" if the verdict says otherwise.
+If assumptions_verdict is not provided, state: "Assumption results not available for this analysis."
+
+STRICT GROUNDING RULES — NON-NEGOTIABLE:
+1. EVERY number you write must exist in the Statistical Results provided. Never invent, round differently, or recall from memory.
+2. p-values: NEVER write "p = 0". When p_display field shows "< 0.001", write "p < 0.001" — not "p = 0".
+3. If Tukey groupings are NOT in the results: do not mention letters, groups, or "Tukey".
+4. If correlation is NOT in the results: do not use "correlated", "relationship", or imply association.
+5. If trend test NOT computed: do not use "dose-response", "increasing trend", "declined steadily".
+6. If a field is missing from the results: write "Not available from analysis output." — never guess.
+
+BANNED PHRASES — never use regardless of context:
+- Causality: "because", "due to", "caused by", "leads to", "results from"
+- Unsupported strength: "massive effect", "dominant factor", "profound", "overwhelmingly"
+- Generalisation without user context: "for farmers", "in your study area", "for smallholders"
+- Impossible statistics: "p = 0", "100% significant", "perfect results"
+- Trend without test: "dose-response", "linear increase", "declined steadily"
+
+SAFE REPLACEMENTS:
+- "strong evidence" → "F(df,df) = value, p < 0.001"
+- "dominant factor" → "had the largest F-value among tested effects (F = value)"
+- "p = 0" → "p < 0.001"
+- Causal language → "was associated with" or "differed significantly across"
+
+INTERACTION RULE — for every factorial and split-plot analysis, report interaction FIRST:
+- If p(interaction) < α: "Interaction was significant (F=…, p=…). Interpret treatment combinations, not main effects alone."
+- If p(interaction) ≥ α: "No evidence of interaction (F=…, p=…). Main effects are interpreted independently."
+
 ACADEMIC INTEGRITY RULES — NON-NEGOTIABLE:
 1. THESIS SENTENCE: Never say "copy this into your thesis" or "copy directly". 
    Instead say: "Here is a suggested starting point for your results section — 
@@ -642,7 +687,15 @@ Provide a complete, personalised interpretation using the study context provided
             VIVASENSE_INTERPRET_SYSTEM, messages,
             model=SONNET_MODEL, max_tokens=1500
         )
-        return {"interpretation": text}
+        # Run grounding validator on the returned interpretation
+        results_obj = body.results if isinstance(body.results, dict) else {}
+        has_tukey = bool(results_obj.get("tables", {}).get("tukey"))
+        has_corr  = bool(results_obj.get("tables", {}).get("correlation"))
+        grounding = validate_interpretation(text, has_tukey=has_tukey, has_correlation=has_corr)
+        return {
+            "interpretation": text,
+            "grounding_check": grounding,
+        }
 
 
 @app.post("/api/followup")
@@ -704,12 +757,32 @@ def round_val(v, decimals: int = 4):
 
 
 def fmt_p(p) -> Optional[float]:
+    """
+    Format p-value to 4dp. Returns 0.0001 as floor for very small values
+    so downstream JSON never contains literal 0 (which is statistically impossible).
+    """
     if p is None:
         return None
     f = float(p)
     if np.isnan(f):
         return None
+    if f < 0.0001:
+        return 0.0001   # floor — display as "< 0.001" in interpretation
     return round(f, 4)
+
+
+def fmt_p_display(p) -> str:
+    """Human-readable p-value string for interpretation text."""
+    if p is None:
+        return "p = N/A"
+    f = float(p)
+    if np.isnan(f):
+        return "p = N/A"
+    if f < 0.001:
+        return "p < 0.001"
+    if f < 0.01:
+        return f"p = {f:.3f}"
+    return f"p = {f:.4f}"
 
 
 def df_to_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
@@ -836,54 +909,291 @@ def levene_test(df: pd.DataFrame, y: str, group: str) -> Dict[str, Any]:
 def assumption_guidance(
     shapiro: Dict, levene: Dict, design: str
 ) -> Dict[str, Any]:
-    """Plain-English assumption verdict with specific alternative test recommendation."""
+    """
+    LOCKED assumption verdict — single source of truth.
+    Every table, every interpretation, every synthesis pulls from here.
+    No freehand text anywhere else.
+    """
     s_pass = shapiro.get("passed")
     l_pass = levene.get("passed")
+    s_p    = shapiro.get("p_value")
+    l_p    = levene.get("p_value")
+    s_stat = shapiro.get("stat")
 
     alternatives = {
-        "CRD one-way": "Kruskal-Wallis test",
-        "RCBD one-way": "Friedman test",
-        "CRD two-way (factorial)": "Log or square-root data transformation, then re-run ANOVA",
-        "Factorial in RCBD": "Log or square-root data transformation, then re-run ANOVA",
-        "Split-plot": "Log or square-root data transformation, then re-run ANOVA",
+        "CRD one-way":            "Kruskal-Wallis test",
+        "RCBD one-way":           "Friedman test",
+        "CRD two-way (factorial)":"Log or square-root transformation, then re-run ANOVA",
+        "Factorial in RCBD":      "Log or square-root transformation, then re-run ANOVA",
+        "Split-plot":             "Log or square-root transformation, then re-run ANOVA",
     }
     alt = alternatives.get(design, "Data transformation or non-parametric method")
 
     if s_pass is None or l_pass is None:
-        return {"overall": "Assumptions could not be evaluated.", "alternative": None, "action": None}
+        return {
+            "overall": "Assumptions could not be evaluated.",
+            "normality_ok": None,
+            "homogeneity_ok": None,
+            "shapiro_p": s_p,
+            "levene_p": l_p,
+            "shapiro_stat": s_stat,
+            "alternative": None,
+            "action": None,
+            "verdict_code": "unknown",
+        }
 
     if s_pass and l_pass:
         return {
-            "overall": "Both assumptions met. ANOVA results are valid and reliable.",
+            "overall": "Normality and homogeneity satisfied. ANOVA fully valid.",
             "normality_ok": True,
             "homogeneity_ok": True,
+            "shapiro_p": s_p,
+            "levene_p": l_p,
+            "shapiro_stat": s_stat,
             "alternative": None,
             "action": None,
+            "verdict_code": "both_met",
         }
     elif not s_pass and l_pass:
         return {
-            "overall": "Normality violated but equal variances met. ANOVA is moderately robust; results are likely valid. Verify with the recommended alternative.",
+            "overall": "Normality violated but equal variances met. ANOVA is moderately robust; results likely reliable. Transformation recommended for confirmation.",
             "normality_ok": False,
             "homogeneity_ok": True,
+            "shapiro_p": s_p,
+            "levene_p": l_p,
+            "shapiro_stat": s_stat,
             "alternative": alt,
             "action": f"Recommended: run {alt} to confirm your findings.",
+            "verdict_code": "normality_violated",
         }
     elif s_pass and not l_pass:
         return {
-            "overall": "Normality met but equal variances violated. This affects ANOVA validity more seriously.",
+            "overall": "Equal variances violated. Consider Welch ANOVA or transformation.",
             "normality_ok": True,
             "homogeneity_ok": False,
+            "shapiro_p": s_p,
+            "levene_p": l_p,
+            "shapiro_stat": s_stat,
             "alternative": alt,
             "action": f"Recommended: use {alt} as your primary analysis.",
+            "verdict_code": "homogeneity_violated",
         }
     else:
         return {
-            "overall": "Both assumptions violated. ANOVA results should be treated with caution.",
+            "overall": "Both assumptions violated. Use transformation or non-parametric alternative.",
             "normality_ok": False,
             "homogeneity_ok": False,
+            "shapiro_p": s_p,
+            "levene_p": l_p,
+            "shapiro_stat": s_stat,
             "alternative": alt,
             "action": f"Recommended: use {alt} as your primary analysis.",
+            "verdict_code": "both_violated",
         }
+
+
+# ============================================================
+#  INTELLIGENCE BLOCKS  (deterministic — no AI, no free text)
+# ============================================================
+
+def build_executive_insight(
+    p_map: Dict[str, Optional[float]],
+    cv: Optional[float],
+    trait: str,
+    best_combination: Optional[str],
+    alpha: float = 0.05,
+) -> str:
+    """
+    Block 1 — Executive Insight.
+    One paragraph answering: 'What is the big story of this analysis?'
+    Fully deterministic — built from p-values and ranked means.
+    """
+    sig_factors   = [k for k, v in p_map.items() if v is not None and v < alpha]
+    insig_factors = [k for k, v in p_map.items() if v is not None and v >= alpha]
+
+    # Identify dominant factor (smallest p-value among significant)
+    sig_sorted = sorted(
+        [(k, v) for k, v in p_map.items() if v is not None and v < alpha],
+        key=lambda x: x[1]
+    )
+    dominant = sig_sorted[0][0] if sig_sorted else None
+
+    # Interaction presence
+    interaction_keys = [k for k in p_map if "x" in k.lower() or ":" in k or "interaction" in k.lower()]
+    interaction_sig  = any(p_map.get(k, 1) < alpha for k in interaction_keys)
+
+    # CV quality
+    cv_note = ""
+    if cv is not None:
+        if cv < 15:
+            cv_note = f" Experimental precision was excellent (CV = {cv:.1f}%)."
+        elif cv < 25:
+            cv_note = f" Experimental precision was acceptable (CV = {cv:.1f}%)."
+        else:
+            cv_note = f" Experimental variability was high (CV = {cv:.1f}%), warranting cautious interpretation."
+
+    parts = []
+
+    if dominant:
+        parts.append(f"{dominant} emerged as the dominant source of variation in {trait}.")
+
+    if len(sig_factors) > 1:
+        secondary = [f for f in sig_factors if f != dominant]
+        parts.append(f"{', '.join(secondary)} also showed significant effects.")
+
+    if insig_factors:
+        parts.append(
+            f"The absence of significant {'interaction' if interaction_keys else 'effects'} "
+            f"({'p ≥ ' + str(alpha) + ' for ' + ', '.join(insig_factors)}) indicates that "
+            f"treatment rankings remain stable across factor levels, simplifying recommendations."
+        )
+
+    if interaction_sig:
+        parts.append(
+            "A significant interaction was detected, meaning the effect of one factor "
+            "depends on the level of the other — interpret treatment combinations, not main effects alone."
+        )
+
+    if best_combination:
+        parts.append(f"The optimal treatment combination was {best_combination}, which maximised performance.")
+
+    parts.append(cv_note.strip()) if cv_note.strip() else None
+
+    return " ".join(p for p in parts if p)
+
+
+def build_reviewer_radar(
+    shapiro: Dict,
+    levene: Dict,
+    p_map: Dict[str, Optional[float]],
+    cv: Optional[float],
+    n_locations: int = 1,
+    n_seasons: int = 1,
+    alpha: float = 0.05,
+) -> List[str]:
+    """
+    Block 2 — Reviewer Radar.
+    Rule-based generator of likely peer-reviewer questions.
+    Students walk into their defence pre-armed.
+    """
+    questions = []
+
+    # Normality violation
+    if shapiro.get("passed") is False:
+        w  = shapiro.get("stat", "?")
+        p  = shapiro.get("p_value", "?")
+        questions.append(
+            f"Why were the data not normally distributed (Shapiro-Wilk W = {w}, p = {p})? "
+            f"Were data transformations (log, square-root) attempted before analysis?"
+        )
+
+    # Homogeneity violation
+    if levene.get("passed") is False:
+        p = levene.get("p_value", "?")
+        questions.append(
+            f"Levene's test indicates unequal variances (p = {p}). "
+            f"Was Welch's ANOVA or a variance-stabilising transformation considered?"
+        )
+
+    # Non-significant interaction — reviewer wants biological justification
+    interaction_keys = [k for k in p_map if "x" in k.lower() or ":" in k or "interaction" in k.lower()]
+    interaction_insig = any(
+        p_map.get(k) is not None and p_map.get(k, 0) >= alpha
+        for k in interaction_keys
+    )
+    if interaction_insig:
+        questions.append(
+            "The interaction effect was not significant. What biological or physiological "
+            "mechanism supports the independence of these factors in your crop system?"
+        )
+
+    # High CV
+    if cv is not None and cv > 20:
+        questions.append(
+            f"The coefficient of variation is {cv:.1f}%, indicating moderate-to-high field "
+            f"variability. What environmental or management factors contributed to this variability?"
+        )
+
+    # Single location / season
+    if n_locations == 1:
+        questions.append(
+            "Results are from a single location. Can these findings be generalised across "
+            "different agro-ecological zones or environments?"
+        )
+    if n_seasons == 1:
+        questions.append(
+            "Data represent a single growing season. How confident are you that these results "
+            "are repeatable across seasons or years?"
+        )
+
+    # Very high F-values (potential data entry issues)
+    high_f_factors = [k for k, v in p_map.items() if v is not None and v < 0.0001]
+    if len(high_f_factors) >= 2:
+        questions.append(
+            "Exceptionally high F-values were observed. Please confirm data entry accuracy "
+            "and verify that replication was conducted independently."
+        )
+
+    return questions
+
+
+def build_decision_rules(
+    means_df: pd.DataFrame,
+    group_col: str,
+    trait: str,
+    alpha: float = 0.05,
+) -> List[str]:
+    """
+    Block 3 — Decision Rules.
+    Converts ranked means into practical, actionable recommendations.
+    """
+    if means_df.empty or "mean" not in means_df.columns:
+        return ["Insufficient data to generate decision rules."]
+
+    sorted_df = means_df.sort_values("mean", ascending=False).reset_index(drop=True)
+    best      = sorted_df.iloc[0]
+    second    = sorted_df.iloc[1] if len(sorted_df) > 1 else None
+    worst     = sorted_df.iloc[-1]
+
+    best_name   = str(best[group_col])
+    best_mean   = float(best["mean"])
+    worst_name  = str(worst[group_col])
+    worst_mean  = float(worst["mean"])
+
+    rules = []
+
+    rules.append(
+        f"To maximise {trait}: select {best_name} "
+        f"(mean = {best_mean:.2f}, highest performing combination)."
+    )
+
+    if second is not None:
+        second_name = str(second[group_col])
+        second_mean = float(second["mean"])
+        diff = best_mean - second_mean
+        rules.append(
+            f"If {best_name} is unavailable or cost-prohibitive: {second_name} "
+            f"(mean = {second_mean:.2f}) is the next-best option "
+            f"({diff:.2f} units below the optimum)."
+        )
+
+    rules.append(
+        f"Avoid {worst_name} for {trait} optimisation "
+        f"(mean = {worst_mean:.2f}, lowest performing; "
+        f"{best_mean - worst_mean:.2f} units below optimum)."
+    )
+
+    # Letter-based advice if available
+    if "letters" in sorted_df.columns or "groups" in sorted_df.columns:
+        letter_col = "letters" if "letters" in sorted_df.columns else "groups"
+        top_letter = str(best.get(letter_col, ""))
+        if top_letter:
+            rules.append(
+                f"Treatments sharing Tukey letter '{top_letter[0]}' with {best_name} "
+                f"are statistically equivalent and interchangeable for {trait}."
+            )
+
+    return rules
 
 
 def mean_table(df: pd.DataFrame, y: str, group: str) -> pd.DataFrame:
@@ -1040,6 +1350,103 @@ def interpret_anova(
     return "\n".join(lines)
 
 
+
+# ============================================================
+#  GROUNDING VALIDATOR  (strict template compliance)
+# ============================================================
+
+# Phrases that imply causality, mechanism, or economics — banned in strict mode
+_BANNED_CAUSAL = [
+    "because", "due to", "therefore", "caused by", "leads to", "results from",
+    "mechanism", "physiological", "uptake efficiency", "genetic basis",
+]
+
+# Strength adjectives that require computed effect sizes — banned without them
+_BANNED_STRENGTH = [
+    "massive", "dominant effect", "profound", "exceptional precision",
+    "robust evidence", "very strong", "overwhelmingly",
+]
+
+# Generalisation phrases banned unless user provides location/context
+_BANNED_GENERALISATION = [
+    "for farmers", "in your study area", "for smallholders",
+    "in sub-saharan africa", "across nigeria",
+]
+
+# Trend language banned unless trend test was computed
+_BANNED_TREND = [
+    "dose-response", "increasing trend", "declined steadily",
+    "linear increase", "linear decrease",
+]
+
+def validate_interpretation(text: str, has_tukey: bool, has_correlation: bool) -> Dict[str, Any]:
+    """
+    Run grounding checks on interpretation text before it reaches the AI.
+    Returns {passed: bool, warnings: list[str]}.
+    All warnings are appended to the results payload so the frontend can display them.
+    """
+    warnings_list = []
+
+    # Check 1: Tukey letters mentioned but not computed
+    if not has_tukey:
+        for phrase in ["letter", "group a", "group b", "tukey", "hsd"]:
+            if phrase in text.lower():
+                warnings_list.append(
+                    f"GROUNDING: Tukey groupings not computed but interpretation references '{phrase}'."
+                )
+
+    # Check 2: Correlation language without computed correlation
+    if not has_correlation:
+        for phrase in ["correlated", "correlation", "positive relationship", "negative relationship"]:
+            if phrase in text.lower():
+                warnings_list.append(
+                    f"GROUNDING: Correlation not computed but interpretation references '{phrase}'."
+                )
+
+    # Check 3: Banned causal phrases
+    for phrase in _BANNED_CAUSAL:
+        if phrase in text.lower():
+            warnings_list.append(
+                f"STRICT MODE: Causal phrase detected — '{phrase}'. Rewrite to pure statistical language."
+            )
+
+    # Check 4: Banned strength adjectives
+    for phrase in _BANNED_STRENGTH:
+        if phrase in text.lower():
+            warnings_list.append(
+                f"STRICT MODE: Strength adjective '{phrase}' detected. Replace with numeric evidence."
+            )
+
+    # Check 5: p=0 in text (statistically impossible)
+    import re
+    if re.search(r"p\s*[=<>]\s*0(?!\.\d)", text):
+        warnings_list.append(
+            "GROUNDING: 'p = 0' detected in text — statistically impossible. Use 'p < 0.001'."
+        )
+
+    return {
+        "passed": len(warnings_list) == 0,
+        "warning_count": len(warnings_list),
+        "warnings": warnings_list,
+    }
+
+
+def add_p_display_to_anova(records: List[Dict]) -> List[Dict]:
+    """
+    Post-process ANOVA table records to add a 'p_display' field:
+    e.g.  0.0001  →  '< 0.001'
+          0.0234  →  '0.0234'
+    This prevents Dr. Fayeun from ever writing 'p = 0'.
+    """
+    out = []
+    for row in records:
+        r = dict(row)
+        for key in ["PR(>F)", "p_value", "p_corrected", "p_adj"]:
+            if key in r and r[key] is not None:
+                r[f"{key}_display"] = fmt_p_display(float(r[key]))
+        out.append(r)
+    return out
+
 # ============================================================
 #  ANALYSIS ENGINES
 # ============================================================
@@ -1065,6 +1472,10 @@ def oneway_engine(df: pd.DataFrame, factor: str, trait: str, alpha: float) -> Di
     if m.any():
         p_factor = fmt_p(anova.loc[m, "PR(>F)"].iloc[0])
 
+    p_map = {factor: p_factor}
+    cv    = cv_percent(d[trait])
+    best  = str(means_letters.iloc[0][factor]) if not means_letters.empty else None
+
     return {
         "meta": {
             "design": "CRD one-way",
@@ -1073,19 +1484,23 @@ def oneway_engine(df: pd.DataFrame, factor: str, trait: str, alpha: float) -> Di
             "alpha": alpha,
             "n_rows_used": int(d.shape[0]),
             "levels": sorted(d[factor].unique().tolist()),
-            "cv_percent": cv_percent(d[trait]),
+            "cv_percent": cv,
         },
         "tables": {
-            "anova": df_to_records(anova[["source", "df", "sum_sq", "ms", "F", "PR(>F)"]]),
+            "anova": add_p_display_to_anova(df_to_records(anova[["source", "df", "sum_sq", "ms", "F", "PR(>F)"]])),
             "means": df_to_records(means_letters),
             "tukey": df_to_records(tukey_df),
             "assumptions": [sh, lv],
             "assumption_guidance": guidance,
         },
         "plots": plots,
-        "interpretation": interpret_anova(
-            "One-way ANOVA (CRD)", {factor: p_factor}, cv_percent(d[trait]), alpha
-        ),
+        "interpretation": interpret_anova("One-way ANOVA (CRD)", p_map, cv, alpha),
+        "intelligence": {
+            "executive_insight":   build_executive_insight(p_map, cv, trait, best, alpha),
+            "reviewer_radar":      build_reviewer_radar(sh, lv, p_map, cv, alpha=alpha),
+            "decision_rules":      build_decision_rules(means_letters, factor, trait, alpha),
+            "assumptions_verdict": guidance["overall"],
+        },
     }
 
 
@@ -1125,6 +1540,10 @@ def oneway_rcbd_engine(
         t_crit = stats.t.ppf(1 - alpha / 2, df_error)
         lsd = round_val(t_crit * np.sqrt(2 * ms_error / r), 4)
 
+    p_map = {f"Block ({block})": p_block, treatment: p_treatment}
+    cv    = cv_percent(d[trait])
+    best  = str(means_letters.iloc[0][treatment]) if not means_letters.empty else None
+
     return {
         "meta": {
             "design": "RCBD one-way",
@@ -1136,23 +1555,24 @@ def oneway_rcbd_engine(
             "n_blocks": int(d[block].nunique()),
             "n_treatments": int(d[treatment].nunique()),
             "levels": sorted(d[treatment].unique().tolist()),
-            "cv_percent": cv_percent(d[trait]),
+            "cv_percent": cv,
             "lsd": lsd,
         },
         "tables": {
-            "anova": df_to_records(anova[["source", "df", "sum_sq", "ms", "F", "PR(>F)"]]),
+            "anova": add_p_display_to_anova(df_to_records(anova[["source", "df", "sum_sq", "ms", "F", "PR(>F)"]])),
             "means": df_to_records(means_letters),
             "tukey": df_to_records(tukey_df),
             "assumptions": [sh, lv],
             "assumption_guidance": guidance,
         },
         "plots": plots,
-        "interpretation": interpret_anova(
-            "One-way ANOVA (RCBD)",
-            {f"Block ({block})": p_block, treatment: p_treatment},
-            cv_percent(d[trait]),
-            alpha
-        ),
+        "interpretation": interpret_anova("One-way ANOVA (RCBD)", p_map, cv, alpha),
+        "intelligence": {
+            "executive_insight":   build_executive_insight(p_map, cv, trait, best, alpha),
+            "reviewer_radar":      build_reviewer_radar(sh, lv, p_map, cv, alpha=alpha),
+            "decision_rules":      build_decision_rules(means_letters, treatment, trait, alpha),
+            "assumptions_verdict": guidance["overall"],
+        },
     }
 
 
@@ -1186,6 +1606,10 @@ def twoway_engine(
         f"{a}x{b} interaction": p_of(":"),
     }
 
+    cv   = cv_percent(d[trait])
+    ml   = means_letters.rename(columns={"_AB_": "A:B"})
+    best = str(ml.iloc[0]["A:B"]) if not ml.empty else None
+
     return {
         "meta": {
             "design": "CRD two-way (factorial)",
@@ -1194,19 +1618,23 @@ def twoway_engine(
             "trait": trait,
             "alpha": alpha,
             "n_rows_used": int(d.shape[0]),
-            "cv_percent": cv_percent(d[trait]),
+            "cv_percent": cv,
         },
         "tables": {
-            "anova": df_to_records(anova[["source", "df", "sum_sq", "ms", "F", "PR(>F)"]]),
-            "means": df_to_records(means_letters.rename(columns={"_AB_": "A:B"})),
+            "anova": add_p_display_to_anova(df_to_records(anova[["source", "df", "sum_sq", "ms", "F", "PR(>F)"]])),
+            "means": df_to_records(ml),
             "tukey": df_to_records(tukey_df),
             "assumptions": [sh, lv],
             "assumption_guidance": guidance,
         },
         "plots": plots,
-        "interpretation": interpret_anova(
-            "Two-way Factorial ANOVA (CRD)", p_map, cv_percent(d[trait]), alpha
-        ),
+        "interpretation": interpret_anova("Two-way Factorial ANOVA (CRD)", p_map, cv, alpha),
+        "intelligence": {
+            "executive_insight":   build_executive_insight(p_map, cv, trait, best, alpha),
+            "reviewer_radar":      build_reviewer_radar(sh, lv, p_map, cv, alpha=alpha),
+            "decision_rules":      build_decision_rules(ml, "A:B", trait, alpha),
+            "assumptions_verdict": guidance["overall"],
+        },
     }
 
 
@@ -1241,6 +1669,10 @@ def rcbd_factorial_engine(
         f"{a}x{b} interaction": p_of(":"),
     }
 
+    cv   = cv_percent(d[trait])
+    ml   = means_letters.rename(columns={"_AB_": "A:B"})
+    best = str(ml.iloc[0]["A:B"]) if not ml.empty else None
+
     return {
         "meta": {
             "design": "Factorial in RCBD",
@@ -1250,19 +1682,23 @@ def rcbd_factorial_engine(
             "trait": trait,
             "alpha": alpha,
             "n_rows_used": int(d.shape[0]),
-            "cv_percent": cv_percent(d[trait]),
+            "cv_percent": cv,
         },
         "tables": {
-            "anova": df_to_records(anova[["source", "df", "sum_sq", "ms", "F", "PR(>F)"]]),
-            "means": df_to_records(means_letters.rename(columns={"_AB_": "A:B"})),
+            "anova": add_p_display_to_anova(df_to_records(anova[["source", "df", "sum_sq", "ms", "F", "PR(>F)"]])),
+            "means": df_to_records(ml),
             "tukey": df_to_records(tukey_df),
             "assumptions": [sh, lv],
             "assumption_guidance": guidance,
         },
         "plots": plots,
-        "interpretation": interpret_anova(
-            "Factorial RCBD ANOVA", p_map, cv_percent(d[trait]), alpha
-        ),
+        "interpretation": interpret_anova("Factorial RCBD ANOVA", p_map, cv, alpha),
+        "intelligence": {
+            "executive_insight":   build_executive_insight(p_map, cv, trait, best, alpha),
+            "reviewer_radar":      build_reviewer_radar(sh, lv, p_map, cv, alpha=alpha),
+            "decision_rules":      build_decision_rules(ml, "A:B", trait, alpha),
+            "assumptions_verdict": guidance["overall"],
+        },
     }
 
 
@@ -1367,20 +1803,28 @@ def splitplot_engine(
             "note": "Main plot factor tested against Block:Main error (correct split-plot test).",
         },
         "tables": {
-            "anova_raw": df_to_records(an0.replace({np.nan: None})),
-            "anova_corrected": df_to_records(
+            "anova_raw": add_p_display_to_anova(df_to_records(an0.replace({np.nan: None}))),
+            "anova_corrected": add_p_display_to_anova(df_to_records(
                 an_corr[["source", "df", "sum_sq", "ms",
                           "F_corrected", "p_corrected"]].replace({np.nan: None})
-            ),
+            )),
             "means": df_to_records(means_letters.rename(columns={"_AB_": "Main:Sub"})),
             "tukey": df_to_records(tukey_df),
             "assumptions": [sh, lv],
             "assumption_guidance": guidance,
         },
         "plots": plots,
-        "interpretation": interpret_anova(
-            "Split-plot ANOVA", p_map, cv_percent(d[trait]), alpha
-        ),
+        "interpretation": interpret_anova("Split-plot ANOVA", p_map, cv_percent(d[trait]), alpha),
+        "intelligence": {
+            "executive_insight":   build_executive_insight(p_map, cv_percent(d[trait]), trait,
+                                       str(means_letters.iloc[0]["_AB_"]) if not means_letters.empty else None,
+                                       alpha),
+            "reviewer_radar":      build_reviewer_radar(sh, lv, p_map, cv_percent(d[trait]), alpha=alpha),
+            "decision_rules":      build_decision_rules(
+                                       means_letters.rename(columns={"_AB_": "Main:Sub"}),
+                                       "Main:Sub", trait, alpha),
+            "assumptions_verdict": guidance["overall"],
+        },
     }
 
 
