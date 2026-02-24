@@ -26,6 +26,10 @@ Analysis endpoints:
   POST /analyze/nonparametric/kruskal  - Kruskal-Wallis H-test (non-parametric CRD) [NEW in V2.1]
   POST /analyze/nonparametric/friedman - Friedman test (non-parametric RCBD) [NEW in V2.1]
 
+Admin endpoints (require X-Admin-Token header):
+  GET  /admin/usage                    - last N usage log entries [NEW in V2.1]
+  GET  /admin/usage/summary            - aggregated counts by design/day/status [NEW in V2.1]
+
 AI proxy endpoints:
   GET  /api/health                     - AI proxy health check
   POST /api/chat                       - CSP 811 Dr. Fayeun tutor chat
@@ -39,10 +43,12 @@ import io
 import os
 import json
 import base64
+import hashlib
+import time
 import warnings
 from typing import Any, Dict, List, Optional, Tuple
-from collections import defaultdict
-from datetime import datetime, timedelta
+from collections import defaultdict, deque
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
@@ -69,7 +75,7 @@ warnings.filterwarnings("ignore")
 #  APP SETUP
 # ============================================================
 
-app = FastAPI(title="VivaSense V2 + FIA AI Proxy", version="2.0.0")
+app = FastAPI(title="VivaSense V2 + FIA AI Proxy", version="2.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -84,6 +90,143 @@ app.add_middleware(
     allow_methods=["GET", "POST", "HEAD", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+# ============================================================
+#  USAGE LOGGER
+# ============================================================
+
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")  # Set in Render dashboard: ADMIN_TOKEN=your-secret
+USAGE_LOG: deque = deque(maxlen=2000)        # Rolling in-memory log, last 2000 events
+
+# Endpoint → friendly design label
+DESIGN_LABELS: Dict[str, str] = {
+    "/analyze/descriptive":              "Descriptive Statistics",
+    "/analyze/anova/oneway":             "One-way ANOVA (CRD)",
+    "/analyze/anova/oneway_rcbd":        "One-way ANOVA (RCBD)",
+    "/analyze/anova/twoway":             "Two-way Factorial (CRD)",
+    "/analyze/anova/rcbd_factorial":     "Factorial RCBD",
+    "/analyze/anova/splitplot":          "Split-plot ANOVA",
+    "/analyze/nonparametric/kruskal":    "Kruskal-Wallis (Non-parametric CRD)",
+    "/analyze/nonparametric/friedman":   "Friedman Test (Non-parametric RCBD)",
+    "/analyze/anova/multitrait/oneway":          "Multi-trait CRD One-way",
+    "/analyze/anova/multitrait/oneway_rcbd":     "Multi-trait RCBD One-way",
+    "/analyze/anova/multitrait/twoway":          "Multi-trait Two-way Factorial",
+    "/analyze/anova/multitrait/rcbd_factorial":  "Multi-trait Factorial RCBD",
+    "/analyze/anova/multitrait/splitplot":       "Multi-trait Split-plot",
+    "/api/chat":       "CSP811 AI Tutor",
+    "/api/interpret":  "Dr. Fayeun Interpretation",
+    "/api/followup":   "Follow-up Chat",
+}
+
+
+def _hash_ip(ip: str) -> str:
+    """One-way hash of IP for privacy-safe logging."""
+    return hashlib.sha256(ip.encode()).hexdigest()[:12]
+
+
+def _log_event(
+    path: str,
+    method: str,
+    status_code: int,
+    duration_ms: float,
+    ip: str,
+    extra: Optional[Dict] = None,
+) -> None:
+    entry: Dict[str, Any] = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "path": path,
+        "design": DESIGN_LABELS.get(path, path),
+        "method": method,
+        "status": status_code,
+        "duration_ms": round(duration_ms, 1),
+        "ip_hash": _hash_ip(ip),
+    }
+    if extra:
+        entry.update(extra)
+    USAGE_LOG.append(entry)
+
+
+@app.middleware("http")
+async def usage_logger_middleware(request: Request, call_next):
+    """Log every /analyze/ and /api/ request automatically."""
+    path = request.url.path
+    start = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - start) * 1000
+
+    if path.startswith("/analyze/") or path.startswith("/api/"):
+        ip = request.client.host if request.client else "unknown"
+        _log_event(
+            path=path,
+            method=request.method,
+            status_code=response.status_code,
+            duration_ms=duration_ms,
+            ip=ip,
+        )
+    return response
+
+
+def _require_admin(request: Request) -> None:
+    """Raise 403 if ADMIN_TOKEN not set or token header doesn't match."""
+    if not ADMIN_TOKEN:
+        raise HTTPException(status_code=403, detail="Admin access not configured.")
+    token = request.headers.get("X-Admin-Token", "")
+    if token != ADMIN_TOKEN:
+        raise HTTPException(status_code=403, detail="Invalid admin token.")
+
+
+@app.get("/admin/usage")
+async def admin_usage(request: Request, limit: int = 200):
+    """
+    Return the last N usage log entries.
+    Requires header:  X-Admin-Token: <your ADMIN_TOKEN>
+    """
+    _require_admin(request)
+    entries = list(USAGE_LOG)[-limit:]
+    return {
+        "total_logged": len(USAGE_LOG),
+        "returned": len(entries),
+        "entries": entries,
+    }
+
+
+@app.get("/admin/usage/summary")
+async def admin_usage_summary(request: Request):
+    """
+    Return aggregated usage counts by design, status, and day.
+    Requires header:  X-Admin-Token: <your ADMIN_TOKEN>
+    """
+    _require_admin(request)
+    entries = list(USAGE_LOG)
+
+    # Counts by design
+    by_design: Dict[str, int] = defaultdict(int)
+    by_status: Dict[int, int] = defaultdict(int)
+    by_day:    Dict[str, int] = defaultdict(int)
+    errors = []
+    total_duration = 0.0
+
+    for e in entries:
+        by_design[e["design"]] += 1
+        by_status[e["status"]] += 1
+        day = e["ts"][:10]
+        by_day[day] += 1
+        total_duration += e.get("duration_ms", 0)
+        if e["status"] >= 400:
+            errors.append(e)
+
+    n = len(entries)
+    return {
+        "total_requests": n,
+        "successful": by_status.get(200, 0),
+        "errors": len(errors),
+        "avg_duration_ms": round(total_duration / n, 1) if n else 0,
+        "by_design": dict(sorted(by_design.items(), key=lambda x: -x[1])),
+        "by_status": {str(k): v for k, v in sorted(by_status.items())},
+        "by_day": dict(sorted(by_day.items())),
+        "recent_errors": errors[-10:],
+    }
 
 
 # ============================================================
