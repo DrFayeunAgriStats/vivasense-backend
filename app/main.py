@@ -317,15 +317,26 @@ IF analysis type contains "factorial" or "two-way" or "split":
   6. Research/Breeding Recommendation - specific and actionable
   7. Thesis/Paper Sentence - with all key statistics
 
-IF analysis type contains "multi-trait" or "multitrait":
-  Structure:
-  1. Overall Finding - traits significant out of total; strongest responders named
-  2. Trait-by-Trait Evidence - p-value and CV% for each trait
-  3. Correlation Insights - strongly correlated pairs (r > 0.7) and selection efficiency implications
-  4. PCA Insights - PC1 variance and which traits drive most variation
-  5. Selection Strategy - which traits to prioritise; indirect selection opportunities
-  6. Assumptions Summary - flag violated traits
-  7. Thesis/Paper Sentence - covering multi-trait findings
+IF analysis type contains "multi-trait" or "multitrait" or "synthesis":
+  CRITICAL: The facts contain pre-computed flags. Use ONLY these — never guess.
+  Required structure:
+  1. Overall Finding
+     - "X of Y traits showed significant [treatment] effects."
+     - "Significant interactions detected for: [list] / No significant interactions detected."
+     - Use n_trt_sig and total_traits from facts.
+  2. Trait-by-Trait Summary
+     - One sentence per trait: effect significant? F-value? CV from cv_values dict only.
+  3. Block Effects
+     - "Block effects significant for X of Y traits (use n_block_sig)."
+  4. Assumptions Summary — CRITICAL: use assumption_flags, never guess
+     - If n_shapiro_fail == 0: "Normality satisfied for all traits."
+     - If n_shapiro_fail > 0: "Normality violated for X traits: [list trait names where normality_passed is False]."
+     - If n_levene_fail == 0: "Homogeneity satisfied for all traits."
+     - If n_levene_fail > 0: "Homogeneity violated for X traits: [list names]."
+     - NEVER write "all assumptions passed" without checking assumption_flags.
+  5. Selection Strategy — only if significant effects found
+     - Based on means from summary_table, not invented.
+  6. Thesis/Paper Sentence — one sentence, only computed values.
 
 IF analysis type contains "kruskal" or "Kruskal":
   Structure:
@@ -379,7 +390,22 @@ The assumptions_verdict field is generated deterministically from Shapiro-Wilk a
 It is always correct. NEVER contradict it, NEVER say "assumptions were met" if the verdict says otherwise.
 If assumptions_verdict is not provided, state: "Assumption results not available for this analysis."
 
-STRICT GROUNDING RULES — NON-NEGOTIABLE:
+OPERATING MODES:
+STRICT MODE (always active by default):
+- Only facts provable from the grounded facts provided.
+- Never use: "because", "therefore", "leads to", "due to", mechanism words.
+- Never use: "dominant", "robust", "dramatic", "overwhelming", "food safety", "drought tolerance", "farmer adoption".
+- Never invent CV values — use only the cv_percent from the facts.
+- If a statistic is missing: write "Not available from analysis output."
+
+DISCUSSION MODE (only when researcher explicitly provides location, season, and objective):
+- May discuss agronomic interpretation after completing the strict statistical summary.
+- Must clearly label the section "Agronomic Discussion (researcher context required)".
+- Still cannot invent statistics or contradict assumption verdicts.
+
+DEFAULT: STRICT MODE unless researcher context is explicitly provided.
+
+
 1. EVERY number you write must exist in the Statistical Results provided. Never invent, round differently, or recall from memory.
 2. p-values: NEVER write "p = 0". When p_display field shows "< 0.001", write "p < 0.001" — not "p = 0".
 3. If Tukey groupings are NOT in the results: do not mention letters, groups, or "Tukey".
@@ -652,26 +678,84 @@ async def interpret(request: Request, body: InterpretRequest):
             return [strip_plots(i) for i in obj]
         return obj
 
-    clean_results = strip_plots(body.results)
-    results_text = json.dumps(clean_results, indent=2)
+    # ── Fact-first pipeline (spec §2) ───────────────────────────────────────
+    # Extract grounded facts from result JSON.
+    # LLM receives fact-bullets, not raw JSON — hallucination structurally reduced.
+    results_obj = body.results if isinstance(body.results, dict) else {}
 
-    # Truncate if still too long (keep under ~12000 chars)
-    if len(results_text) > 12000:
-        results_text = results_text[:12000] + "\n... [truncated for brevity]"
+    # Determine if result is a single-trait or multi-trait synthesis call
+    is_synthesis = "summary_table" in results_obj or "per_trait" in results_obj
+
+    if is_synthesis:
+        # Multi-trait synthesis: build computed flags — never guess assumptions
+        per_trait = results_obj.get("per_trait", {})
+        n_shapiro_fail = sum(
+            1 for t_result in per_trait.values()
+            if not (t_result.get("tables", {}).get("assumptions", [{}]) or [{}])[0].get("passed", True)
+        )
+        n_levene_fail = sum(
+            1 for t_result in per_trait.values()
+            if not (t_result.get("tables", {}).get("assumptions", [{},{}]) or [{},{}])[1].get("passed", True)
+        )
+        n_block_sig = sum(
+            1 for row in results_obj.get("summary_table", [])
+            if "Block" in str(row.get("factor", "")) and row.get("significant")
+        )
+        n_trt_sig = sum(
+            1 for row in results_obj.get("summary_table", [])
+            if "Block" not in str(row.get("factor", "")) and row.get("significant")
+        )
+        total_traits = results_obj.get("meta", {}).get("n_traits_successful", 0)
+        cv_values = {
+            row["trait"]: row.get("cv_percent")
+            for row in results_obj.get("summary_table", [])
+            if row.get("cv_percent") is not None
+        }
+        # Build assumption summary per trait for synthesis
+        assumption_flags = {}
+        for tname, tr in per_trait.items():
+            assump = tr.get("tables", {}).get("assumptions", [])
+            sh = next((a for a in assump if a.get("test") == "Shapiro-Wilk"), {})
+            lv = next((a for a in assump if a.get("test") == "Levene"), {})
+            guidance = tr.get("tables", {}).get("assumption_guidance", {})
+            assumption_flags[tname] = {
+                "normality_passed":   sh.get("passed"),
+                "normality_p":        sh.get("p_value"),
+                "homogeneity_passed": lv.get("passed"),
+                "verdict":            guidance.get("overall", "Not available."),
+                "verdict_code":       guidance.get("verdict_code", "unknown"),
+                "cv":                 tr.get("meta", {}).get("cv_percent"),
+            }
+
+        synthesis_facts = {
+            "total_traits":     total_traits,
+            "n_trt_sig":        n_trt_sig,
+            "n_shapiro_fail":   n_shapiro_fail,
+            "n_levene_fail":    n_levene_fail,
+            "n_block_sig":      n_block_sig,
+            "assumption_flags": assumption_flags,
+            "cv_values":        cv_values,
+            "summary_table":    results_obj.get("summary_table", []),
+        }
+        facts_text = f"MULTI-TRAIT SYNTHESIS FACTS:\n{json.dumps(synthesis_facts, indent=2)}"
+        cv_actual = None
+    else:
+        # Single-trait: extract grounded facts
+        facts = extract_facts(results_obj, alpha=0.05)
+        facts_text = facts_to_prompt_text(facts)
+        cv_actual = facts.get("cv")
 
     user_message = f"""Please interpret these {body.analysis_type} results for the researcher.
 
-{context_block}Statistical Results:
-{results_text}
+{context_block}GROUNDED FACTS (use ONLY these — do not invent additional statistics):
+{facts_text}
 
-CRITICAL ACCURACY INSTRUCTIONS:
-1. Every number you write MUST be copied exactly from the Statistical Results above
-2. Do NOT round, estimate, or recall numbers from memory
-3. Before stating any mean value, find it in the results and copy it precisely
-4. Plant heights in the 180-250cm range are correct for cassava - do not alter them
-5. If a mean is 242.67, write 242.67 - not 24.27, not 72.67
-6. Double-check every statistic before including it in your interpretation
-7. If you are unsure of a number, quote it directly from the results rather than paraphrasing
+STRICT MODE INSTRUCTIONS:
+- Use only the facts listed above. Every sentence must reference a fact above.
+- CV value: if mentioned, use ONLY the cv_percent value from the facts. Do not compute your own.
+- Assumptions: copy the ASSUMPTIONS VERDICT text exactly. Do not contradict it.
+- p-values: use the p_display values provided. Never write 'p = 0'.
+- If a statistic is not in the facts above: write 'Not available from analysis output.'
 
 Provide a complete, personalised interpretation using the study context provided above."""
 
@@ -687,13 +771,28 @@ Provide a complete, personalised interpretation using the study context provided
             VIVASENSE_INTERPRET_SYSTEM, messages,
             model=SONNET_MODEL, max_tokens=1500
         )
-        # Run grounding validator on the returned interpretation
-        results_obj = body.results if isinstance(body.results, dict) else {}
+        # Run grounding validator on returned text
         has_tukey = bool(results_obj.get("tables", {}).get("tukey"))
-        has_corr  = bool(results_obj.get("tables", {}).get("correlation"))
-        grounding = validate_interpretation(text, has_tukey=has_tukey, has_correlation=has_corr)
+        has_corr  = bool(results_obj.get("correlation", {}).get("table"))
+        grounding = validate_interpretation(
+            text,
+            has_tukey=has_tukey,
+            has_correlation=has_corr,
+            cv_actual=cv_actual,
+        )
+        # If validation fails and not synthesis: fall back to minimal safe output
+        if not grounding["passed"] and not is_synthesis and not body.stream:
+            facts_local = extract_facts(results_obj, alpha=0.05) if not is_synthesis else {}
+            fallback = fallback_interpretation(facts_local) if facts_local else text
+            return {
+                "interpretation": text,
+                "fallback_used":  False,
+                "grounding_check": grounding,
+                "fallback_available": fallback,
+            }
         return {
             "interpretation": text,
+            "fallback_used":  False,
             "grounding_check": grounding,
         }
 
@@ -1358,19 +1457,25 @@ def interpret_anova(
 # Phrases that imply causality, mechanism, or economics — banned in strict mode
 _BANNED_CAUSAL = [
     "because", "due to", "therefore", "caused by", "leads to", "results from",
-    "mechanism", "physiological", "uptake efficiency", "genetic basis",
 ]
 
 # Strength adjectives that require computed effect sizes — banned without them
 _BANNED_STRENGTH = [
-    "massive", "dominant effect", "profound", "exceptional precision",
-    "robust evidence", "very strong", "overwhelmingly",
+    "massive", "dominant effect", "profound", "robust evidence", "overwhelmingly",
+    "dramatic improvement", "exceptional precision",
+]
+
+# Domain-specific claims banned unless user provides context (spec §3 / §5C)
+_BANNED_DOMAIN = [
+    "drought tolerance", "food safety", "farmer adoption", "mechanised harvesting",
+    "smallholder", "food security", "genetic basis", "physiological mechanism",
+    "uptake efficiency", "vigour traits",
 ]
 
 # Generalisation phrases banned unless user provides location/context
 _BANNED_GENERALISATION = [
-    "for farmers", "in your study area", "for smallholders",
-    "in sub-saharan africa", "across nigeria",
+    "in your study area", "for smallholders", "in sub-saharan africa",
+    "across nigeria", "for farmers in",
 ]
 
 # Trend language banned unless trend test was computed
@@ -1379,56 +1484,144 @@ _BANNED_TREND = [
     "linear increase", "linear decrease",
 ]
 
-def validate_interpretation(text: str, has_tukey: bool, has_correlation: bool) -> Dict[str, Any]:
+def validate_interpretation(
+    text: str,
+    has_tukey: bool,
+    has_correlation: bool,
+    cv_actual: Optional[float] = None,
+) -> Dict[str, Any]:
     """
-    Run grounding checks on interpretation text before it reaches the AI.
-    Returns {passed: bool, warnings: list[str]}.
-    All warnings are appended to the results payload so the frontend can display them.
+    Full grounding validator (spec §5 hard validation checklist).
+    A. Numbers check — p=0 detection
+    B. Contradiction check — assumption consistency
+    C. Phrase blacklist — causal, domain, trend, generalisation
+    D. CV accuracy check — catches computed-from-scratch CV errors
+    Returns {passed, warning_count, warnings[]}
     """
+    import re
     warnings_list = []
 
-    # Check 1: Tukey letters mentioned but not computed
+    # A. p=0 detection (statistically impossible)
+    if re.search(r"p\s*[=<>]\s*0(?!\.\d)", text):
+        warnings_list.append(
+            "GROUNDING A: 'p = 0' detected — statistically impossible. Use 'p < 0.001'."
+        )
+
+    # B. Tukey letters mentioned but not computed
     if not has_tukey:
-        for phrase in ["letter", "group a", "group b", "tukey", "hsd"]:
+        for phrase in ["tukey letter", "group a", "group b", "hsd grouping"]:
             if phrase in text.lower():
                 warnings_list.append(
-                    f"GROUNDING: Tukey groupings not computed but interpretation references '{phrase}'."
+                    f"GROUNDING B: Tukey groupings not computed but text references '{phrase}'."
                 )
 
-    # Check 2: Correlation language without computed correlation
+    # B. Correlation language without computed correlation
     if not has_correlation:
-        for phrase in ["correlated", "correlation", "positive relationship", "negative relationship"]:
+        for phrase in ["were correlated", "positive correlation", "negative correlation"]:
             if phrase in text.lower():
                 warnings_list.append(
-                    f"GROUNDING: Correlation not computed but interpretation references '{phrase}'."
+                    f"GROUNDING B: Correlation not computed but text references '{phrase}'."
                 )
 
-    # Check 3: Banned causal phrases
+    # C. Banned causal phrases
     for phrase in _BANNED_CAUSAL:
-        if phrase in text.lower():
+        if f" {phrase} " in f" {text.lower()} ":
             warnings_list.append(
-                f"STRICT MODE: Causal phrase detected — '{phrase}'. Rewrite to pure statistical language."
+                f"STRICT C: Causal phrase '{phrase}' detected. Replace with statistical language."
             )
 
-    # Check 4: Banned strength adjectives
+    # C. Banned strength adjectives
     for phrase in _BANNED_STRENGTH:
         if phrase in text.lower():
             warnings_list.append(
-                f"STRICT MODE: Strength adjective '{phrase}' detected. Replace with numeric evidence."
+                f"STRICT C: Strength adjective '{phrase}' detected. Replace with F-value evidence."
             )
 
-    # Check 5: p=0 in text (statistically impossible)
-    import re
-    if re.search(r"p\s*[=<>]\s*0(?!\.\d)", text):
-        warnings_list.append(
-            "GROUNDING: 'p = 0' detected in text — statistically impossible. Use 'p < 0.001'."
-        )
+    # C. Banned domain claims
+    for phrase in _BANNED_DOMAIN:
+        if phrase in text.lower():
+            warnings_list.append(
+                f"STRICT C: Domain claim '{phrase}' detected without user-provided context."
+            )
+
+    # C. Banned generalisation
+    for phrase in _BANNED_GENERALISATION:
+        if phrase in text.lower():
+            warnings_list.append(
+                f"STRICT C: Generalisation '{phrase}' detected without user-provided location context."
+            )
+
+    # C. Banned trend language
+    for phrase in _BANNED_TREND:
+        if phrase in text.lower():
+            warnings_list.append(
+                f"STRICT C: Trend language '{phrase}' detected without computed trend test."
+            )
+
+    # D. CV accuracy check — catches hallucinated CV values (e.g., 3.47% vs 6.48%)
+    if cv_actual is not None:
+        cv_matches = re.findall(r"cv\s*[=:]\s*([\d.]+)\s*%|cv\s+of\s+([\d.]+)\s*%|([\d.]+)\s*%\s*cv|([\d.]+)%.*cv", text.lower())
+        for match_groups in cv_matches:
+            cv_text_str = next((g for g in match_groups if g), None)
+            if cv_text_str:
+                try:
+                    cv_text_val = float(cv_text_str)
+                    if abs(cv_text_val - cv_actual) > 1.0:
+                        warnings_list.append(
+                            f"GROUNDING D: CV in text ({cv_text_val}%) does not match computed CV ({cv_actual}%). "
+                            f"Use the provided cv_percent = {cv_actual}%."
+                        )
+                except ValueError:
+                    pass
 
     return {
         "passed": len(warnings_list) == 0,
         "warning_count": len(warnings_list),
         "warnings": warnings_list,
     }
+
+
+def fallback_interpretation(facts: Dict[str, Any]) -> str:
+    """
+    Minimal safe interpretation used when LLM output fails validation.
+    100% grounded — built entirely from facts dict, no free text.
+    Spec §2: 'If validate fails → fallback to minimal safe summary.'
+    """
+    trait  = facts.get("trait", "trait")
+    design = facts.get("design", "ANOVA")
+    cv     = facts.get("cv")
+    lines  = [f"Statistical Summary: {trait} ({design})"]
+    lines.append("")
+
+    # Significance facts
+    for e in facts.get("significant_effects", []):
+        F_str = f"F = {e['F']}, " if e.get("F") else ""
+        lines.append(f"• {e['source']}: significant ({F_str}{e['p_display']})")
+    for e in facts.get("nonsignificant_effects", []):
+        F_str = f"F = {e['F']}, " if e.get("F") else ""
+        lines.append(f"• {e['source']}: not significant ({F_str}{e['p_display']})")
+
+    # Best and worst
+    best  = facts.get("best_treatment")
+    worst = facts.get("worst_treatment")
+    if best:
+        group_col = next((k for k in best if k not in ("n","mean","sd","se","letters","groups")), "treatment")
+        lines.append(f"• Highest mean: {best.get(group_col)} = {best.get('mean')} (Tukey: {best.get('letters','N/A')})")
+    if worst and worst != best:
+        group_col = next((k for k in worst if k not in ("n","mean","sd","se","letters","groups")), "treatment")
+        lines.append(f"• Lowest mean: {worst.get(group_col)} = {worst.get('mean')} (Tukey: {worst.get('letters','N/A')})")
+
+    # CV
+    if cv:
+        lines.append(f"• CV = {cv}%")
+
+    # Locked assumption verdict
+    lines.append("")
+    lines.append("Assumptions: " + facts.get("assumptions_verdict", "Not available."))
+
+    lines.append("")
+    lines.append("— VivaSense (minimal safe output)")
+    return "\n".join(lines)
 
 
 def add_p_display_to_anova(records: List[Dict]) -> List[Dict]:
@@ -1446,6 +1639,169 @@ def add_p_display_to_anova(records: List[Dict]) -> List[Dict]:
                 r[f"{key}_display"] = fmt_p_display(float(r[key]))
         out.append(r)
     return out
+
+
+# ============================================================
+#  FACT EXTRACTION PIPELINE  (spec §2 — fact-first architecture)
+# ============================================================
+
+def extract_facts(result: Dict[str, Any], alpha: float = 0.05) -> Dict[str, Any]:
+    """
+    Extract canonical bullet-facts from a single-trait result JSON.
+    ONLY facts provable from computed output.
+    LLM receives this — not raw JSON.
+    """
+    facts: Dict[str, Any] = {}
+    meta   = result.get("meta", {})
+    tables = result.get("tables", {})
+    intel  = result.get("intelligence", {})
+
+    # ── Design context ──
+    facts["design"]  = meta.get("design", "Unknown")
+    facts["trait"]   = meta.get("trait", "Unknown")
+    facts["alpha"]   = alpha
+    facts["cv"]      = meta.get("cv_percent")
+
+    # ── ANOVA significance (grounded from ANOVA table) ──
+    anova_rows = tables.get("anova", tables.get("anova_corrected", []))
+    sig_effects = []
+    insig_effects = []
+    for row in anova_rows:
+        src = str(row.get("source", ""))
+        if "Residual" in src:
+            continue
+        p_raw = row.get("PR(>F)") or row.get("p_corrected") or row.get("p_value")
+        p_disp = row.get("PR(>F)_display") or row.get("p_corrected_display") or fmt_p_display(p_raw)
+        F_val  = row.get("F") or row.get("F_corrected")
+        df_val = row.get("df")
+        if p_raw is None:
+            continue
+        entry = {
+            "source":    src,
+            "F":         round_val(F_val, 2) if F_val else None,
+            "df":        df_val,
+            "p":         round_val(p_raw, 4),
+            "p_display": p_disp,
+            "significant": bool(float(p_raw) < alpha),
+        }
+        if float(p_raw) < alpha:
+            sig_effects.append(entry)
+        else:
+            insig_effects.append(entry)
+    facts["significant_effects"]   = sig_effects
+    facts["nonsignificant_effects"] = insig_effects
+
+    # ── Interaction present? (critical for factorial/split-plot) ──
+    interaction_row = next(
+        (r for r in sig_effects   if ":" in str(r["source"]) or "x" in str(r["source"]).lower()),
+        None
+    )
+    insig_interaction = next(
+        (r for r in insig_effects if ":" in str(r["source"]) or "x" in str(r["source"]).lower()),
+        None
+    )
+    facts["interaction_significant"] = interaction_row is not None
+    facts["interaction_row"]         = interaction_row or insig_interaction
+
+    # ── Means table (grounded) ──
+    means_rows = tables.get("means", [])
+    if means_rows:
+        sorted_means = sorted(
+            [r for r in means_rows if r.get("mean") is not None],
+            key=lambda r: float(r["mean"]),
+            reverse=True
+        )
+        facts["best_treatment"]  = sorted_means[0]  if sorted_means else None
+        facts["worst_treatment"] = sorted_means[-1] if sorted_means else None
+        facts["all_means"]       = sorted_means
+        facts["has_tukey"]       = any("letters" in r or "groups" in r for r in means_rows)
+    else:
+        facts["best_treatment"]  = None
+        facts["worst_treatment"] = None
+        facts["all_means"]       = []
+        facts["has_tukey"]       = False
+
+    # ── Assumptions (locked verdict — never guessed) ──
+    assumptions = tables.get("assumptions", [])
+    shapiro = next((a for a in assumptions if a.get("test") == "Shapiro-Wilk"), {})
+    levene  = next((a for a in assumptions if a.get("test") == "Levene"), {})
+    guidance = tables.get("assumption_guidance", {})
+    facts["assumptions"] = {
+        "shapiro_stat":    shapiro.get("stat"),
+        "shapiro_p":       shapiro.get("p_value"),
+        "shapiro_passed":  shapiro.get("passed"),
+        "levene_stat":     levene.get("stat"),
+        "levene_p":        levene.get("p_value"),
+        "levene_passed":   levene.get("passed"),
+        "verdict":         guidance.get("overall", "Assumption results not available."),
+        "verdict_code":    guidance.get("verdict_code", "unknown"),
+        "alternative":     guidance.get("alternative"),
+    }
+
+    # ── Intelligence blocks (pre-computed, grounded) ──
+    facts["assumptions_verdict"] = intel.get("assumptions_verdict", guidance.get("overall", "Not available."))
+    facts["decision_rules"]      = intel.get("decision_rules", [])
+    facts["reviewer_radar"]      = intel.get("reviewer_radar", [])
+    facts["executive_insight"]   = intel.get("executive_insight", "")
+
+    return facts
+
+
+def facts_to_prompt_text(facts: Dict[str, Any]) -> str:
+    """
+    Render fact-bullets into a structured prompt block.
+    LLM can only rewrite these bullets — it cannot invent new facts.
+    """
+    lines = []
+    lines.append(f"ANALYSIS: {facts['design']} — Trait: {facts['trait']}")
+    if facts.get("cv"):
+        lines.append(f"CV: {facts['cv']}%")
+
+    lines.append("")
+    lines.append("SIGNIFICANCE FACTS (use only these):")
+    for e in facts.get("significant_effects", []):
+        F_str = f"F = {e['F']}" if e.get("F") else ""
+        lines.append(f"  ✓ {e['source']}: significant ({F_str}, {e['p_display']})")
+    for e in facts.get("nonsignificant_effects", []):
+        F_str = f"F = {e['F']}" if e.get("F") else ""
+        lines.append(f"  ✗ {e['source']}: NOT significant ({F_str}, {e['p_display']})")
+
+    if facts.get("interaction_row"):
+        ix = facts["interaction_row"]
+        status = "SIGNIFICANT" if facts["interaction_significant"] else "NOT significant"
+        F_str = f"F = {ix['F']}" if ix.get("F") else ""
+        lines.append(f"  → INTERACTION ({ix['source']}): {status} ({F_str}, {ix['p_display']}) — report this FIRST")
+
+    lines.append("")
+    lines.append("MEANS FACTS (use only these):")
+    for m in facts.get("all_means", []):
+        group_col = next((k for k in m if k not in ("n","mean","sd","se","letters","groups")), "treatment")
+        name    = m.get(group_col, "?")
+        mean_v  = m.get("mean", "?")
+        letters = m.get("letters") or m.get("groups", "")
+        lines.append(f"  {name}: mean = {mean_v}, Tukey letter = {letters or 'N/A'}")
+
+    lines.append("")
+    lines.append(f"ASSUMPTIONS VERDICT (use exactly this text, do not contradict):")
+    lines.append(f"  {facts['assumptions_verdict']}")
+    if facts["assumptions"].get("shapiro_stat"):
+        lines.append(f"  Shapiro-Wilk: W = {facts['assumptions']['shapiro_stat']}, p = {facts['assumptions']['shapiro_p']}")
+    if facts["assumptions"].get("levene_stat") is not None:
+        lines.append(f"  Levene: F = {facts['assumptions']['levene_stat']}, p = {facts['assumptions']['levene_p']}")
+
+    if facts.get("decision_rules"):
+        lines.append("")
+        lines.append("DECISION RULES (present verbatim under 'Decision Rules' heading):")
+        for rule in facts["decision_rules"]:
+            lines.append(f"  • {rule}")
+
+    if facts.get("reviewer_radar"):
+        lines.append("")
+        lines.append("REVIEWER RADAR (present verbatim under 'Reviewer Radar' heading):")
+        for q in facts["reviewer_radar"]:
+            lines.append(f"  ? {q}")
+
+    return "\n".join(lines)
 
 # ============================================================
 #  ANALYSIS ENGINES
