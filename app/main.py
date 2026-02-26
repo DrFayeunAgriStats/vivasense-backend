@@ -886,8 +886,12 @@ def fmt_p_display(p) -> str:
 
 def df_to_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
     df = df.copy()
+    # P-value columns get fmt_p floor (0.0001 minimum) — prevents 0.0 in JSON
+    p_cols = [c for c in df.columns if any(k in c for k in ["PR(>F)", "p_value", "p_corrected", "p_adj"])]
     for col in df.columns:
-        if pd.api.types.is_float_dtype(df[col]):
+        if col in p_cols:
+            df[col] = df[col].apply(lambda x: fmt_p(x))
+        elif pd.api.types.is_float_dtype(df[col]):
             df[col] = df[col].apply(lambda x: round_val(x, 4))
     return df.replace({np.nan: None}).to_dict(orient="records")
 
@@ -1781,10 +1785,15 @@ def build_strict_ctx(
         src = str(row.get("source", ""))
         if "Residual" in src:
             continue
-        p_raw  = row.get("p_corrected") or row.get("PR(>F)")
-        p_disp = row.get("p_corrected_display") or row.get("PR(>F)_display") or (fmt_p_display(p_raw) if p_raw else "N/A")
-        F_val  = row.get("F_corrected") or row.get("F")
-        F_str  = str(round(float(F_val), 2)) if F_val else "N/A"
+        # Explicit None checks — 0.0 is falsy but valid
+        p_raw = row.get("p_corrected")
+        if p_raw is None:
+            p_raw = row.get("PR(>F)")
+        p_disp = row.get("p_corrected_display") or row.get("PR(>F)_display") or (fmt_p_display(p_raw) if p_raw is not None else "N/A")
+        F_val = row.get("F_corrected")
+        if F_val is None:
+            F_val = row.get("F")
+        F_str = str(round(float(F_val), 2)) if F_val is not None else "N/A"
 
         # Interaction row
         if ":" in src and ("Block" not in src):
@@ -2065,12 +2074,19 @@ def extract_facts(result: Dict[str, Any], alpha: float = 0.05) -> Dict[str, Any]
         src = str(row.get("source", ""))
         if "Residual" in src:
             continue
-        p_raw = row.get("PR(>F)") or row.get("p_corrected") or row.get("p_value")
-        p_disp = row.get("PR(>F)_display") or row.get("p_corrected_display") or fmt_p_display(p_raw)
-        F_val  = row.get("F") or row.get("F_corrected")
-        df_val = row.get("df")
+        # Explicit None checks — 0.0 is falsy in Python but is a valid (floored) p-value
+        p_raw = row.get("PR(>F)")
+        if p_raw is None:
+            p_raw = row.get("p_corrected")
+        if p_raw is None:
+            p_raw = row.get("p_value")
         if p_raw is None:
             continue
+        p_disp = row.get("PR(>F)_display") or row.get("p_corrected_display") or fmt_p_display(p_raw)
+        F_val = row.get("F")
+        if F_val is None:
+            F_val = row.get("F_corrected")
+        df_val = row.get("df")
         entry = {
             "source":    src,
             "F":         round_val(F_val, 2) if F_val else None,
