@@ -1107,6 +1107,10 @@ app.add_middleware(
 # Initialize backend
 backend = VivaSenseBackend()
 
+# Genetics module
+from genetics import genetics_router
+app.include_router(genetics_router)
+
 # Store background tasks
 background_tasks_store = {}
 
