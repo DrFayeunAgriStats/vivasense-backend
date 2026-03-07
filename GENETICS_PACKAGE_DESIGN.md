@@ -1258,7 +1258,7 @@ scikit-learn==1.3.2
 ```
 
 This provides:
-- `sklearn.decomposition.PCA` — numerically stable PCA with built-in standardization
+- `sklearan.decomposition.PCA` — numerically stable PCA with built-in standardization
 - `sklearn.cluster.KMeans` — more robust than `scipy.cluster.vq.kmeans2`
 - `sklearn.preprocessing.StandardScaler` — used before PCA
 
