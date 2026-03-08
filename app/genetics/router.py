@@ -661,6 +661,7 @@ async def analyze_genetics_trial(
 # ── Variance components only ──────────────────────────────────────────────────
 
 @genetics_router.post("/variance-components")
+@genetics_router.post("/variance_components")
 async def genetics_variance_components(
     file: UploadFile = File(...),
     genotype_col: str = Form("Genotype"),
