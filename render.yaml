@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: vivasense-backend
+    runtime: python
+    buildCommand: pip install -r app/requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHONPATH
+        value: /opt/render/project/src/app
