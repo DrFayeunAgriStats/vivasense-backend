@@ -209,7 +209,12 @@ class StatisticalAnalyzer:
                 ss_effect = anova_table.loc[effect, 'sum_sq']
                 df_effect = anova_table.loc[effect, 'df']
                 ms_effect = ss_effect / df_effect if df_effect > 0 else 0
-                ms_error = anova_table.loc['Residual', 'mean_sq'] if 'Residual' in anova_table.index else 0
+                if 'Residual' in anova_table.index:
+                    _ss_res = anova_table.loc['Residual', 'sum_sq']
+                    _df_res = anova_table.loc['Residual', 'df']
+                    ms_error = _ss_res / _df_res if _df_res > 0 else 0
+                else:
+                    ms_error = 0
                 
                 # Eta-squared
                 eta_sq = ss_effect / ss_total
@@ -845,11 +850,46 @@ class AIInterpreter:
         return '\n'.join(lines)
     
     def _ai_interpretation(self, result: Dict, response: str, context: Dict = None) -> str:
-        """Use AI to generate interpretation (placeholder for API integration)"""
-        # This would integrate with OpenAI, Claude, etc.
-        # For now, return template version with note
-        template = self._template_interpretation(result, response)
-        return template + "\n\n[Note: AI-powered interpretation would provide enhanced insights here]"
+        """Use Claude (Anthropic) to generate interpretation, falling back to template."""
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=self.api_key)
+
+            # Build a concise prompt from the result
+            anova = result.get("anova", {})
+            means = result.get("means", {})
+            letters = result.get("letters", {})
+            r2 = result.get("r_squared")
+            f_p = result.get("f_pvalue")
+
+            prompt_lines = [
+                f"You are a statistical consultant. Interpret the following ANOVA results for the trait '{response}' concisely (3-5 sentences, plain English, suitable for a journal methods section).",
+                f"R² = {r2:.3f}" if r2 is not None else "",
+                f"Overall F p-value = {f_p:.4f}" if f_p is not None else "",
+            ]
+            for effect, vals in anova.items():
+                if isinstance(vals, dict) and effect != "Residual":
+                    p = vals.get("PR(>F)")
+                    f = vals.get("F")
+                    if p is not None:
+                        sig = "significant" if float(p) < 0.05 else "not significant"
+                        prompt_lines.append(f"  {effect}: F={f:.2f}, p={p:.4f} ({sig})")
+            for pred, m in means.items():
+                top = sorted(m.items(), key=lambda x: x[1], reverse=True)[:3]
+                top_str = ", ".join(f"{k}={v:.2f}{(' '+letters.get(pred,{}).get(k,''))}" for k, v in top)
+                prompt_lines.append(f"  Top {pred} means: {top_str}")
+
+            prompt = "\n".join(l for l in prompt_lines if l)
+
+            message = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=512,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return message.content[0].text
+        except Exception as e:
+            logger.warning("AI interpretation failed (%s), using template fallback", e)
+            return self._template_interpretation(result, response)
 
 # =========================
 # CACHE MANAGER
@@ -1104,8 +1144,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize backend
-backend = VivaSenseBackend()
+# Initialize backend — pick up AI key from environment if present
+_ai_api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("AI_KEY")
+backend = VivaSenseBackend(ai_api_key=_ai_api_key)
 
 # Genetics module
 from genetics import genetics_router
@@ -1283,7 +1324,7 @@ def _parse_anova_request(data: Dict) -> Tuple[pd.DataFrame, str, float]:
 
 def _anova_with_plots(df: pd.DataFrame, response: str, predictors: List[str],
                       blocks: List[str] = None, alpha: float = 0.05) -> Dict:
-    """Run ANOVA via StatisticalAnalyzer and attach plots."""
+    """Run ANOVA via StatisticalAnalyzer and attach plots + interpretation."""
     cfg = AnalysisConfig(alpha=alpha)
     analyzer = StatisticalAnalyzer(cfg)
     result = analyzer.run_anova(df, response, predictors, blocks)
@@ -1291,6 +1332,7 @@ def _anova_with_plots(df: pd.DataFrame, response: str, predictors: List[str],
         result["plots"] = analyzer.generate_plots(df, response, predictors[0])
     except Exception:
         result["plots"] = {}
+    result["interpretation"] = backend.interpreter.interpret(result, response)
     return result
 
 
