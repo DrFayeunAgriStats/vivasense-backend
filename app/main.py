@@ -1262,6 +1262,264 @@ async def update_config(config: Dict):
         raise HTTPException(status_code=400, detail=str(e))
 
 # =========================
+# ANOVA-SPECIFIC ENDPOINTS
+# =========================
+
+def _parse_anova_request(data: Dict) -> Tuple[pd.DataFrame, str, float]:
+    """Validate and parse common fields from an ANOVA request body."""
+    rows = data.get("data")
+    if not rows:
+        raise HTTPException(status_code=400, detail="'data' field is required and must not be empty")
+    df = pd.DataFrame(rows)
+    response = data.get("response")
+    if not response:
+        raise HTTPException(status_code=400, detail="'response' field is required")
+    if response not in df.columns:
+        raise HTTPException(status_code=400, detail=f"Response column '{response}' not found in data")
+    df[response] = pd.to_numeric(df[response], errors='coerce')
+    alpha = float(data.get("alpha", 0.05))
+    return df, response, alpha
+
+
+def _anova_with_plots(df: pd.DataFrame, response: str, predictors: List[str],
+                      blocks: List[str] = None, alpha: float = 0.05) -> Dict:
+    """Run ANOVA via StatisticalAnalyzer and attach plots."""
+    cfg = AnalysisConfig(alpha=alpha)
+    analyzer = StatisticalAnalyzer(cfg)
+    result = analyzer.run_anova(df, response, predictors, blocks)
+    try:
+        result["plots"] = analyzer.generate_plots(df, response, predictors[0])
+    except Exception:
+        result["plots"] = {}
+    return result
+
+
+@app.post("/analyze/descriptive")
+async def analyze_descriptive(data: Dict):
+    """Descriptive statistics for one or two grouping factors."""
+    df, response, alpha = _parse_anova_request(data)
+    predictors = [
+        col for key in ("treatment", "treatment_a", "treatment_b", "block")
+        if (col := data.get(key)) and col in df.columns
+    ]
+    if not predictors:
+        raise HTTPException(status_code=400,
+                            detail="At least one of 'treatment', 'treatment_a', 'treatment_b', 'block' is required")
+    analyzer = StatisticalAnalyzer(AnalysisConfig(alpha=alpha))
+    desc = analyzer.descriptive_statistics(df, response, predictors)
+    return {"status": "success", "design": "descriptive", "response": response,
+            "n": len(df), "descriptive_stats": desc}
+
+
+@app.post("/analyze/anova/oneway")
+async def analyze_oneway(data: Dict):
+    """One-way ANOVA — completely randomized design (CRD)."""
+    df, response, alpha = _parse_anova_request(data)
+    treatment = data.get("treatment")
+    if not treatment or treatment not in df.columns:
+        raise HTTPException(status_code=400, detail="'treatment' column is required")
+    result = _anova_with_plots(df, response, [treatment], alpha=alpha)
+    return {"status": "success", "design": "oneway", "response": response,
+            "treatment": treatment, **result}
+
+
+@app.post("/analyze/anova/oneway_rcbd")
+async def analyze_oneway_rcbd(data: Dict):
+    """One-way ANOVA in a Randomized Complete Block Design (RCBD)."""
+    df, response, alpha = _parse_anova_request(data)
+    treatment = data.get("treatment")
+    block = data.get("block")
+    if not treatment or treatment not in df.columns:
+        raise HTTPException(status_code=400, detail="'treatment' column is required")
+    if not block or block not in df.columns:
+        raise HTTPException(status_code=400, detail="'block' column is required")
+    result = _anova_with_plots(df, response, [treatment], blocks=[block], alpha=alpha)
+    return {"status": "success", "design": "oneway_rcbd", "response": response,
+            "treatment": treatment, "block": block, **result}
+
+
+@app.post("/analyze/anova/twoway")
+async def analyze_twoway(data: Dict):
+    """Two-way factorial ANOVA with interaction (CRD)."""
+    df, response, alpha = _parse_anova_request(data)
+    treatment_a = data.get("treatment_a")
+    treatment_b = data.get("treatment_b")
+    if not treatment_a or treatment_a not in df.columns:
+        raise HTTPException(status_code=400, detail="'treatment_a' column is required")
+    if not treatment_b or treatment_b not in df.columns:
+        raise HTTPException(status_code=400, detail="'treatment_b' column is required")
+    result = _anova_with_plots(df, response, [treatment_a, treatment_b], alpha=alpha)
+    return {"status": "success", "design": "twoway", "response": response,
+            "treatment_a": treatment_a, "treatment_b": treatment_b, **result}
+
+
+@app.post("/analyze/anova/rcbd_factorial")
+async def analyze_rcbd_factorial(data: Dict):
+    """Factorial ANOVA in an RCBD (two treatment factors + blocking)."""
+    df, response, alpha = _parse_anova_request(data)
+    treatment_a = data.get("treatment_a")
+    treatment_b = data.get("treatment_b")
+    block = data.get("block")
+    if not treatment_a or treatment_a not in df.columns:
+        raise HTTPException(status_code=400, detail="'treatment_a' column is required")
+    if not treatment_b or treatment_b not in df.columns:
+        raise HTTPException(status_code=400, detail="'treatment_b' column is required")
+    if not block or block not in df.columns:
+        raise HTTPException(status_code=400, detail="'block' column is required")
+    result = _anova_with_plots(df, response, [treatment_a, treatment_b], blocks=[block], alpha=alpha)
+    return {"status": "success", "design": "rcbd_factorial", "response": response,
+            "treatment_a": treatment_a, "treatment_b": treatment_b, "block": block, **result}
+
+
+@app.post("/analyze/anova/splitplot")
+async def analyze_splitplot(data: Dict):
+    """Split-plot ANOVA — whole-plot and sub-plot factors with blocking."""
+    df, response, alpha = _parse_anova_request(data)
+    whole_plot = data.get("whole_plot")
+    sub_plot   = data.get("sub_plot")
+    block      = data.get("block")
+    if not whole_plot or whole_plot not in df.columns:
+        raise HTTPException(status_code=400, detail="'whole_plot' column is required")
+    if not sub_plot or sub_plot not in df.columns:
+        raise HTTPException(status_code=400, detail="'sub_plot' column is required")
+    if not block or block not in df.columns:
+        raise HTTPException(status_code=400, detail="'block' column is required")
+    try:
+        cfg = AnalysisConfig(alpha=alpha)
+        analyzer = StatisticalAnalyzer(cfg)
+        # Include block:whole_plot as the whole-plot error stratum
+        formula = (f"{response} ~ {block} + {whole_plot} + {block}:{whole_plot}"
+                   f" + {sub_plot} + {whole_plot}:{sub_plot}")
+        model = ols(formula, data=df).fit()
+        anova_table = sm.stats.anova_lm(model, typ=2)
+        ss_total = anova_table["sum_sq"].sum()
+        effect_sizes = analyzer.calculate_effect_sizes(anova_table, ss_total)
+        assumptions = analyzer.check_assumptions(df, formula, whole_plot)
+        desc_stats = analyzer.descriptive_statistics(df, response, [whole_plot, sub_plot])
+        means = {
+            whole_plot: {str(k): float(v) for k, v in df.groupby(whole_plot)[response].mean().items()},
+            sub_plot:   {str(k): float(v) for k, v in df.groupby(sub_plot)[response].mean().items()},
+        }
+        try:
+            plots = analyzer.generate_plots(df, response, whole_plot)
+        except Exception:
+            plots = {}
+        return {
+            "status": "success", "design": "splitplot", "response": response,
+            "whole_plot": whole_plot, "sub_plot": sub_plot, "block": block,
+            "formula": formula,
+            "r_squared": float(model.rsquared),
+            "adj_r_squared": float(model.rsquared_adj),
+            "anova": anova_table.round(4).to_dict(),
+            "means": means,
+            "effect_sizes": {k: asdict(v) for k, v in effect_sizes.items()},
+            "assumptions": {k: asdict(v) for k, v in assumptions.items()},
+            "descriptive_stats": desc_stats,
+            "plots": plots,
+        }
+    except Exception as e:
+        logger.error("Split-plot ANOVA failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/analyze/nonparametric/kruskal")
+async def analyze_kruskal(data: Dict):
+    """Kruskal-Wallis H test with pairwise Mann-Whitney post-hoc (Bonferroni)."""
+    df, response, alpha = _parse_anova_request(data)
+    treatment = data.get("treatment")
+    if not treatment or treatment not in df.columns:
+        raise HTTPException(status_code=400, detail="'treatment' column is required")
+    try:
+        groups = [g[response].dropna().values for _, g in df.groupby(treatment)]
+        h_stat, p_value = stats.kruskal(*groups)
+        group_means   = {str(k): float(v) for k, v in df.groupby(treatment)[response].mean().items()}
+        group_medians = {str(k): float(v) for k, v in df.groupby(treatment)[response].median().items()}
+        group_counts  = {str(k): int(v)   for k, v in df.groupby(treatment)[response].count().items()}
+        # Pairwise Mann-Whitney U with Bonferroni correction
+        group_names = sorted(df[treatment].unique().tolist(), key=str)
+        n_pairs = max(len(group_names) * (len(group_names) - 1) // 2, 1)
+        posthoc: Dict[str, Any] = {}
+        for i in range(len(group_names)):
+            for j in range(i + 1, len(group_names)):
+                g1 = df[df[treatment] == group_names[i]][response].dropna().values
+                g2 = df[df[treatment] == group_names[j]][response].dropna().values
+                u_stat, p_val = stats.mannwhitneyu(g1, g2, alternative="two-sided")
+                pair = f"{group_names[i]} vs {group_names[j]}"
+                posthoc[pair] = {
+                    "U": float(u_stat),
+                    "p_value": float(p_val),
+                    "p_adjusted": float(min(p_val * n_pairs, 1.0)),
+                    "significant": bool(p_val * n_pairs < alpha),
+                }
+        analyzer = StatisticalAnalyzer(AnalysisConfig(alpha=alpha))
+        try:
+            plots = analyzer.generate_plots(df, response, treatment)
+        except Exception:
+            plots = {}
+        return {
+            "status": "success", "design": "kruskal", "response": response,
+            "treatment": treatment, "n": len(df),
+            "H_statistic": float(h_stat), "p_value": float(p_value),
+            "significant": bool(p_value < alpha),
+            "group_means": group_means, "group_medians": group_medians,
+            "group_counts": group_counts, "posthoc": posthoc, "plots": plots,
+        }
+    except Exception as e:
+        logger.error("Kruskal-Wallis failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/analyze/nonparametric/friedman")
+async def analyze_friedman(data: Dict):
+    """Friedman test with pairwise Wilcoxon signed-rank post-hoc (Bonferroni)."""
+    df, response, alpha = _parse_anova_request(data)
+    treatment = data.get("treatment")
+    block = data.get("block")
+    if not treatment or treatment not in df.columns:
+        raise HTTPException(status_code=400, detail="'treatment' column is required")
+    if not block or block not in df.columns:
+        raise HTTPException(status_code=400, detail="'block' column is required")
+    try:
+        pivot = df.pivot_table(index=block, columns=treatment, values=response, aggfunc="mean")
+        col_data = [pivot[col].dropna().values for col in pivot.columns]
+        chi2_stat, p_value = stats.friedmanchisquare(*col_data)
+        group_means   = {str(k): float(v) for k, v in df.groupby(treatment)[response].mean().items()}
+        group_medians = {str(k): float(v) for k, v in df.groupby(treatment)[response].median().items()}
+        # Pairwise Wilcoxon signed-rank with Bonferroni correction
+        treatment_names = list(pivot.columns)
+        n_pairs = max(len(treatment_names) * (len(treatment_names) - 1) // 2, 1)
+        posthoc: Dict[str, Any] = {}
+        for i in range(len(treatment_names)):
+            for j in range(i + 1, len(treatment_names)):
+                g1 = pivot[treatment_names[i]].dropna().values
+                g2 = pivot[treatment_names[j]].dropna().values
+                n = min(len(g1), len(g2))
+                w_stat, p_val = stats.wilcoxon(g1[:n], g2[:n])
+                pair = f"{treatment_names[i]} vs {treatment_names[j]}"
+                posthoc[pair] = {
+                    "W": float(w_stat),
+                    "p_value": float(p_val),
+                    "p_adjusted": float(min(p_val * n_pairs, 1.0)),
+                    "significant": bool(p_val * n_pairs < alpha),
+                }
+        analyzer = StatisticalAnalyzer(AnalysisConfig(alpha=alpha))
+        try:
+            plots = analyzer.generate_plots(df, response, treatment)
+        except Exception:
+            plots = {}
+        return {
+            "status": "success", "design": "friedman", "response": response,
+            "treatment": treatment, "block": block, "n": len(df),
+            "chi2_statistic": float(chi2_stat), "p_value": float(p_value),
+            "significant": bool(p_value < alpha),
+            "group_means": group_means, "group_medians": group_medians,
+            "posthoc": posthoc, "plots": plots,
+        }
+    except Exception as e:
+        logger.error("Friedman test failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+# =========================
 # BACKGROUND TASKS
 # =========================
 
