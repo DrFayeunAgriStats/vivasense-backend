@@ -472,7 +472,7 @@ class StatisticalAnalyzer:
             for predictor in predictors:
                 if predictor in anova_table.index:
                     p_value = anova_table.loc[predictor, 'PR(>F)']
-                    if p_value < self.config.alpha:
+                    if pd.notna(p_value) and p_value < self.config.alpha:
                         try:
                             tukey = pairwise_tukeyhsd(df[response], df[predictor], 
                                                      alpha=self.config.alpha)
@@ -492,7 +492,7 @@ class StatisticalAnalyzer:
                 'adj_r_squared': float(model.rsquared_adj),
                 'f_value': float(model.fvalue) if hasattr(model, 'fvalue') else None,
                 'f_pvalue': float(model.f_pvalue) if hasattr(model, 'f_pvalue') else None,
-                'anova': anova_table.round(4).to_dict(),
+                'anova': json.loads(anova_table.round(4).to_json()),
                 'means': means_dict,
                 'letters': letters_dict,
                 'effect_sizes': {k: asdict(v) for k, v in effect_sizes.items()},
@@ -1452,7 +1452,7 @@ async def analyze_splitplot(data: Dict):
             "formula": formula,
             "r_squared": float(model.rsquared),
             "adj_r_squared": float(model.rsquared_adj),
-            "anova": anova_table.round(4).to_dict(),
+            "anova": json.loads(anova_table.round(4).to_json()),
             "means": means,
             "effect_sizes": {k: asdict(v) for k, v in effect_sizes.items()},
             "assumptions": {k: asdict(v) for k, v in assumptions.items()},
