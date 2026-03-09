@@ -4,6 +4,8 @@ from .stability import StabilityEngine
 from .correlations import CorrelationEngine
 from .multivariate import MultivariateEngine
 from .markers import MarkerEngine
+from .table_generator import build_html_tables
+from .figure_generator import build_publication_figures
 
 __all__ = [
     "MultilocationEngine",
@@ -12,4 +14,6 @@ __all__ = [
     "CorrelationEngine",
     "MultivariateEngine",
     "MarkerEngine",
+    "build_html_tables",
+    "build_publication_figures",
 ]

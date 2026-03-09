@@ -44,6 +44,8 @@ from .intelligence import (
 )
 from .pipeline import GeneticsPipeline
 from .serializers import numpy_to_python
+from .engines.table_generator import build_html_tables
+from .engines.figure_generator import build_publication_figures
 
 logger = logging.getLogger(__name__)
 
@@ -260,6 +262,34 @@ def _means_records(
     return records
 
 
+def _resolve_trait_cols(trait_cols: str, traits: str) -> str:
+    """
+    Normalise trait column input from any of the three formats Lovable may send:
+
+      1. Comma-separated string:    "Days_to_Flowering,Plant_Height_cm"
+      2. JSON array string:         '["Days_to_Flowering","Plant_Height_cm"]'
+      3. Multiple form fields:      traits=Days_to_Flowering&traits=Plant_Height_cm
+         (FastAPI gives this as the last value for a str field; use List[str] for real
+          multi-value, but we handle that with the comma-join approach below)
+
+    Prefers `traits` over `trait_cols` if `traits` is non-empty.
+    Strips JSON array brackets and quotes. Returns a comma-separated string
+    suitable for _build_design() / _build_config().
+    """
+    raw = (traits.strip() or trait_cols.strip())
+    if not raw:
+        return ""
+    # JSON array: ["a","b"]  or  ['a','b']
+    if raw.startswith("["):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return ",".join(str(t).strip() for t in parsed if str(t).strip())
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return raw
+
+
 def _extract_residuals(anova_raw: Dict[str, Any]) -> np.ndarray:
     """Best-effort extraction of residuals from a combined ANOVA result."""
     residuals = anova_raw.get("residuals")
@@ -438,6 +468,41 @@ def _build_trial_envelope(
     if raw.get("multivariate"):
         envelope["tables"]["multivariate"] = raw["multivariate"]
 
+    # Add publication-ready JSON tables (for programmatic use)
+    try:
+        envelope["publication_tables"] = build_genetics_publication_tables(
+            envelope, trait, design, alpha
+        )
+    except Exception as _pub_exc:
+        logger.warning("Could not build genetics publication tables: %s", _pub_exc)
+        envelope["publication_tables"] = {}
+
+    # Add publication-ready HTML tables (copy-paste ready for Word/LaTeX)
+    try:
+        envelope["html_tables"] = build_html_tables(
+            envelope, trait,
+            genotype_col=design.genotype_col,
+        )
+    except Exception as _ht_exc:
+        logger.warning("Could not build HTML tables: %s", _ht_exc)
+        envelope["html_tables"] = []
+
+    # Add publication-quality figures (base64 PNG, 300 DPI)
+    try:
+        pub_figs = build_publication_figures(
+            envelope, trait, genotype_col=design.genotype_col
+        )
+        # Merge into existing plots dict and also expose as named list
+        if not isinstance(envelope["plots"], dict):
+            envelope["plots"] = {}
+        for fig in pub_figs:
+            key = fig["name"].lower().replace(" ", "_").replace("(", "").replace(")", "")
+            envelope["plots"][key] = fig["image_base64"]
+        envelope["publication_figures"] = pub_figs
+    except Exception as _fig_exc:
+        logger.warning("Could not build publication figures: %s", _fig_exc)
+        envelope["publication_figures"] = []
+
     return attach_genetics_template(envelope, trait, alpha)
 
 
@@ -553,6 +618,509 @@ def _json_response(data: Any) -> JSONResponse:
     return JSONResponse(content=numpy_to_python(data))
 
 
+# ── Publication tables for genetics ───────────────────────────────────────────
+
+def _gsig(p) -> str:
+    if p is None:
+        return ""
+    try:
+        p = float(p)
+    except (TypeError, ValueError):
+        return ""
+    return "***" if p < 0.001 else ("**" if p < 0.01 else ("*" if p < 0.05 else "ns"))
+
+
+def _gfmt(v, decimals: int = 4) -> str:
+    import math as _math
+    if v is None:
+        return "—"
+    try:
+        fv = float(v)
+        return "—" if (_math.isnan(fv) or _math.isinf(fv)) else f"{fv:.{decimals}f}"
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def _generate_genetics_backend_interp(envelope: Dict[str, Any], trait: str) -> str:
+    """Concise 2-paragraph plain-language summary for genetics results."""
+    meta  = envelope.get("meta", {})
+    vc    = (envelope.get("tables", {}).get("variance_components") or [{}])[0]
+    means = envelope.get("tables", {}).get("genotype_means", [])
+
+    n_genos = meta.get("n_genotypes", "?")
+    n_locs  = meta.get("n_locations", "?")
+    h2      = vc.get("H2_broad")
+    ga_pct  = vc.get("GA_percent")
+
+    h2_pct = float(h2) * 100 if h2 and float(str(h2)) <= 1 else float(h2 or 0)
+    h2_cat = ("very high" if h2_pct >= 70 else "high" if h2_pct >= 60 else
+               "moderate" if h2_pct >= 30 else "low")
+    ga_cat = ("excellent" if ga_pct and float(ga_pct) > 10 else
+               "good" if ga_pct and float(ga_pct) >= 5 else "low")
+
+    para1 = (
+        f"Variance component analysis of {trait} across {n_locs} location(s) "
+        f"involving {n_genos} genotype(s) revealed {h2_cat} broad-sense heritability "
+        f"(H\u00b2 = {_gfmt(h2_pct, 2)}%), indicating that genetic factors "
+        f"{'strongly' if h2_pct >= 60 else 'moderately'} control the expression of this trait. "
+    )
+    if ga_pct:
+        para1 += (
+            f"Predicted genetic advance under 5% selection intensity was {_gfmt(ga_pct, 2)}% "
+            f"of the population mean, reflecting a {ga_cat} expected response to selection. "
+        )
+
+    para2 = ""
+    if means:
+        best  = means[0]
+        worst = means[-1]
+        gid_b = best.get("Genotype") or best.get("genotype") or best.get(next(iter(best), ""), "—")
+        gid_w = worst.get("Genotype") or worst.get("genotype") or worst.get(next(iter(worst), ""), "—")
+        m_b   = best.get("mean")
+        m_w   = worst.get("mean")
+        para2 = (
+            f"{gid_b} ranked highest for {trait} (mean = {_gfmt(m_b, 2)}), "
+            f"while {gid_w} ranked lowest (mean = {_gfmt(m_w, 2)}). "
+            "High heritability combined with significant genotype differences supports "
+            "the use of direct phenotypic selection in early breeding generations. "
+            f"It is recommended to advance {gid_b} to replicated multi-location trials "
+            "for validation before commercial release."
+        )
+    return para1 + para2
+
+
+def _generate_genetics_academic_interp(
+    envelope: Dict[str, Any], trait: str, design: TrialDesign, alpha: float
+) -> Dict[str, str]:
+    """Dr. Fayeun's 8-section structured academic interpretation for genetics."""
+    meta   = envelope.get("meta", {})
+    tables = envelope.get("tables", {})
+    vc     = (tables.get("variance_components") or [{}])[0]
+    means  = tables.get("genotype_means", [])
+    stab   = tables.get("stability", [])
+    anova  = tables.get("combined_anova", [])
+
+    n_genos = meta.get("n_genotypes", "?")
+    n_locs  = meta.get("n_locations", "?")
+    mode    = meta.get("mode", "multi_environment")
+
+    h2      = vc.get("H2_broad")
+    h2_pct  = float(h2) * 100 if h2 and float(str(h2)) <= 1 else float(h2 or 0)
+    ga      = vc.get("GA")
+    ga_pct  = vc.get("GA_percent")
+    s2g     = vc.get("sigma2_g")
+    s2e     = vc.get("sigma2_e")
+
+    best_geno  = ((means[0].get("Genotype") or means[0].get("genotype", "—")) if means else "—")
+    worst_geno = ((means[-1].get("Genotype") or means[-1].get("genotype", "—")) if means else "—")
+
+    geno_sig = loc_sig = gl_sig = False
+    for rec in anova:
+        src = str(rec.get("source", "")).lower()
+        p   = rec.get("PR(>F)") or rec.get("p_value")
+        if p is None:
+            continue
+        try:
+            pf = float(p)
+        except (TypeError, ValueError):
+            continue
+        if "genotype" in src:
+            geno_sig = pf < alpha
+        elif "location" in src or "environ" in src:
+            loc_sig = pf < alpha
+        elif "×" in src or "x" in src or ("g" in src and "l" in src):
+            gl_sig = pf < alpha
+
+    sec1 = (
+        f"This study employed a Randomized Complete Block Design (RCBD) multi-environment trial "
+        f"({mode}) to evaluate {n_genos} genotype(s) for the trait '{trait}' across {n_locs} "
+        f"location(s). The primary objectives were to: (i) estimate variance components and "
+        f"broad-sense heritability; (ii) assess genotype \u00d7 location (G\u00d7L) interaction "
+        f"effects; and (iii) identify superior, stable genotypes for potential variety release. "
+        f"The multi-environment approach provides a rigorous basis for understanding genotype "
+        f"adaptability and the relative influence of genetic versus environmental factors."
+    )
+
+    sec2 = (
+        f"The combined ANOVA revealed "
+        f"{'highly significant' if geno_sig else 'non-significant'} genotypic variation for "
+        f"{trait} (p {'< 0.001' if geno_sig else '> 0.05'}), indicating that "
+        f"{'substantial genetic diversity exists among the tested genotypes' if geno_sig else 'limited genetic differentiation was observed'}. "
+        f"Location effects were {'significant' if loc_sig else 'non-significant'}, "
+        f"{'reflecting the diverse agro-ecological conditions across sites' if loc_sig else 'suggesting environmental uniformity across sites'}. "
+    )
+    if gl_sig:
+        sec2 += (
+            "The significant G\u00d7L interaction indicates that genotype rankings were "
+            "inconsistent across environments, necessitating site-specific variety recommendations "
+            "and stability analysis to identify broadly adapted genotypes."
+        )
+    else:
+        sec2 += (
+            "The non-significant G\u00d7L interaction supports the identification of broadly "
+            "adapted genotypes that perform consistently across all tested environments."
+        )
+
+    h2_label = ("very high" if h2_pct >= 70 else "high" if h2_pct >= 60 else
+                 "moderate" if h2_pct >= 30 else "low")
+    sec3 = (
+        f"The estimated broad-sense heritability (H\u00b2 = {_gfmt(h2_pct, 2)}%) indicates "
+        f"{h2_label} genetic control over the expression of {trait}. "
+        f"Genetic variance (σ\u00b2g = {_gfmt(s2g, 4)}) "
+        f"{'dominated' if s2g and s2e and float(str(s2g)) > float(str(s2e)) else 'was comparable to'} "
+        f"environmental variance (σ\u00b2e = {_gfmt(s2e, 4)}). "
+    )
+    if ga_pct:
+        ga_flt = float(str(ga_pct))
+        ga_cat = ("excellent (>10% of mean)" if ga_flt > 10 else
+                  "good (5\u201310% of mean)" if ga_flt >= 5 else "low (<5% of mean)")
+        sec3 += (
+            f"The predicted genetic advance under 5% selection intensity was "
+            f"{_gfmt(ga, 4)} units ({_gfmt(ga_pct, 2)}% of the population mean), "
+            f"classified as {ga_cat}. "
+            f"This {'supports effective improvement through direct phenotypic selection' if ga_flt >= 5 else 'suggests marker-assisted or recurrent selection may be necessary to accelerate breeding progress'}."
+        )
+
+    stable_gs = [r.get("Genotype") or r.get("genotype", "") for r in stab
+                 if str(r.get("classification", "")).startswith("stable")] if stab else []
+    sec4 = ""
+    if stab:
+        sec4 = (
+            "Stability analysis was conducted using the Eberhart and Russell (1966) model. "
+            "Genotypes with regression coefficients (bi) close to unity (bi \u2248 1.0) and "
+            "minimal deviation variance (S\u00b2di \u2248 0) were classified as stable. "
+        )
+        sec4 += (
+            f"The following genotype(s) were identified as broadly stable: "
+            f"{', '.join(str(g) for g in stable_gs[:4])}. "
+            "These are recommended for wide-adaptation release."
+            if stable_gs else
+            "No genotypes were classified as broadly stable. "
+            "Location-specific recommendations are advised."
+        )
+    else:
+        sec4 = (
+            "Stability analysis requires data from at least 2 locations. "
+            f"With {n_locs} location(s) in this dataset, "
+            f"{'stability parameters were estimated' if str(n_locs).isdigit() and int(str(n_locs)) >= 2 else 'stability analysis could not be performed'}."
+        )
+
+    sec5 = (
+        f"The {h2_label} heritability observed for {trait} has important implications for the "
+        f"breeding programme. "
+        f"{'High heritability (H\u00b2 \u2265 60%) indicates that a large proportion of phenotypic variation is attributable to genetic differences, making direct phenotypic selection highly effective.' if h2_pct >= 60 else 'Moderate heritability suggests that environmental factors contribute substantially to phenotypic variation, and multi-environment testing is essential before final selection decisions.'} "
+        f"The superior performance of {best_geno} for {trait} may reflect favourable allele "
+        f"combinations at loci controlling the physiological pathways underlying this trait."
+    )
+
+    sec6 = (
+        f"Based on the analysis of {trait}, the following breeding recommendations are proposed:\n"
+        f"1. ADVANCE {best_geno}: Ranked highest — promote to replicated multi-location trials "
+        f"or use as a parent in crossing programmes.\n"
+        f"2. DISCARD {worst_geno}: Lowest performer — remove from the breeding pipeline.\n"
+        f"3. Selection Strategy: Given the {h2_label} heritability, "
+        f"{'direct phenotypic selection in F\u2082\u2013F\u2083 generations is recommended' if h2_pct >= 60 else 'progeny testing across multiple environments before selection is recommended'}.\n"
+        f"4. Multi-environment Validation: Validate across at least 5 locations over 2\u20133 seasons before variety release."
+    )
+
+    sec7 = (
+        f"This study was conducted across {n_locs} location(s), which "
+        f"{'provides a reasonable basis for multi-environment inferences' if str(n_locs).isdigit() and int(str(n_locs)) >= 3 else 'limits generalisability; at least 3\u20135 locations are recommended for variety release'}. "
+        "Future studies should integrate genomic data to enable marker-assisted selection (MAS) "
+        "and genomic selection (GS), which can substantially accelerate genetic gains. "
+        "Economic modelling incorporating input costs and market prices should also be conducted "
+        "before recommending specific varieties to farmers."
+    )
+
+    sec8 = (
+        f"In conclusion, the multi-environment trial demonstrated "
+        f"{'significant' if geno_sig else 'limited'} genetic variation for {trait} among the "
+        f"tested genotypes, with broad-sense heritability of {_gfmt(h2_pct, 2)}%. "
+        f"The genotype {best_geno} consistently performed best and is recommended for advancement. "
+        f"{'The high heritability and satisfactory genetic advance support direct phenotypic selection as an efficient strategy for this trait.' if h2_pct >= 60 and ga_pct and float(str(ga_pct)) >= 5 else 'Marker-assisted or recurrent selection strategies may be required to achieve meaningful genetic gain.'} "
+        "These findings contribute to evidence-based decision-making in plant breeding and "
+        "provide a scientific foundation for variety development aimed at improving food security."
+    )
+
+    return {
+        "Section 1 \u2014 Experimental Overview":              sec1,
+        "Section 2 \u2014 Statistical Results & Model Fit":    sec2,
+        "Section 3 \u2014 Variance Components & Heritability": sec3,
+        "Section 4 \u2014 Stability Analysis":                 sec4,
+        "Section 5 \u2014 Biological & Breeding Implications": sec5,
+        "Section 6 \u2014 Practical Recommendations":          sec6,
+        "Section 7 \u2014 Limitations & Future Work":          sec7,
+        "Section 8 \u2014 Conclusion":                         sec8,
+    }
+
+
+def build_genetics_publication_tables(
+    envelope: Dict[str, Any],
+    trait: str,
+    design: TrialDesign,
+    alpha: float = 0.05,
+) -> Dict[str, Any]:
+    """
+    Build publication-ready tables for a genetics trial envelope.
+
+    Keys returned:
+      report_header               metadata section
+      variance_components_table   σ²g / σ²e / σ²gl / σ²p with % of σ²p  (Table 1)
+      heritability_ga_table       H², GA, GA%, GCV, PCV, ECV             (Table 2)
+      combined_anova_table        Source / df / SS / MS / F / p           (Table 3)
+      genotype_means_table        Rank / Genotype / Mean / Recommendation  (Table 4)
+      stability_table             bi / S²di / ASV / Classification        (Table 5)
+      backend_interpretation      concise 2-paragraph summary
+      academic_interpretation     Dr. Fayeun's 8-section report dict
+    """
+    from datetime import datetime as _dt
+
+    meta   = envelope.get("meta", {})
+    tables = envelope.get("tables", {})
+    now    = _dt.now()
+    pub: Dict[str, Any] = {}
+
+    n_genos = meta.get("n_genotypes", "—")
+    n_locs  = meta.get("n_locations", "—")
+    mode    = meta.get("mode", "multi_environment")
+
+    # ── REPORT HEADER ──────────────────────────────────────────────────
+    pub["report_header"] = {
+        "title": "VivaSense\u2122 \u2014 Plant Breeding Genetics Analysis Report",
+        "generated": now.strftime("%m/%d/%Y, %I:%M:%S %p"),
+        "software": "VivaSense V2.2",
+        "sections": [
+            {"label": "Trait",               "value": trait},
+            {"label": "Design",              "value": f"RCBD Multi-environment ({mode})"},
+            {"label": "Genotype Column",     "value": design.genotype_col},
+            {"label": "Location Column",     "value": design.location_col or "\u2014"},
+            {"label": "Number of Genotypes", "value": str(n_genos)},
+            {"label": "Number of Locations", "value": str(n_locs)},
+            {"label": "Analysis Date",       "value": now.strftime("%m/%d/%Y, %I:%M:%S %p")},
+            {"label": "Analysis ID",         "value": meta.get("analysis_id", "\u2014")},
+            {"label": "Software",            "value": "VivaSense V2.2"},
+        ],
+    }
+
+    # ── TABLE 1: VARIANCE COMPONENTS ──────────────────────────────────
+    vc_recs = tables.get("variance_components", [])
+    vc_row  = vc_recs[0] if vc_recs else {}
+    s2g  = vc_row.get("sigma2_g")
+    s2e  = vc_row.get("sigma2_e")
+    s2gl = vc_row.get("sigma2_gl")
+    s2p  = vc_row.get("sigma2_p")
+    gm   = vc_row.get("grand_mean")
+    gcv  = vc_row.get("GCV")
+    pcv  = vc_row.get("PCV")
+    ecv  = vc_row.get("ECV")
+
+    def _pct_p(v):
+        if v is None or s2p is None or float(str(s2p) or "0") == 0:
+            return "\u2014"
+        return f"{float(str(v)) / float(str(s2p)) * 100:.1f}"
+
+    def _vc_i(comp, v):
+        if v is None:
+            return "\u2014"
+        fv = float(str(v))
+        sp = float(str(s2p)) if s2p else 1
+        if comp == "g":
+            return ("Very High" if fv / sp > 0.7 else "High" if fv / sp > 0.5 else
+                    "Moderate" if fv / sp > 0.3 else "Low")
+        if comp == "e":
+            return "Minimal" if fv < 0.05 else "Low" if fv < 1 else "Moderate" if fv < 5 else "High"
+        if comp == "gl":
+            return "Low" if fv < 0.5 else "Moderate" if fv < 2 else "High"
+        return "\u2014"
+
+    pub["variance_components_table"] = {
+        "title": f"Variance Components Analysis for {trait}",
+        "table_number": "Table 1",
+        "headers": ["Component", "Symbol", "Value", "% of \u03c3\u00b2p", "Interpretation"],
+        "rows": [
+            ["Genetic Variance",             "\u03c3\u00b2g",  _gfmt(s2g, 4),  _pct_p(s2g),  _vc_i("g", s2g)],
+            ["Environmental Variance",       "\u03c3\u00b2e",  _gfmt(s2e, 4),  _pct_p(s2e),  _vc_i("e", s2e)],
+            ["G \u00d7 Location Interaction", "\u03c3\u00b2gl", _gfmt(s2gl, 4), _pct_p(s2gl), _vc_i("gl", s2gl)],
+            ["Phenotypic Variance (Total)",  "\u03c3\u00b2p",  _gfmt(s2p, 4),  "100.0",      "Sum of all components"],
+        ],
+        "grand_mean": {"label": f"Grand Mean (\u03bc) for {trait}", "value": _gfmt(gm, 2)},
+        "cv_section": {
+            "headers": ["Coefficient", "Value", "Description"],
+            "rows": [
+                ["GCV (Genetic CV)",      f"{_gfmt(gcv, 2)}%", "Genetic variation as % of mean"],
+                ["PCV (Phenotypic CV)",   f"{_gfmt(pcv, 2)}%", "Total phenotypic variation as % of mean"],
+                ["ECV (Environmental CV)", f"{_gfmt(ecv, 2)}%", "Environmental variation as % of mean"],
+            ],
+        },
+        "footnotes": [
+            "\u03c3\u00b2g = genetic, \u03c3\u00b2e = environmental, \u03c3\u00b2gl = G\u00d7Location interaction variance.",
+            "\u03c3\u00b2p = phenotypic variance (total observable variation).",
+            "GCV/PCV/ECV = Genotypic/Phenotypic/Environmental Coefficient of Variation.",
+        ],
+    }
+
+    # ── TABLE 2: HERITABILITY & GENETIC ADVANCE ────────────────────────
+    h2     = vc_row.get("H2_broad")
+    h2_pct = vc_row.get("H2_broad_pct") or (float(str(h2)) * 100 if h2 and float(str(h2)) <= 1 else h2)
+    ga     = vc_row.get("GA")
+    ga_pct = vc_row.get("GA_percent")
+    h2_flt = float(str(h2_pct)) if h2_pct else 0
+    ga_flt = float(str(ga_pct)) if ga_pct else 0
+    h2_i   = ("Very High (\u226570%) \u2014 direct selection highly effective" if h2_flt >= 70 else
+               "High (60\u201370%) \u2014 direct selection effective" if h2_flt >= 60 else
+               "Moderate (30\u201360%) \u2014 multi-env. testing recommended" if h2_flt >= 30 else
+               "Low (<30%) \u2014 consider MAS or recurrent selection")
+    ga_i   = ("Excellent (>10%) \u2014 rapid selection response" if ga_flt > 10 else
+               "Good (5\u201310%) \u2014 moderate selection response" if ga_flt >= 5 else
+               "Low (<5%) \u2014 limited response to selection")
+
+    pub["heritability_ga_table"] = {
+        "title": f"Heritability and Genetic Advance Estimates for {trait}",
+        "table_number": "Table 2",
+        "headers": ["Parameter", "Symbol", "Value", "Unit", "Formula", "Interpretation"],
+        "rows": [
+            ["Broad-sense Heritability",    "H\u00b2",   f"{_gfmt(h2_flt, 2)}%", "%",
+             "\u03c3\u00b2g / \u03c3\u00b2p \u00d7 100",  h2_i],
+            ["Genetic Advance (5% sel.)",   "GA",    _gfmt(ga, 4),   "trait units",
+             "k \u00d7 \u221a(\u03c3\u00b2p \u00d7 H\u00b2)",  "Predicted gain per selection cycle"],
+            ["Genetic Advance % of Mean",   "GA%",   f"{_gfmt(ga_flt, 2)}%", "%",
+             "(GA / Grand Mean) \u00d7 100",          ga_i],
+            ["Selection Intensity (k)",     "k",     "2.06",         "\u2014",
+             "At 5% selection intensity",             "Standard tabulated constant"],
+        ],
+        "interpretation_scale": {
+            "heritability": [
+                "0\u201330%:   Low \u2014 environmental factors dominate",
+                "30\u201360%:  Moderate \u2014 multi-environment testing needed",
+                "60\u2013100%: High \u2014 direct phenotypic selection effective",
+            ],
+            "genetic_advance": [
+                "< 5%:  Low \u2014 limited selection progress expected",
+                "5\u201310%: Good \u2014 reasonable response to selection",
+                "> 10%: Excellent \u2014 rapid genetic progress possible",
+            ],
+        },
+        "footnotes": [
+            "H\u00b2 = broad-sense heritability (additive + dominance + epistatic variance).",
+            "GA = k \u00d7 \u221a\u03c3\u00b2p \u00d7 H\u00b2  (k = 2.06 at 5% selection intensity).",
+            "GA% = (GA / Grand Mean) \u00d7 100.",
+        ],
+    }
+
+    # ── TABLE 3: COMBINED ANOVA ────────────────────────────────────────
+    anova_recs = tables.get("combined_anova", [])
+    anova_rows: List[List[str]] = []
+    ss_tot = df_tot = 0.0
+    for rec in anova_recs:
+        src = rec.get("source", "?")
+        df_ = rec.get("df")
+        ss  = rec.get("SS") or rec.get("sum_sq")
+        ms  = rec.get("MS") or rec.get("mean_sq")
+        f   = rec.get("F") or rec.get("F_value")
+        p   = rec.get("PR(>F)") or rec.get("p_value")
+        disp = rec.get("PR(>F)_display", "")
+        if not disp:
+            disp = "< 0.001" if (p is not None and float(str(p)) < 0.001) else _gfmt(p, 4)
+        if ms is None and ss is not None and df_ and float(str(df_)) > 0:
+            ms = float(str(ss)) / float(str(df_))
+        if df_:  df_tot += float(str(df_))
+        if ss:   ss_tot += float(str(ss))
+        anova_rows.append([
+            src,
+            str(int(float(str(df_)))) if df_ is not None else "\u2014",
+            _gfmt(ss, 4), _gfmt(ms, 4),
+            _gfmt(f, 3) if f else "\u2014",
+            disp, _gsig(p),
+        ])
+    if anova_rows:
+        anova_rows.append(["Total", str(int(df_tot)), _gfmt(ss_tot, 4), "\u2014", "\u2014", "\u2014", ""])
+    pub["combined_anova_table"] = {
+        "title": f"Combined ANOVA for {trait} Across {n_locs} Location(s)",
+        "table_number": "Table 3",
+        "headers": ["Source of Variation", "df", "Sum of Squares (SS)",
+                    "Mean Square (MS)", "F-value", "p-value", "Sig."],
+        "rows": anova_rows,
+        "footnotes": [
+            "G\u00d7L = Genotype \u00d7 Location interaction.",
+            "Significance: *** p < 0.001, ** p < 0.01, * p < 0.05, ns = not significant.",
+            "Type II ANOVA.  Block effects included.",
+        ],
+    }
+
+    # ── TABLE 4: GENOTYPE MEANS & RECOMMENDATIONS ──────────────────────
+    means_recs = tables.get("genotype_means", [])
+    g_col      = design.genotype_col
+    n_means    = len(means_recs)
+    means_rows: List[List[str]] = []
+    for rank, rec in enumerate(means_recs, 1):
+        gid  = rec.get(g_col) or rec.get("genotype") or rec.get("Genotype", "\u2014")
+        mean = rec.get("mean") or rec.get("Mean")
+        rec_text = (
+            "SELECT \u2014 Best performer; advance to next generation" if rank == 1 else
+            "ADVANCE \u2014 Competitive; conduct further evaluation" if rank == 2 else
+            "DISCARD \u2014 Lowest performer; remove from programme" if rank == n_means else
+            "EVALUATE \u2014 Intermediate; retain for specific environments"
+        )
+        means_rows.append([str(rank), str(gid), _gfmt(mean, 2), "\u2014", "\u2014", rec_text])
+    pub["genotype_means_table"] = {
+        "title": f"Mean {trait} by Genotype and Breeding Recommendations",
+        "table_number": "Table 4",
+        "headers": ["Rank", "Genotype", "Mean", "SD", "SE", "Recommendation"],
+        "rows": means_rows,
+        "footnotes": [
+            "Ranked from highest to lowest mean performance.",
+            "SELECT: Advance to replicated trials or use as crossing parent.",
+            "ADVANCE: Promising \u2014 continue evaluation across environments.",
+            "EVALUATE: Intermediate \u2014 retain for niche environments.",
+            "DISCARD: Lowest performance \u2014 remove to conserve resources.",
+        ],
+    }
+
+    # ── TABLE 5: STABILITY (Eberhart & Russell) ────────────────────────
+    stab_recs = tables.get("stability", [])
+    stab_rows: List[List[str]] = []
+    for rec in stab_recs:
+        gid  = rec.get("Genotype") or rec.get("genotype", "\u2014")
+        mean = rec.get("grand_mean") or rec.get("mean")
+        bi   = rec.get("bi") or rec.get("regression_coefficient")
+        s2di = rec.get("S2di") or rec.get("s2di") or rec.get("stability_variance")
+        asv  = rec.get("ASV") or rec.get("asv")
+        cls  = rec.get("classification", "\u2014")
+        bi_f = float(str(bi)) if bi else None
+        bi_note = ("Stable (bi \u2248 1)" if bi_f and abs(bi_f - 1.0) < 0.15 else
+                   "Responsive to good envs" if bi_f and bi_f > 1 else
+                   "Stable in poor envs" if bi_f else "\u2014")
+        stab_rows.append([str(gid), _gfmt(mean, 2), _gfmt(bi, 3), _gfmt(s2di, 4),
+                          _gfmt(asv, 3), str(cls), bi_note])
+    pub["stability_table"] = {
+        "title": f"Stability Parameters (Eberhart & Russell, 1966) for {trait}",
+        "table_number": "Table 5",
+        "headers": ["Genotype", "Mean", "bi", "S\u00b2di", "ASV", "Classification", "bi Interpretation"],
+        "rows": stab_rows,
+        "interpretation_guide": [
+            "bi \u2248 1.0: Average stability \u2014 suitable for all environments.",
+            "bi > 1.0: Responsive \u2014 performs best in favourable/high-input environments.",
+            "bi < 1.0: Stable in poor environments \u2014 suited to marginal conditions.",
+            "S\u00b2di \u2248 0: Minimal unpredictable variation (stable).",
+            "Lower ASV = more stable across environments.",
+        ],
+        "footnotes": [
+            "Eberhart & Russell (1966): \u0232\u1d62\u2c7c = \u03bc\u1d62 + b\u1d62(I\u2c7c) + \u03b4\u1d62\u2c7c",
+            "bi = regression coefficient of genotype mean on environment index.",
+            "S\u00b2di = deviation mean square from regression.",
+            "ASV = AMMI Stability Value (Purchase et al., 2000).",
+        ],
+    }
+
+    # ── INTERPRETATIONS ────────────────────────────────────────────────
+    pub["backend_interpretation"] = _generate_genetics_backend_interp(envelope, trait)
+    pub["academic_interpretation"] = _generate_genetics_academic_interp(
+        envelope, trait, design, alpha
+    )
+
+    return pub
+
+
 # ── Health ────────────────────────────────────────────────────────────────────
 
 @genetics_router.get("/health")
@@ -601,6 +1169,16 @@ async def analyze_genetics_trial(
         2,
         description="Number of AMMI axes to retain (default 2)",
     ),
+    primary_trait_col: str = Form(
+        "",
+        description="Primary trait to feature in the main envelope; blank = first detected",
+    ),
+    traits: str = Form(
+        "",
+        description="Alias for trait_cols — accepts comma-separated string, "
+                    "JSON array '[\"T1\",\"T2\"]', or repeated form fields. "
+                    "Takes precedence over trait_cols when non-empty.",
+    ),
 ):
     """
     Upload a CSV or Excel breeding trial file and run the full genetics pipeline.
@@ -620,7 +1198,7 @@ async def analyze_genetics_trial(
         genotype_col=genotype_col,
         location_col=location_col,
         rep_col=rep_col,
-        trait_cols_str=trait_cols,
+        trait_cols_str=_resolve_trait_cols(trait_cols, traits),
         season_col=season_col,
         design_type=design_type,
     )
@@ -641,7 +1219,10 @@ async def analyze_genetics_trial(
 
     # Determine primary trait for single-trait envelope
     trait_list = raw.get("metadata", {}).get("trait_cols", [])
-    primary_trait = trait_list[0] if trait_list else "trait"
+    primary_trait = (
+        primary_trait_col if primary_trait_col in trait_list
+        else (trait_list[0] if trait_list else "trait")
+    )
 
     envelope = _build_trial_envelope(raw, primary_trait, design, alpha)
 
@@ -669,6 +1250,8 @@ async def genetics_variance_components(
     rep_col: str = Form("Rep"),
     trait_cols: str = Form(""),
     alpha: float = Form(0.05),
+    primary_trait_col: str = Form("", description="Primary trait to feature; blank = first detected"),
+    traits: str = Form("", description="Alias for trait_cols (comma-separated, JSON array, or repeated fields)"),
 ):
     """
     Variance components only (σ²g, σ²e, σ²gl, H², GA, GCV, PCV).
@@ -677,7 +1260,7 @@ async def genetics_variance_components(
     df = await _load_file(file)
     require_cols(df, [genotype_col])
 
-    design = _build_design(genotype_col, location_col, rep_col, trait_cols, "", "RCBD")
+    design = _build_design(genotype_col, location_col, rep_col, _resolve_trait_cols(trait_cols, traits), "", "RCBD")
     cfg    = _build_config(alpha, 2)
 
     pipeline = GeneticsPipeline(config=cfg, design=design)
@@ -687,21 +1270,37 @@ async def genetics_variance_components(
         raise HTTPException(status_code=400, detail=raw.get("errors", "Analysis failed."))
 
     trait_list = raw.get("metadata", {}).get("trait_cols", [])
-    primary = trait_list[0] if trait_list else "trait"
+    primary = (
+        primary_trait_col if primary_trait_col in trait_list
+        else (trait_list[0] if trait_list else "trait")
+    )
     envelope = _build_trial_envelope(raw, primary, design, alpha)
 
     # Slim down to VC-relevant keys
-    slim = {
-        "meta":    envelope["meta"],
-        "tables": {
-            "variance_components": envelope["tables"]["variance_components"],
-            "combined_anova":      envelope["tables"]["combined_anova"],
-            "assumption_guidance": envelope["tables"]["assumption_guidance"],
-        },
-        "interpretation":  envelope["interpretation"],
-        "strict_template": envelope["strict_template"],
-        "intelligence":    envelope["intelligence"],
-    }
+    def _vc_slim(env: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "meta":    env["meta"],
+            "tables": {
+                "variance_components": env["tables"]["variance_components"],
+                "combined_anova":      env["tables"]["combined_anova"],
+                "assumption_guidance": env["tables"]["assumption_guidance"],
+            },
+            "interpretation":  env["interpretation"],
+            "strict_template": env["strict_template"],
+            "intelligence":    env["intelligence"],
+        }
+
+    slim = _vc_slim(envelope)
+
+    if len(trait_list) > 1:
+        per_trait: Dict[str, Any] = {}
+        for t in trait_list:
+            try:
+                per_trait[t] = _vc_slim(_build_trial_envelope(raw, t, design, alpha))
+            except Exception as exc:
+                logger.warning("Could not build VC envelope for trait %s: %s", t, exc)
+        slim["per_trait"] = per_trait
+
     return _json_response(slim)
 
 
@@ -715,6 +1314,8 @@ async def genetics_stability(
     rep_col: str = Form("Rep"),
     trait_cols: str = Form(""),
     alpha: float = Form(0.05),
+    primary_trait_col: str = Form("", description="Primary trait to feature; blank = first detected"),
+    traits: str = Form("", description="Alias for trait_cols (comma-separated, JSON array, or repeated fields)"),
 ):
     """
     Stability parameters only (Eberhart-Russell bi, S²di, ASV).
@@ -723,7 +1324,7 @@ async def genetics_stability(
     df = await _load_file(file)
     require_cols(df, [genotype_col, location_col])
 
-    design = _build_design(genotype_col, location_col, rep_col, trait_cols, "", "RCBD")
+    design = _build_design(genotype_col, location_col, rep_col, _resolve_trait_cols(trait_cols, traits), "", "RCBD")
     pipeline = GeneticsPipeline(config=_build_config(alpha, 2), design=design)
     raw = pipeline.run_trial_analysis(df, filename=file.filename or "upload")
 
@@ -731,21 +1332,37 @@ async def genetics_stability(
         raise HTTPException(status_code=400, detail=raw.get("errors", "Analysis failed."))
 
     trait_list = raw.get("metadata", {}).get("trait_cols", [])
-    primary = trait_list[0] if trait_list else "trait"
+    primary = (
+        primary_trait_col if primary_trait_col in trait_list
+        else (trait_list[0] if trait_list else "trait")
+    )
     envelope = _build_trial_envelope(raw, primary, design, alpha)
 
-    slim = {
-        "meta":    envelope["meta"],
-        "tables": {
-            "stability": envelope["tables"]["stability"],
-            "genotype_means": envelope["tables"]["genotype_means"],
-        },
-        "plots":           {k: v for k, v in envelope["plots"].items()
-                            if any(x in k for x in ["stability", "bi"])},
-        "interpretation":  envelope["interpretation"],
-        "strict_template": envelope["strict_template"],
-        "intelligence":    envelope["intelligence"],
-    }
+    def _stab_slim(env: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "meta":    env["meta"],
+            "tables": {
+                "stability":      env["tables"]["stability"],
+                "genotype_means": env["tables"]["genotype_means"],
+            },
+            "plots":           {k: v for k, v in env["plots"].items()
+                                if any(x in k for x in ["stability", "bi"])},
+            "interpretation":  env["interpretation"],
+            "strict_template": env["strict_template"],
+            "intelligence":    env["intelligence"],
+        }
+
+    slim = _stab_slim(envelope)
+
+    if len(trait_list) > 1:
+        per_trait: Dict[str, Any] = {}
+        for t in trait_list:
+            try:
+                per_trait[t] = _stab_slim(_build_trial_envelope(raw, t, design, alpha))
+            except Exception as exc:
+                logger.warning("Could not build stability envelope for trait %s: %s", t, exc)
+        slim["per_trait"] = per_trait
+
     return _json_response(slim)
 
 
@@ -760,6 +1377,8 @@ async def genetics_ammi(
     trait_cols: str = Form(""),
     n_ammi_axes: int = Form(2),
     alpha: float = Form(0.05),
+    primary_trait_col: str = Form("", description="Primary trait to feature; blank = first detected"),
+    traits: str = Form("", description="Alias for trait_cols (comma-separated, JSON array, or repeated fields)"),
 ):
     """
     AMMI model (ANOVA partition + IPCA scores + biplot data).
@@ -768,7 +1387,7 @@ async def genetics_ammi(
     df = await _load_file(file)
     require_cols(df, [genotype_col, location_col])
 
-    design = _build_design(genotype_col, location_col, rep_col, trait_cols, "", "RCBD")
+    design = _build_design(genotype_col, location_col, rep_col, _resolve_trait_cols(trait_cols, traits), "", "RCBD")
     pipeline = GeneticsPipeline(config=_build_config(alpha, n_ammi_axes), design=design)
     raw = pipeline.run_trial_analysis(df, filename=file.filename or "upload")
 
@@ -776,21 +1395,37 @@ async def genetics_ammi(
         raise HTTPException(status_code=400, detail=raw.get("errors", "Analysis failed."))
 
     trait_list = raw.get("metadata", {}).get("trait_cols", [])
-    primary = trait_list[0] if trait_list else "trait"
+    primary = (
+        primary_trait_col if primary_trait_col in trait_list
+        else (trait_list[0] if trait_list else "trait")
+    )
     envelope = _build_trial_envelope(raw, primary, design, alpha)
 
-    slim = {
-        "meta":    envelope["meta"],
-        "tables": {
-            "ammi_ipca":              envelope["tables"].get("ammi_ipca", []),
-            "ammi_explained_variance": envelope["tables"].get("ammi_explained_variance", []),
-            "combined_anova":         envelope["tables"]["combined_anova"],
-        },
-        "plots":           {k: v for k, v in envelope["plots"].items() if "ammi" in k},
-        "interpretation":  envelope["interpretation"],
-        "strict_template": envelope["strict_template"],
-        "intelligence":    envelope["intelligence"],
-    }
+    def _ammi_slim(env: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "meta":    env["meta"],
+            "tables": {
+                "ammi_ipca":               env["tables"].get("ammi_ipca", []),
+                "ammi_explained_variance": env["tables"].get("ammi_explained_variance", []),
+                "combined_anova":          env["tables"]["combined_anova"],
+            },
+            "plots":           {k: v for k, v in env["plots"].items() if "ammi" in k},
+            "interpretation":  env["interpretation"],
+            "strict_template": env["strict_template"],
+            "intelligence":    env["intelligence"],
+        }
+
+    slim = _ammi_slim(envelope)
+
+    if len(trait_list) > 1:
+        per_trait: Dict[str, Any] = {}
+        for t in trait_list:
+            try:
+                per_trait[t] = _ammi_slim(_build_trial_envelope(raw, t, design, alpha))
+            except Exception as exc:
+                logger.warning("Could not build AMMI envelope for trait %s: %s", t, exc)
+        slim["per_trait"] = per_trait
+
     return _json_response(slim)
 
 
@@ -804,6 +1439,8 @@ async def genetics_gge(
     rep_col: str = Form("Rep"),
     trait_cols: str = Form(""),
     alpha: float = Form(0.05),
+    primary_trait_col: str = Form("", description="Primary trait to feature; blank = first detected"),
+    traits: str = Form("", description="Alias for trait_cols (comma-separated, JSON array, or repeated fields)"),
 ):
     """
     GGE biplot (which-won-where, ideal genotype, mega-environments).
@@ -812,7 +1449,7 @@ async def genetics_gge(
     df = await _load_file(file)
     require_cols(df, [genotype_col, location_col])
 
-    design = _build_design(genotype_col, location_col, rep_col, trait_cols, "", "RCBD")
+    design = _build_design(genotype_col, location_col, rep_col, _resolve_trait_cols(trait_cols, traits), "", "RCBD")
     pipeline = GeneticsPipeline(config=_build_config(alpha, 2), design=design)
     raw = pipeline.run_trial_analysis(df, filename=file.filename or "upload")
 
@@ -820,20 +1457,36 @@ async def genetics_gge(
         raise HTTPException(status_code=400, detail=raw.get("errors", "Analysis failed."))
 
     trait_list = raw.get("metadata", {}).get("trait_cols", [])
-    primary = trait_list[0] if trait_list else "trait"
+    primary = (
+        primary_trait_col if primary_trait_col in trait_list
+        else (trait_list[0] if trait_list else "trait")
+    )
     envelope = _build_trial_envelope(raw, primary, design, alpha)
 
-    slim = {
-        "meta":    envelope["meta"],
-        "tables": {
-            "gge_which_won_where": envelope["tables"].get("gge_which_won_where", []),
-            "genotype_means":      envelope["tables"]["genotype_means"],
-        },
-        "plots":           {k: v for k, v in envelope["plots"].items() if "gge" in k},
-        "interpretation":  envelope["interpretation"],
-        "strict_template": envelope["strict_template"],
-        "intelligence":    envelope["intelligence"],
-    }
+    def _gge_slim(env: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "meta":    env["meta"],
+            "tables": {
+                "gge_which_won_where": env["tables"].get("gge_which_won_where", []),
+                "genotype_means":      env["tables"]["genotype_means"],
+            },
+            "plots":           {k: v for k, v in env["plots"].items() if "gge" in k},
+            "interpretation":  env["interpretation"],
+            "strict_template": env["strict_template"],
+            "intelligence":    env["intelligence"],
+        }
+
+    slim = _gge_slim(envelope)
+
+    if len(trait_list) > 1:
+        per_trait: Dict[str, Any] = {}
+        for t in trait_list:
+            try:
+                per_trait[t] = _gge_slim(_build_trial_envelope(raw, t, design, alpha))
+            except Exception as exc:
+                logger.warning("Could not build GGE envelope for trait %s: %s", t, exc)
+        slim["per_trait"] = per_trait
+
     return _json_response(slim)
 
 
@@ -847,6 +1500,8 @@ async def genetics_correlations(
     rep_col: str = Form("Rep"),
     trait_cols: str = Form(""),
     alpha: float = Form(0.05),
+    primary_trait_col: str = Form("", description="Primary trait to feature; blank = first detected"),
+    traits: str = Form("", description="Alias for trait_cols (comma-separated, JSON array, or repeated fields)"),
 ):
     """
     Phenotypic + genotypic correlations, path analysis, Smith-Hazel selection index.
@@ -855,7 +1510,7 @@ async def genetics_correlations(
     df = await _load_file(file)
     require_cols(df, [genotype_col])
 
-    design = _build_design(genotype_col, location_col, rep_col, trait_cols, "", "RCBD")
+    design = _build_design(genotype_col, location_col, rep_col, _resolve_trait_cols(trait_cols, traits), "", "RCBD")
     pipeline = GeneticsPipeline(config=_build_config(alpha, 2), design=design)
     raw = pipeline.run_trial_analysis(df, filename=file.filename or "upload")
 
@@ -863,14 +1518,19 @@ async def genetics_correlations(
         raise HTTPException(status_code=400, detail=raw.get("errors", "Analysis failed."))
 
     trait_list = raw.get("metadata", {}).get("trait_cols", [])
-    primary = trait_list[0] if trait_list else "trait"
+    primary = (
+        primary_trait_col if primary_trait_col in trait_list
+        else (trait_list[0] if trait_list else "trait")
+    )
     envelope = _build_trial_envelope(raw, primary, design, alpha)
 
+    # Correlations/path/selection index are inherently multi-trait — always
+    # embed full per-trait envelopes so the frontend can tab through traits.
     slim = {
         "meta":    envelope["meta"],
         "tables": {
-            "correlations":   envelope["tables"].get("correlations", {}),
-            "path_analysis":  envelope["tables"].get("path_analysis", {}),
+            "correlations":    envelope["tables"].get("correlations", {}),
+            "path_analysis":   envelope["tables"].get("path_analysis", {}),
             "selection_index": envelope["tables"].get("selection_index", {}),
         },
         "plots":           {k: v for k, v in envelope["plots"].items()
@@ -879,6 +1539,26 @@ async def genetics_correlations(
         "strict_template": envelope["strict_template"],
         "intelligence":    envelope["intelligence"],
     }
+
+    if len(trait_list) > 1:
+        per_trait: Dict[str, Any] = {}
+        for t in trait_list:
+            try:
+                t_env = _build_trial_envelope(raw, t, design, alpha)
+                per_trait[t] = {
+                    "meta":           t_env["meta"],
+                    "tables": {
+                        "correlations":    t_env["tables"].get("correlations", {}),
+                        "path_analysis":   t_env["tables"].get("path_analysis", {}),
+                        "selection_index": t_env["tables"].get("selection_index", {}),
+                    },
+                    "interpretation": t_env["interpretation"],
+                    "intelligence":   t_env["intelligence"],
+                }
+            except Exception as exc:
+                logger.warning("Could not build correlations envelope for trait %s: %s", t, exc)
+        slim["per_trait"] = per_trait
+
     return _json_response(slim)
 
 
@@ -892,12 +1572,14 @@ async def genetics_multivariate(
     rep_col: str = Form("Rep"),
     trait_cols: str = Form(""),
     alpha: float = Form(0.05),
+    primary_trait_col: str = Form("", description="Primary trait to feature; blank = first detected"),
+    traits: str = Form("", description="Alias for trait_cols (comma-separated, JSON array, or repeated fields)"),
 ):
     """PCA + hierarchical clustering (Ward) + k-means on genotype means."""
     df = await _load_file(file)
     require_cols(df, [genotype_col])
 
-    design = _build_design(genotype_col, location_col, rep_col, trait_cols, "", "RCBD")
+    design = _build_design(genotype_col, location_col, rep_col, _resolve_trait_cols(trait_cols, traits), "", "RCBD")
     pipeline = GeneticsPipeline(config=_build_config(alpha, 2), design=design)
     raw = pipeline.run_trial_analysis(df, filename=file.filename or "upload")
 
@@ -905,20 +1587,36 @@ async def genetics_multivariate(
         raise HTTPException(status_code=400, detail=raw.get("errors", "Analysis failed."))
 
     trait_list = raw.get("metadata", {}).get("trait_cols", [])
-    primary = trait_list[0] if trait_list else "trait"
+    primary = (
+        primary_trait_col if primary_trait_col in trait_list
+        else (trait_list[0] if trait_list else "trait")
+    )
     envelope = _build_trial_envelope(raw, primary, design, alpha)
 
-    slim = {
-        "meta":    envelope["meta"],
-        "tables": {
-            "multivariate": envelope["tables"].get("multivariate", {}),
-        },
-        "plots":           {k: v for k, v in envelope["plots"].items()
-                            if any(x in k for x in ["pca", "scree", "dendrogram", "cluster"])},
-        "interpretation":  envelope["interpretation"],
-        "strict_template": envelope["strict_template"],
-        "intelligence":    envelope["intelligence"],
-    }
+    def _mv_slim(env: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "meta":    env["meta"],
+            "tables": {
+                "multivariate": env["tables"].get("multivariate", {}),
+            },
+            "plots":           {k: v for k, v in env["plots"].items()
+                                if any(x in k for x in ["pca", "scree", "dendrogram", "cluster"])},
+            "interpretation":  env["interpretation"],
+            "strict_template": env["strict_template"],
+            "intelligence":    env["intelligence"],
+        }
+
+    slim = _mv_slim(envelope)
+
+    if len(trait_list) > 1:
+        per_trait: Dict[str, Any] = {}
+        for t in trait_list:
+            try:
+                per_trait[t] = _mv_slim(_build_trial_envelope(raw, t, design, alpha))
+            except Exception as exc:
+                logger.warning("Could not build multivariate envelope for trait %s: %s", t, exc)
+        slim["per_trait"] = per_trait
+
     return _json_response(slim)
 
 

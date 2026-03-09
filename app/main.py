@@ -22,6 +22,7 @@ from dataclasses import dataclass, asdict
 from datetime import datetime
 import uuid
 import os
+import math
 
 # FastAPI imports
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
@@ -98,6 +99,450 @@ class AnalysisResult:
     interpretation: str
     timestamp: str
     analysis_id: str
+
+# =========================
+# PUBLICATION INTERPRETATION HELPERS
+# =========================
+
+def _pub_sig(p) -> str:
+    """Return significance stars for a p-value."""
+    if p is None:
+        return ""
+    try:
+        p = float(p)
+    except (TypeError, ValueError):
+        return ""
+    return "***" if p < 0.001 else ("**" if p < 0.01 else ("*" if p < 0.05 else "ns"))
+
+
+def _pub_fmt(v, decimals: int = 4) -> str:
+    """Format a value to `decimals` decimal places; return '—' for None/NaN/Inf."""
+    if v is None:
+        return "—"
+    try:
+        fv = float(v)
+        if math.isnan(fv) or math.isinf(fv):
+            return "—"
+        return f"{fv:.{decimals}f}"
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def _pub_fmt_large(v, decimals: int = 2) -> str:
+    """Format with thousands separator (e.g. 4,360.00)."""
+    if v is None:
+        return "—"
+    try:
+        fv = float(v)
+        if math.isnan(fv) or math.isinf(fv):
+            return "—"
+        return f"{fv:,.{decimals}f}"
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def _generate_backend_interpretation(result: Dict, response: str, pred: str,
+                                     f_notation: str, alpha: float) -> str:
+    """
+    Generate a concise 2-paragraph backend interpretation of ANOVA results.
+    Covers the main finding, top/bottom performers, and a practical implication.
+    """
+    anova = result.get("anova", {})
+    means_dict = result.get("means", {})
+    letters_dict = result.get("letters", {})
+    r2 = result.get("r_squared")
+    f_val = result.get("f_value")
+    f_p = result.get("f_pvalue")
+
+    # Significance of main effect
+    pred_p = None
+    if pred and pred in anova and isinstance(anova[pred], dict):
+        pred_p = anova[pred].get("PR(>F)")
+
+    # Top/bottom performers
+    sorted_means = []
+    if pred and pred in means_dict:
+        sorted_means = sorted(means_dict[pred].items(), key=lambda x: float(x[1]), reverse=True)
+
+    sig_str = "highly significant" if (pred_p is not None and float(pred_p) < 0.001) else \
+              "significant" if (pred_p is not None and float(pred_p) < 0.05) else "not significant"
+    p_str = "< 0.001" if (pred_p is not None and float(pred_p) < 0.001) else \
+            (_pub_fmt(pred_p, 4) if pred_p is not None else "—")
+
+    f_str = f"{f_notation} = {_pub_fmt(f_val, 2)}" if f_val else ""
+    r2_str = f"{float(r2) * 100:.1f}%" if r2 else "—"
+
+    para1 = (
+        f"An analysis of variance revealed {sig_str} differences in {response} "
+        f"among the tested treatments ({f_str}, p {('= ' + p_str) if not p_str.startswith('<') else p_str}). "
+    )
+    if r2:
+        para1 += (
+            f"The model explained {r2_str} of the total variation in {response}, "
+            "indicating that the experimental factors accounted for the majority of observed differences. "
+        )
+
+    para2 = ""
+    if sorted_means:
+        best = sorted_means[0]
+        worst = sorted_means[-1]
+        diff = float(best[1]) - float(worst[1])
+        pct = diff / float(worst[1]) * 100 if float(worst[1]) != 0 else 0
+        best_letter = letters_dict.get(pred, {}).get(str(best[0]), "")
+        para2 = (
+            f"{best[0]} produced the highest mean {response} at {_pub_fmt_large(best[1], 2)}"
+            f"{(' (' + best_letter + ')') if best_letter else ''}, "
+            f"which was {_pub_fmt_large(diff, 2)} ({pct:.1f}%) higher than the lowest-performing "
+            f"treatment {worst[0]} ({_pub_fmt_large(worst[1], 2)}). "
+        )
+        if len(sorted_means) > 2:
+            para2 += (
+                f"These results suggest that {best[0]} is the most suitable treatment under the "
+                "trial conditions, and should be prioritized for further evaluation or adoption. "
+                "Breeders and agronomists are advised to validate these findings across multiple "
+                "environments before making broad recommendations."
+            )
+
+    return para1 + para2
+
+
+def _generate_academic_interpretation(result: Dict, response: str, pred: str,
+                                      f_notation: str, alpha: float,
+                                      analysis_type: str, n_total: int) -> Dict[str, str]:
+    """
+    Generate Dr. Fayeun's structured 8-section academic interpretation.
+    Returns a dict keyed by section name → paragraph text.
+    """
+    anova = result.get("anova", {})
+    means_dict = result.get("means", {})
+    letters_dict = result.get("letters", {})
+    effect_sizes = result.get("effect_sizes", {})
+    assumptions = result.get("assumptions", {})
+    r2 = result.get("r_squared")
+    adj_r2 = result.get("adj_r_squared")
+    f_val = result.get("f_value")
+    f_p = result.get("f_pvalue")
+    overall_stats = result.get("descriptive_stats", {}).get("overall", {})
+
+    pred_p = None
+    if pred and pred in anova and isinstance(anova[pred], dict):
+        pred_p = anova[pred].get("PR(>F)")
+
+    sorted_means = []
+    if pred and pred in means_dict:
+        sorted_means = sorted(means_dict[pred].items(), key=lambda x: float(x[1]), reverse=True)
+
+    main_es = (effect_sizes.get(pred) or
+               next((v for k, v in effect_sizes.items() if k != "Residual"), None))
+
+    sig_str = "highly significant" if (pred_p is not None and float(pred_p) < 0.001) else \
+              "significant" if (pred_p is not None and float(pred_p) < 0.05) else "not significant"
+    p_str = "< 0.001" if (pred_p is not None and float(pred_p) < 0.001) else _pub_fmt(pred_p, 4)
+
+    # -- Section 1: Experimental Overview
+    n_treatments = len(sorted_means)
+    sec1 = (
+        f"This study employed a {analysis_type} to evaluate the performance of "
+        f"{n_treatments} treatment level{'s' if n_treatments != 1 else ''} "
+        f"for the trait {response}, with a total of {n_total} observations. "
+        f"The primary objective was to determine whether statistically significant differences "
+        f"existed among the treatments and to identify the best-performing treatment(s) for "
+        f"practical application. The experimental design provides an appropriate framework "
+        f"for controlling extraneous variation and ensuring valid statistical inferences."
+    )
+
+    # -- Section 2: Statistical Results & Model Fit
+    r2_pct = float(r2) * 100 if r2 else 0
+    adj_r2_pct = float(adj_r2) * 100 if adj_r2 else 0
+    sec2 = (
+        f"The overall model was statistically {sig_str} "
+        f"({f_notation} = {_pub_fmt(f_val, 2)}, p {('= ' + p_str) if not p_str.startswith('<') else p_str}), "
+        f"confirming that treatment level differences in {response} are unlikely to be due to chance. "
+        f"The coefficient of determination (R² = {_pub_fmt(r2, 4)}) indicates that {r2_pct:.1f}% "
+        f"of the total variation in {response} was explained by the fitted model, "
+        f"with an adjusted R² of {_pub_fmt(adj_r2, 4)} ({adj_r2_pct:.1f}%) after penalising "
+        f"for model complexity. "
+    )
+    if main_es and isinstance(main_es, dict):
+        eta = float(main_es.get("eta_squared", 0) or 0)
+        ome = float(main_es.get("omega_squared", 0) or 0)
+        interp = main_es.get("interpretation", "large")
+        sec2 += (
+            f"The eta-squared effect size (η² = {_pub_fmt(eta, 4)}) and the unbiased "
+            f"omega-squared estimate (ω² = {_pub_fmt(ome, 4)}) both indicate a {interp} "
+            f"practical effect, underscoring the agronomic importance of the observed differences."
+        )
+
+    # -- Section 3: Post-hoc Analysis
+    if sorted_means:
+        top3 = sorted_means[:3]
+        top3_str = "; ".join(
+            f"{t} ({_pub_fmt_large(m, 2)}{(' ' + letters_dict.get(pred, {}).get(str(t), '')) if letters_dict.get(pred, {}).get(str(t)) else ''})"
+            for t, m in top3
+        )
+        bot = sorted_means[-1]
+        sec3 = (
+            f"Tukey's Honest Significant Difference (HSD) post-hoc test was applied to identify "
+            f"pairwise differences among treatments. The three highest-performing treatments were: "
+            f"{top3_str}. The lowest performer was {bot[0]} ({_pub_fmt_large(bot[1], 2)}). "
+            f"Treatments sharing the same letter grouping were not significantly different "
+            f"from each other at the α = {alpha} significance level. "
+            f"The compact letter display facilitates rapid identification of statistically "
+            f"homogeneous groups, which is essential for practical selection decisions."
+        )
+    else:
+        sec3 = "Post-hoc comparisons were not applicable as no significant treatment effects were detected."
+
+    # -- Section 4: Assumption Testing
+    norm_rec = assumptions.get("normality", {})
+    hom_rec = assumptions.get("homogeneity", {})
+    norm_pass = norm_rec.get("passed", True)
+    hom_pass = hom_rec.get("passed", True)
+    norm_test = norm_rec.get("test_name", "Shapiro-Wilk")
+    norm_stat = norm_rec.get("statistic")
+    norm_p = norm_rec.get("p_value")
+    hom_stat = hom_rec.get("statistic")
+    hom_p = hom_rec.get("p_value")
+
+    sec4 = (
+        f"Prior to interpreting the ANOVA results, key statistical assumptions were evaluated. "
+        f"The {norm_test} test for normality of residuals yielded "
+        f"W = {_pub_fmt(norm_stat, 4)}, p = {_pub_fmt(norm_p, 4)}, "
+        f"{'confirming that residuals were normally distributed' if norm_pass else 'suggesting a departure from normality'}. "
+        f"Levene's test for homogeneity of variance produced "
+        f"F = {_pub_fmt(hom_stat, 4)}, p = {_pub_fmt(hom_p, 4)}, "
+        f"{'indicating that group variances were homogeneous' if hom_pass else 'suggesting heterogeneous variances'}. "
+    )
+    if norm_pass and hom_pass:
+        sec4 += (
+            "Both assumptions were satisfied, confirming that the parametric ANOVA "
+            "is appropriate for this dataset and that the inferences drawn are statistically valid."
+        )
+    else:
+        sec4 += (
+            "Where assumptions were not fully met, ANOVA is generally robust to mild "
+            "violations, particularly with balanced designs. Results should nonetheless "
+            "be interpreted with appropriate caution, and non-parametric alternatives "
+            "(Kruskal-Wallis) may be considered for confirmation."
+        )
+
+    # -- Section 5: Biological/Agronomic Interpretation
+    sec5 = (
+        f"The {sig_str} variation observed in {response} among the tested treatments "
+        "reflects the influence of genetic and/or management factors on crop performance. "
+        "Significant treatment differences are attributable to intrinsic genetic potential, "
+        "differential responses to the growing environment, and/or treatment-specific "
+        "management interactions. "
+    )
+    if sorted_means:
+        best = sorted_means[0]
+        sec5 += (
+            f"The superior performance of {best[0]} suggests inherent genetic advantages "
+            f"in traits that directly contribute to {response} under the prevailing "
+            "environmental conditions of this trial. This finding aligns with the "
+            "well-established principle that genotype × environment interactions shape "
+            "phenotypic expression, and that superior genotypes maintain competitive "
+            "performance across a range of conditions."
+        )
+
+    # -- Section 6: Practical Recommendations
+    sec6 = ""
+    if sorted_means:
+        best = sorted_means[0]
+        best_letter = letters_dict.get(pred, {}).get(str(best[0]), "")
+        same_group = [t for t, _ in sorted_means
+                      if letters_dict.get(pred, {}).get(str(t), "") == best_letter
+                      and str(t) != str(best[0])]
+        sec6 = (
+            f"Based on the statistical analysis, {best[0]} is recommended as the primary "
+            f"treatment of choice for {response} under conditions similar to those of this trial. "
+        )
+        if same_group:
+            sec6 += (
+                f"The following treatments were statistically comparable to {best[0]} "
+                f"and represent viable alternatives: {', '.join(str(t) for t in same_group[:3])}. "
+                "These alternatives may offer cost or logistical advantages without a "
+                "statistically significant yield penalty. "
+            )
+        sec6 += (
+            "It is strongly recommended that these findings be validated across multiple "
+            "locations and seasons before large-scale adoption, to account for "
+            "genotype × environment interaction effects."
+        )
+
+    # -- Section 7: Limitations & Future Work
+    sec7 = (
+        f"This study was conducted at a single location and/or season, which limits the "
+        f"generalisability of the findings. The observed differences in {response} may be "
+        "specific to the agro-ecological conditions of this trial site. Future studies "
+        "should include multi-location, multi-season designs to assess the stability "
+        "and adaptability of the top-performing treatments. Additionally, "
+        "economic analyses incorporating input costs and market prices would strengthen "
+        "the practical recommendations derived from these results."
+    )
+
+    # -- Section 8: Conclusion
+    sec8 = (
+        f"In conclusion, this {analysis_type} demonstrated {sig_str} variation in {response} "
+        f"among the tested treatments (p {('= ' + p_str) if not p_str.startswith('<') else p_str}). "
+    )
+    if sorted_means:
+        best = sorted_means[0]
+        sec8 += (
+            f"The treatment {best[0]} consistently outperformed the others, "
+            f"achieving a mean {response} of {_pub_fmt_large(best[1], 2)}. "
+        )
+    sec8 += (
+        "These findings contribute to the evidence base for evidence-based agricultural "
+        "decision-making and provide a foundation for further research into the mechanisms "
+        "underlying the observed performance differences. "
+        "Multi-environment validation and economic assessment are recommended as "
+        "essential next steps before widespread adoption."
+    )
+
+    return {
+        "Section 1 — Experimental Overview": sec1,
+        "Section 2 — Statistical Results & Model Fit": sec2,
+        "Section 3 — Post-hoc & Detailed Analysis": sec3,
+        "Section 4 — Assumption Testing": sec4,
+        "Section 5 — Biological / Agronomic Interpretation": sec5,
+        "Section 6 — Practical Recommendations": sec6,
+        "Section 7 — Limitations & Future Work": sec7,
+        "Section 8 — Conclusion": sec8,
+    }
+
+
+# =========================
+# ANOVA HTML TABLE BUILDER
+# =========================
+
+_ANOVA_CSS = """<style>
+.vv-pub-table{border-collapse:collapse;width:100%;font-family:'Times New Roman',Times,serif;font-size:11pt;margin-bottom:8px}
+.vv-pub-table caption{font-weight:bold;font-size:12pt;text-align:left;padding-bottom:4px;caption-side:top}
+.vv-pub-table th{background-color:#1a3a5c;color:#fff;padding:6px 10px;text-align:center;border:1px solid #bbb;font-size:10pt}
+.vv-pub-table td{padding:5px 10px;border:1px solid #ccc;text-align:center;vertical-align:middle}
+.vv-pub-table tr:nth-child(even) td{background-color:#f0f4f8}
+.vv-pub-table .td-left{text-align:left}
+.vv-pub-table .total-row td{font-weight:bold;border-top:2px solid #1a3a5c}
+.vv-pub-table .footnote td{font-size:9pt;color:#555;text-align:left;border:none;padding:2px 4px}
+.sig-mark{color:#b00;font-weight:bold}.sig-ns{color:#888}
+</style>"""
+
+def _anova_html_sig(p) -> str:
+    if p is None: return ""
+    try:
+        pf = float(p)
+        if pf < 0.001: return '<span class="sig-mark">***</span>'
+        if pf < 0.01:  return '<span class="sig-mark">**</span>'
+        if pf < 0.05:  return '<span class="sig-mark">*</span>'
+        return '<span class="sig-ns">ns</span>'
+    except Exception: return ""
+
+def _anova_html_table(table_number: str, title: str, headers: List[str],
+                      rows: List[List[str]], footnotes: Optional[List[str]] = None,
+                      total_row: Optional[List[str]] = None,
+                      left_cols: Optional[List[int]] = None) -> str:
+    left_cols = left_cols or [0]
+    parts = [_ANOVA_CSS, f'<table class="vv-pub-table">',
+             f'  <caption>{table_number}: {title}</caption>', '  <thead><tr>']
+    for h in headers:
+        parts.append(f'    <th>{h}</th>')
+    parts += ['  </tr></thead>', '  <tbody>']
+    for row in rows:
+        parts.append('    <tr>')
+        for ci, cell in enumerate(row):
+            cls = ' class="td-left"' if ci in left_cols else ''
+            parts.append(f'      <td{cls}>{cell}</td>')
+        parts.append('    </tr>')
+    if total_row:
+        parts.append('    <tr class="total-row">')
+        for ci, cell in enumerate(total_row):
+            cls = ' class="td-left"' if ci in left_cols else ''
+            parts.append(f'      <td{cls}>{cell}</td>')
+        parts.append('    </tr>')
+    parts.append('  </tbody>')
+    if footnotes:
+        parts.append('  <tfoot>')
+        colspan = len(headers)
+        for fn in footnotes:
+            parts.append(f'  <tr class="footnote"><td colspan="{colspan}">{fn}</td></tr>')
+        parts.append('  </tfoot>')
+    parts.append('</table>')
+    return '\n'.join(parts)
+
+
+def build_anova_html_tables(pub: Dict) -> List[Dict[str, str]]:
+    """
+    Convert the structured publication tables dict (from build_publication_tables)
+    into a list of {"name": str, "html": str} for direct frontend rendering.
+    """
+    result: List[Dict[str, str]] = []
+
+    # ── Table 1: ANOVA ────────────────────────────────────────────────────────
+    anova_tbl = pub.get("anova_table", {})
+    if anova_tbl:
+        rows = []
+        for row in anova_tbl.get("rows", []):
+            rows.append([str(c) for c in row])
+        ft = anova_tbl.get("footer", {})
+        footnotes = [
+            f"R² = {_pub_fmt(ft.get('r_squared'), 4)};  "
+            f"Adj. R² = {_pub_fmt(ft.get('adj_r_squared'), 4)};  "
+            f"CV = {_pub_fmt(ft.get('cv'), 2)}%;  "
+            f"F-test: {ft.get('f_test', '—')}",
+            "Type II ANOVA.  Significance: *** p &lt; 0.001; ** p &lt; 0.01; * p &lt; 0.05; ns = not significant.",
+        ] + (anova_tbl.get("footnotes") or [])
+        html = _anova_html_table(
+            "Table 1", anova_tbl.get("title", "ANOVA"),
+            anova_tbl.get("headers", []), rows,
+            footnotes=footnotes, left_cols=[0])
+        result.append({"name": "ANOVA", "html": html})
+
+    # ── Table 2: Descriptive Statistics ──────────────────────────────────────
+    desc_tbl = pub.get("descriptive_table", {})
+    if desc_tbl:
+        rows = [[str(c) for c in row] for row in desc_tbl.get("rows", [])]
+        overall = desc_tbl.get("overall_row")
+        total_row = [str(c) for c in overall] if overall else None
+        html = _anova_html_table(
+            "Table 2", desc_tbl.get("title", "Descriptive Statistics"),
+            desc_tbl.get("headers", []), rows,
+            footnotes=desc_tbl.get("footnotes"),
+            total_row=total_row, left_cols=[0])
+        result.append({"name": "Descriptive Statistics", "html": html})
+
+    # ── Table 3: Post-hoc Tukey HSD ───────────────────────────────────────────
+    ph_tbl = pub.get("posthoc_table", {})
+    if ph_tbl:
+        rows = [[str(c) for c in row] for row in ph_tbl.get("rows", [])]
+        html = _anova_html_table(
+            "Table 3", ph_tbl.get("title", "Post-hoc Tukey HSD"),
+            ph_tbl.get("headers", []), rows,
+            footnotes=ph_tbl.get("footnotes"), left_cols=[0, 4])
+        result.append({"name": "Post-hoc Tukey HSD", "html": html})
+
+    # ── Table 4: Assumption Tests ─────────────────────────────────────────────
+    ass_tbl = pub.get("assumptions_table", {})
+    if ass_tbl:
+        rows = [[str(c) for c in row] for row in ass_tbl.get("rows", [])]
+        html = _anova_html_table(
+            "Table 4", ass_tbl.get("title", "Assumption Tests"),
+            ass_tbl.get("headers", []), rows,
+            footnotes=ass_tbl.get("footnotes"), left_cols=[0, 4])
+        result.append({"name": "Assumption Tests", "html": html})
+
+    # ── Table 5: Model Fit ────────────────────────────────────────────────────
+    fit_tbl = pub.get("model_fit_table", {})
+    if fit_tbl:
+        rows = [[str(c) for c in row] for row in fit_tbl.get("rows", [])]
+        html = _anova_html_table(
+            "Table 5", fit_tbl.get("title", "Model Fit Statistics"),
+            fit_tbl.get("headers", []), rows,
+            footnotes=fit_tbl.get("footnotes"), left_cols=[0, 3])
+        result.append({"name": "Model Fit Statistics", "html": html})
+
+    return result
+
 
 # =========================
 # STATISTICAL ANALYZER
@@ -398,7 +843,440 @@ class StatisticalAnalyzer:
             logger.error(f"Letter display generation failed: {str(e)}")
             return {group: chr(65 + i) for i, group in enumerate(groups)}
     
-    def descriptive_statistics(self, df: pd.DataFrame, response: str, 
+    def build_publication_tables(self, result: Dict, response: str,
+                                primary_predictor: str = None,
+                                analysis_type: str = "ANOVA") -> Dict:
+        """
+        Build publication-ready formatted tables from an ANOVA result dict.
+
+        Returns a dict with:
+          report_header           — Metadata block
+          anova_table             — Source / df / SS / MS / F / p / Sig  (Table 1)
+          descriptive_table       — Treatment / n / Mean / SD / SE / CV / Min / Max  (Table 2)
+          posthoc_table           — Rank / Treatment / Mean / Letter / Interpretation  (Table 3)
+          assumptions_table       — Test / Statistic / p / Result / Interpretation  (Table 4)
+          model_fit_table         — R² / adj-R² / F / p / η² / ω² / Cohen's f  (Table 5)
+          backend_interpretation  — Concise 2-paragraph plain-language summary
+          academic_interpretation — Dr. Fayeun's 8-section structured report
+        """
+        alpha = self.config.alpha
+        pub: Dict[str, Any] = {}
+
+        anova_raw    = result.get("anova", {})
+        means_dict   = result.get("means", {})
+        letters_dict = result.get("letters", {})
+        desc_raw     = result.get("descriptive_stats", {})
+        overall_st   = desc_raw.get("overall", {})
+
+        # Resolve primary predictor
+        desc_keys = [k for k in desc_raw if k != "overall"]
+        pred = (primary_predictor if (primary_predictor and primary_predictor in desc_raw)
+                else (desc_keys[0] if desc_keys else None))
+        pred_ph = (primary_predictor if (primary_predictor and primary_predictor in means_dict)
+                   else (list(means_dict.keys())[0] if means_dict else None))
+
+        # Residual MS (for RSE and F notation)
+        ms_residual = None
+        df_residual = None
+        if "Residual" in anova_raw and isinstance(anova_raw["Residual"], dict):
+            _ss_r = anova_raw["Residual"].get("sum_sq")
+            _df_r = anova_raw["Residual"].get("df")
+            if _ss_r is not None and _df_r and float(_df_r) > 0:
+                ms_residual = float(_ss_r) / float(_df_r)
+                df_residual = float(_df_r)
+
+        # Treatment df for F(df1,df2) notation
+        df1 = None
+        if pred and pred in anova_raw and isinstance(anova_raw[pred], dict):
+            _d = anova_raw[pred].get("df")
+            if _d is not None:
+                df1 = int(float(_d))
+        df2 = int(df_residual) if df_residual else None
+        f_notation = f"F({df1},{df2})" if (df1 and df2) else "F"
+
+        # Overall CV
+        cv_overall = None
+        if overall_st.get("mean") and overall_st.get("std") and float(overall_st["mean"]) != 0:
+            cv_overall = float(overall_st["std"]) / float(overall_st["mean"]) * 100
+
+        n_total = int(overall_st.get("n", 0))
+
+        # ── REPORT HEADER ──────────────────────────────────────────────────
+        level_names = list((means_dict.get(pred_ph) or {}).keys())
+        n_levels = len(level_names)
+        n_per    = n_total // n_levels if n_levels else 0
+        pub["report_header"] = {
+            "title": "VivaSense™ — Statistical Analysis Report",
+            "generated": datetime.now().strftime("%m/%d/%Y, %I:%M:%S %p"),
+            "software": "VivaSense V2.2",
+            "sections": [
+                {"label": "Analysis Type",       "value": analysis_type},
+                {"label": "Trait / Variable",    "value": response},
+                {"label": "Treatment Factor",    "value": pred or "—"},
+                {"label": "Number of Levels",    "value": (
+                    f"{n_levels} ({', '.join(str(x) for x in level_names[:5])}"
+                    f"{'...' if len(level_names) > 5 else ')'}"
+                ) if level_names else "—"},
+                {"label": "Total Observations",  "value": str(n_total)},
+                {"label": "Replications (est.)", "value": str(n_per) if n_per else "—"},
+                {"label": "Significance Level",  "value": f"α = {alpha}"},
+                {"label": "Date Analyzed",       "value": datetime.now().strftime("%m/%d/%Y, %I:%M:%S %p")},
+            ],
+        }
+
+        # ── TABLE 1: ANOVA ─────────────────────────────────────────────────
+        anova_rows = []
+        ss_total = sum(
+            (float(v.get("sum_sq") or 0))
+            for v in anova_raw.values() if isinstance(v, dict)
+        )
+        df_total = sum(
+            (float(v.get("df") or 0))
+            for v in anova_raw.values() if isinstance(v, dict)
+        )
+        for src, vals in anova_raw.items():
+            if not isinstance(vals, dict):
+                continue
+            ss  = vals.get("sum_sq")
+            df_ = vals.get("df")
+            ms  = float(ss) / float(df_) if (ss is not None and df_ and float(df_) > 0) else None
+            f   = vals.get("F")
+            p   = vals.get("PR(>F)")
+            p_disp = ("< 0.001" if (p is not None and float(p) < 0.001)
+                      else _pub_fmt(p, 4))
+            anova_rows.append([
+                src,
+                str(int(float(df_))) if df_ is not None else "—",
+                _pub_fmt_large(ss, 2),
+                _pub_fmt_large(ms, 2),
+                _pub_fmt(f, 3),
+                p_disp,
+                _pub_sig(p),
+            ])
+        anova_rows.append([
+            "Total",
+            str(int(df_total)) if df_total else "—",
+            _pub_fmt_large(ss_total, 2),
+            "—", "—", "—", "",
+        ])
+        r2    = result.get("r_squared")
+        adj_r2= result.get("adj_r_squared")
+        f_val = result.get("f_value")
+        f_p   = result.get("f_pvalue")
+        pub["anova_table"] = {
+            "title": f"Analysis of Variance for {response}",
+            "table_number": "Table 1",
+            "headers": ["Source of Variation", "df", "Sum of Squares (SS)",
+                        "Mean Square (MS)", "F-value", "p-value", "Sig."],
+            "rows": anova_rows,
+            "footer": {
+                "r_squared":     f"R² = {_pub_fmt(r2, 4)} ({_pub_fmt(float(r2)*100 if r2 else None, 2)}% of variance explained)",
+                "adj_r_squared": f"Adjusted R² = {_pub_fmt(adj_r2, 4)}",
+                "cv":            f"Coefficient of Variation (CV) = {_pub_fmt(cv_overall, 2)}%",
+                "f_test":        (f"Overall F-test: {f_notation} = {_pub_fmt(f_val, 2)}, "
+                                  f"p {'< 0.001' if f_p and float(f_p) < 0.001 else '= ' + _pub_fmt(f_p, 4)} "
+                                  f"{_pub_sig(f_p)}"),
+            },
+            "footnotes": [
+                "Significance codes:  *** p < 0.001  ** p < 0.01  * p < 0.05  ns p ≥ 0.05",
+                f"Type II Sum of Squares.  α = {alpha}.",
+                "SS = Sum of Squares, MS = Mean Square, df = degrees of freedom.",
+            ],
+        }
+
+        # ── TABLE 2: DESCRIPTIVE STATISTICS ────────────────────────────────
+        desc_rows = []
+        if pred and pred in desc_raw:
+            sorted_groups = sorted(
+                desc_raw[pred].items(),
+                key=lambda kv: float(kv[1].get("mean") or 0),
+                reverse=True,
+            )
+            for grp, sd in sorted_groups:
+                n = sd.get("count", sd.get("n"))
+                desc_rows.append([
+                    str(grp),
+                    str(int(float(n))) if n is not None else "—",
+                    _pub_fmt_large(sd.get("mean"), 2),
+                    _pub_fmt(sd.get("std"),  2),
+                    _pub_fmt(sd.get("sem"),  2),
+                    _pub_fmt_large(sd.get("min"),  2),
+                    _pub_fmt_large(sd.get("max"),  2),
+                    _pub_fmt(sd.get("cv"),   2),
+                ])
+        # Overall row
+        if overall_st:
+            desc_rows.append([
+                "Overall",
+                str(n_total) if n_total else "—",
+                _pub_fmt_large(overall_st.get("mean"), 2),
+                _pub_fmt(overall_st.get("std"),  2),
+                _pub_fmt(overall_st.get("sem"),  2),
+                _pub_fmt_large(overall_st.get("min"),  2),
+                _pub_fmt_large(overall_st.get("max"),  2),
+                _pub_fmt(overall_st.get("cv"),   2),
+            ])
+        pub["descriptive_table"] = {
+            "title": f"Descriptive Statistics for {response}",
+            "table_number": "Table 2",
+            "headers": ["Treatment", "n", f"Mean ({response})", "Std Dev (SD)",
+                        "Std Error (SE)", "Min", "Max", "CV (%)"],
+            "rows": desc_rows,
+            "footnotes": [
+                "Values shown to 2 decimal places.",
+                "SD = Standard Deviation.  SE = Standard Error = SD / √n.",
+                "CV = Coefficient of Variation (%) = (SD / Mean) × 100.",
+                "Rows sorted by mean (highest to lowest).  Last row = overall statistics.",
+            ],
+        }
+
+        # ── TABLE 3: POST-HOC (Tukey HSD) ─────────────────────────────────
+        posthoc_rows = []
+        effect_sig = False
+        if pred_ph and pred_ph in anova_raw and isinstance(anova_raw[pred_ph], dict):
+            _pp = anova_raw[pred_ph].get("PR(>F)")
+            effect_sig = _pp is not None and float(_pp) < alpha
+
+        if pred_ph and pred_ph in means_dict:
+            letters  = letters_dict.get(pred_ph, {})
+            s_means  = sorted(means_dict[pred_ph].items(), key=lambda x: float(x[1]), reverse=True)
+            n_s      = len(s_means)
+            top_ltr  = letters.get(str(s_means[0][0]), "") if s_means else ""
+            bot_ltr  = letters.get(str(s_means[-1][0]), "") if s_means else ""
+            for rank, (trt, mean) in enumerate(s_means, 1):
+                ltr = letters.get(str(trt), "—")
+                if rank == 1:
+                    interp = "Highest performing"
+                elif rank == n_s:
+                    interp = "Lowest performing"
+                elif ltr and ltr == top_ltr:
+                    interp = f"Comparable to {s_means[0][0]}"
+                elif ltr and ltr == bot_ltr:
+                    interp = f"Comparable to {s_means[-1][0]}"
+                else:
+                    interp = "Intermediate performance"
+                posthoc_rows.append([str(rank), str(trt), _pub_fmt_large(mean, 2), ltr, interp])
+
+        pub["posthoc_table"] = {
+            "title": f"Post-hoc Mean Comparisons (Tukey HSD) for {response}",
+            "table_number": "Table 3",
+            "headers": ["Rank", "Treatment", "Mean", "Letter Grouping", "Interpretation"],
+            "rows": posthoc_rows,
+            "significant_effect": effect_sig,
+            "footnotes": [
+                "Tukey's Honest Significant Difference (HSD) test.",
+                "Treatments sharing the same letter are NOT significantly different (p > 0.05).",
+                "Treatments with different letters ARE significantly different (p ≤ 0.05).",
+                "Letter grouping shown only when the main effect is significant (p < α).",
+                "Ranked from highest to lowest mean.",
+            ],
+        }
+
+        # ── TABLE 4: ASSUMPTION TESTS ──────────────────────────────────────
+        assumptions_raw = result.get("assumptions", {})
+        assumption_rows = []
+        all_passed = True
+        for test_key, test_data in assumptions_raw.items():
+            if not isinstance(test_data, dict) or test_key == "error":
+                continue
+            name   = test_data.get("test_name", test_key)
+            stat   = test_data.get("statistic")
+            p      = test_data.get("p_value")
+            passed = test_data.get("passed")
+            msg    = test_data.get("message", "")
+            if passed is False:
+                all_passed = False
+            result_str = "PASS ✓" if passed is True else ("FAIL ✗" if passed is False else "—")
+            assumption_rows.append([name, _pub_fmt(stat, 4), _pub_fmt(p, 4), result_str, msg])
+        overall_assess = (
+            "✓ PASS — All ANOVA assumptions satisfied. Parametric results are valid."
+            if all_passed else
+            "⚠ WARNING — One or more assumptions violated. Interpret with caution."
+        )
+        pub["assumptions_table"] = {
+            "title": "Statistical Assumption Tests",
+            "table_number": "Table 4",
+            "headers": ["Test", "Statistic", "p-value", "Result", "Interpretation"],
+            "rows": assumption_rows,
+            "overall_assessment": overall_assess,
+            "footnotes": [
+                "Normality: Shapiro-Wilk (n ≤ 5000) or Kolmogorov-Smirnov (n > 5000).",
+                "Homogeneity of variance: Levene's test for equality of group variances.",
+                "Independence: Durbin-Watson statistic (acceptable range 1.5–2.5; no p-value).",
+                f"PASS criterion: p > {alpha} for parametric tests.",
+            ],
+        }
+
+        # ── TABLE 5: MODEL FIT ─────────────────────────────────────────────
+        es_dict = result.get("effect_sizes", {})
+        main_es = (es_dict.get(pred_ph) or es_dict.get(pred)
+                   or next((v for k, v in es_dict.items() if k != "Residual"), None))
+        rse = math.sqrt(ms_residual) if ms_residual and ms_residual > 0 else None
+
+        r2_interp = "—"
+        if r2:
+            r2f = float(r2)
+            if r2f >= 0.9:  r2_interp = f"Excellent fit ({r2f*100:.1f}% variance explained)"
+            elif r2f >= 0.7: r2_interp = f"Good fit ({r2f*100:.1f}% variance explained)"
+            elif r2f >= 0.5: r2_interp = f"Moderate fit ({r2f*100:.1f}% variance explained)"
+            else:            r2_interp = f"Poor fit ({r2f*100:.1f}% variance explained)"
+
+        model_rows: List[List[str]] = [
+            ["R² (Coefficient of Determination)", _pub_fmt(r2,    4), r2_interp],
+            ["Adjusted R² (accounts for df)",     _pub_fmt(adj_r2, 4), "R² penalized for model complexity"],
+            [f"{f_notation} (overall F-statistic)", _pub_fmt(f_val, 3),
+             ("Highly significant" if f_p and float(f_p) < 0.001 else
+              "Significant" if f_p and float(f_p) < 0.05 else "Not significant") + f" ({_pub_sig(f_p)})"],
+            ["Model p-value",
+             "< 0.001" if f_p and float(f_p) < 0.001 else _pub_fmt(f_p, 4),
+             _pub_sig(f_p)],
+            ["Residual Standard Error (RSE)", _pub_fmt(rse, 4),
+             "√MS_error — average prediction error"],
+            ["Coefficient of Variation (%)", _pub_fmt(cv_overall, 2),
+             "CV < 10% excellent, 10–20% acceptable, > 20% high"],
+        ]
+        if isinstance(main_es, dict):
+            eta  = float(main_es.get("eta_squared", 0) or 0)
+            ome  = float(main_es.get("omega_squared", 0) or 0)
+            cf   = float(main_es.get("cohens_f", 0) or 0)
+            interp = main_es.get("interpretation", "")
+            ome_lbl = ("Large" if ome >= 0.14 else "Medium" if ome >= 0.06
+                       else "Small" if ome >= 0.01 else "Negligible")
+            cf_lbl  = ("Very large" if cf >= 0.80 else "Large" if cf >= 0.35
+                       else "Moderate" if cf >= 0.10 else "Small")
+            model_rows += [
+                ["η² (Eta-squared)",   _pub_fmt(eta, 4), f"Effect size: {interp} (η² of treatment)"],
+                ["ω² (Omega-squared)", _pub_fmt(ome, 4), f"{ome_lbl} effect (unbiased estimate)"],
+                ["Cohen's f",          _pub_fmt(cf,  4), f"{cf_lbl} standardized effect"],
+            ]
+        pub["model_fit_table"] = {
+            "title": f"Model Fit and Effect Size Statistics for {response}",
+            "table_number": "Table 5",
+            "headers": ["Statistic", "Value", "Interpretation"],
+            "rows": model_rows,
+            "footnotes": [
+                "η² benchmarks: < 0.01 negligible, 0.01–0.06 small, 0.06–0.14 medium, ≥ 0.14 large.",
+                "ω² is the preferred unbiased population effect size estimator.",
+                "Cohen's f: 0.10 small, 0.25 medium, 0.40 large, ≥ 0.80 very large.",
+            ],
+        }
+
+        # ── BACKEND INTERPRETATION ─────────────────────────────────────────
+        pub["backend_interpretation"] = _generate_backend_interpretation(
+            result, response, pred, f_notation, alpha
+        )
+
+        # ── DR. FAYEUN'S ACADEMIC INTERPRETATION ──────────────────────────
+        pub["academic_interpretation"] = _generate_academic_interpretation(
+            result, response, pred, f_notation, alpha, analysis_type, n_total
+        )
+
+        # ── HTML TABLES (copy-paste ready for Word / LaTeX) ────────────────
+        try:
+            pub["html_tables"] = build_anova_html_tables(pub)
+        except Exception as _ht_exc:
+            logger.warning("Could not build ANOVA HTML tables: %s", _ht_exc)
+            pub["html_tables"] = []
+
+        return pub
+
+    def generate_publication_bar_chart(
+        self,
+        df: pd.DataFrame,
+        response: str,
+        predictor: str,
+        letters: Dict[str, str],
+        means: Dict[str, float],
+    ) -> str:
+        """
+        Generate a publication-quality bar chart (300 DPI) with:
+        - Bars sorted by mean (highest → lowest)
+        - ±1 SE error bars
+        - Tukey HSD letter annotations above each bar
+        - Professional colour scheme (#4A90E2)
+        Returns base64-encoded PNG string.
+        """
+        try:
+            import matplotlib.pyplot as plt
+            import matplotlib.patches as mpatches
+            import numpy as np
+
+            sorted_items = sorted(means.items(), key=lambda x: float(x[1]), reverse=True)
+            labels = [str(k) for k, _ in sorted_items]
+            mean_vals = [float(v) for _, v in sorted_items]
+
+            # Compute SEM per group from df
+            grouped = df.groupby(predictor)[response]
+            sems = [float(grouped.get_group(k).sem()) if k in grouped.groups else 0.0
+                    for k in [ki for ki, _ in sorted_items]]
+
+            fig, ax = plt.subplots(figsize=(max(8, len(labels) * 1.4), 6))
+            x_pos = np.arange(len(labels))
+            bar_colour = "#4A90E2"
+            bars = ax.bar(
+                x_pos, mean_vals, yerr=sems,
+                capsize=5, color=bar_colour, edgecolor="#2c5f9e",
+                alpha=0.88, ecolor="#333333", linewidth=1.2,
+                error_kw={"linewidth": 1.5},
+            )
+
+            # Annotate bars with value and Tukey letter
+            y_max = max(mean_vals) + max(sems) if sems else max(mean_vals)
+            y_pad = y_max * 0.04
+            for i, (bar, ltr_key) in enumerate(zip(bars, [str(k) for k, _ in sorted_items])):
+                letter = letters.get(ltr_key, "")
+                bar_top = bar.get_height() + sems[i] + y_pad
+                # Mean value inside/near top of bar
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2.0,
+                    bar.get_height() / 2,
+                    _pub_fmt_large(mean_vals[i], 1),
+                    ha="center", va="center",
+                    fontsize=9, fontweight="bold", color="white",
+                )
+                # Tukey letter above error bar
+                if letter:
+                    ax.text(
+                        bar.get_x() + bar.get_width() / 2.0,
+                        bar_top,
+                        letter,
+                        ha="center", va="bottom",
+                        fontsize=11, fontweight="bold", color="#333333",
+                    )
+
+            ax.set_xticks(x_pos)
+            ax.set_xticklabels(labels, rotation=30 if len(labels) > 4 else 0,
+                               ha="right" if len(labels) > 4 else "center",
+                               fontsize=10)
+            ax.set_xlabel(predictor, fontsize=12, fontweight="bold", labelpad=8)
+            ax.set_ylabel(response, fontsize=12, fontweight="bold", labelpad=8)
+            ax.set_title(f"{response} by {predictor}", fontsize=14,
+                         fontweight="bold", pad=16)
+            ax.set_ylim(0, y_max * 1.18)
+            ax.yaxis.grid(True, linestyle="--", alpha=0.4, linewidth=0.8)
+            ax.set_axisbelow(True)
+            ax.spines["top"].set_visible(False)
+            ax.spines["right"].set_visible(False)
+
+            # Legend / footnote
+            note = ("Error bars = ±1 SE.  "
+                    "Bars with the same letter are not significantly different "
+                    "(Tukey HSD, p > 0.05).")
+            fig.text(0.5, -0.04, note, ha="center", fontsize=8,
+                     color="#555555", style="italic", wrap=True)
+
+            plt.tight_layout()
+            buf = BytesIO()
+            plt.savefig(buf, format="png", dpi=300, bbox_inches="tight")
+            buf.seek(0)
+            encoded = base64.b64encode(buf.read()).decode()
+            plt.close()
+            return encoded
+        except Exception as exc:
+            logger.warning("Publication bar chart generation failed: %s", exc)
+            return ""
+
+    def descriptive_statistics(self, df: pd.DataFrame, response: str,
                               predictors: List[str]) -> Dict:
         """Generate comprehensive descriptive statistics"""
         stats_dict = {}
@@ -499,7 +1377,13 @@ class StatisticalAnalyzer:
                 'assumptions': {k: asdict(v) for k, v in assumptions.items()},
                 'descriptive_stats': desc_stats
             }
-            
+
+            # Add publication-ready formatted tables
+            result['publication_tables'] = self.build_publication_tables(
+                result, response,
+                primary_predictor=predictors[0] if predictors else None,
+            )
+
             return result
             
         except Exception as e:
@@ -1043,7 +1927,17 @@ class VivaSenseBackend:
                 
                 # Generate plots (using first categorical predictor)
                 plots = self.analyzer.generate_plots(df, trait, categorical[0])
-                
+                # Publication bar chart with Tukey letter annotations
+                try:
+                    _letters = anova_result.get("letters", {}).get(categorical[0], {})
+                    _means   = anova_result.get("means",   {}).get(categorical[0], {})
+                    if _means:
+                        plots["publication_bar"] = self.analyzer.generate_publication_bar_chart(
+                            df, trait, categorical[0], _letters, _means
+                        )
+                except Exception as _pe:
+                    logger.warning("Publication bar chart failed for %s: %s", trait, _pe)
+
                 # Generate interpretation
                 context = {
                     "trait": trait,
@@ -1332,6 +2226,17 @@ def _anova_with_plots(df: pd.DataFrame, response: str, predictors: List[str],
         result["plots"] = analyzer.generate_plots(df, response, predictors[0])
     except Exception:
         result["plots"] = {}
+    # Publication-quality bar chart with Tukey letter annotations
+    try:
+        letters = result.get("letters", {}).get(predictors[0], {})
+        means   = result.get("means",   {}).get(predictors[0], {})
+        if means:
+            pub_bar = analyzer.generate_publication_bar_chart(
+                df, response, predictors[0], letters, means
+            )
+            result["plots"]["publication_bar"] = pub_bar
+    except Exception as _e:
+        logger.warning("Publication bar chart failed: %s", _e)
     result["interpretation"] = backend.interpreter.interpret(result, response)
     return result
 
@@ -1446,18 +2351,27 @@ async def analyze_splitplot(data: Dict):
             plots = analyzer.generate_plots(df, response, whole_plot)
         except Exception:
             plots = {}
-        return {
-            "status": "success", "design": "splitplot", "response": response,
-            "whole_plot": whole_plot, "sub_plot": sub_plot, "block": block,
+        sp_result = {
             "formula": formula,
             "r_squared": float(model.rsquared),
             "adj_r_squared": float(model.rsquared_adj),
+            "f_value": float(model.fvalue) if hasattr(model, "fvalue") else None,
+            "f_pvalue": float(model.f_pvalue) if hasattr(model, "f_pvalue") else None,
             "anova": json.loads(anova_table.round(4).to_json()),
             "means": means,
+            "letters": {},
             "effect_sizes": {k: asdict(v) for k, v in effect_sizes.items()},
             "assumptions": {k: asdict(v) for k, v in assumptions.items()},
             "descriptive_stats": desc_stats,
+        }
+        sp_result["publication_tables"] = analyzer.build_publication_tables(
+            sp_result, response, primary_predictor=whole_plot
+        )
+        return {
+            "status": "success", "design": "splitplot", "response": response,
+            "whole_plot": whole_plot, "sub_plot": sub_plot, "block": block,
             "plots": plots,
+            **sp_result,
         }
     except Exception as e:
         logger.error("Split-plot ANOVA failed: %s", e, exc_info=True)
