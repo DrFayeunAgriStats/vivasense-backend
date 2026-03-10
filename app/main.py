@@ -2209,6 +2209,8 @@ def _parse_anova_request(data: Dict) -> Tuple[pd.DataFrame, str, float]:
     response = data.get("response")
     if not response:
         raise HTTPException(status_code=400, detail="'response' field is required")
+    if isinstance(response, list):
+        response = response[0]
     if response not in df.columns:
         raise HTTPException(status_code=400, detail=f"Response column '{response}' not found in data")
     df[response] = pd.to_numeric(df[response], errors='coerce')
