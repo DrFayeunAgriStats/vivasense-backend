@@ -1277,6 +1277,10 @@ async def genetics_variance_components(
     envelope = _build_trial_envelope(raw, primary, design, alpha)
 
     # Slim down to VC-relevant keys
+    _VC_TABLE_NAMES = {"Variance Components", "Heritability & Genetic Advance",
+                       "Combined ANOVA", "Genotype Means & Rankings"}
+    _VC_FIG_NAMES   = {"Genotype Means Bar Chart"}
+
     def _vc_slim(env: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "meta":    env["meta"],
@@ -1285,6 +1289,10 @@ async def genetics_variance_components(
                 "combined_anova":      env["tables"]["combined_anova"],
                 "assumption_guidance": env["tables"]["assumption_guidance"],
             },
+            "html_tables":         [t for t in env.get("html_tables", [])
+                                    if t.get("name") in _VC_TABLE_NAMES],
+            "publication_figures": [f for f in env.get("publication_figures", [])
+                                    if f.get("name") in _VC_FIG_NAMES],
             "interpretation":  env["interpretation"],
             "strict_template": env["strict_template"],
             "intelligence":    env["intelligence"],
@@ -1338,6 +1346,9 @@ async def genetics_stability(
     )
     envelope = _build_trial_envelope(raw, primary, design, alpha)
 
+    _STAB_TABLE_NAMES = {"Stability Analysis", "Genotype Means & Rankings"}
+    _STAB_FIG_NAMES   = {"Stability Scatter Plot", "Genotype Means Bar Chart"}
+
     def _stab_slim(env: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "meta":    env["meta"],
@@ -1345,8 +1356,12 @@ async def genetics_stability(
                 "stability":      env["tables"]["stability"],
                 "genotype_means": env["tables"]["genotype_means"],
             },
-            "plots":           {k: v for k, v in env["plots"].items()
-                                if any(x in k for x in ["stability", "bi"])},
+            "plots":               {k: v for k, v in env["plots"].items()
+                                    if any(x in k for x in ["stability", "bi"])},
+            "html_tables":         [t for t in env.get("html_tables", [])
+                                    if t.get("name") in _STAB_TABLE_NAMES],
+            "publication_figures": [f for f in env.get("publication_figures", [])
+                                    if f.get("name") in _STAB_FIG_NAMES],
             "interpretation":  env["interpretation"],
             "strict_template": env["strict_template"],
             "intelligence":    env["intelligence"],
@@ -1401,6 +1416,9 @@ async def genetics_ammi(
     )
     envelope = _build_trial_envelope(raw, primary, design, alpha)
 
+    _AMMI_TABLE_NAMES = {"Combined ANOVA", "Genotype Means & Rankings"}
+    _AMMI_FIG_NAMES   = {"AMMI Biplot", "Genotype Means Bar Chart"}
+
     def _ammi_slim(env: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "meta":    env["meta"],
@@ -1409,7 +1427,11 @@ async def genetics_ammi(
                 "ammi_explained_variance": env["tables"].get("ammi_explained_variance", []),
                 "combined_anova":          env["tables"]["combined_anova"],
             },
-            "plots":           {k: v for k, v in env["plots"].items() if "ammi" in k},
+            "plots":               {k: v for k, v in env["plots"].items() if "ammi" in k},
+            "html_tables":         [t for t in env.get("html_tables", [])
+                                    if t.get("name") in _AMMI_TABLE_NAMES],
+            "publication_figures": [f for f in env.get("publication_figures", [])
+                                    if f.get("name") in _AMMI_FIG_NAMES],
             "interpretation":  env["interpretation"],
             "strict_template": env["strict_template"],
             "intelligence":    env["intelligence"],
@@ -1463,6 +1485,9 @@ async def genetics_gge(
     )
     envelope = _build_trial_envelope(raw, primary, design, alpha)
 
+    _GGE_TABLE_NAMES = {"Genotype Means & Rankings"}
+    _GGE_FIG_NAMES   = {"GGE Biplot (Which-Won-Where)", "Genotype Means Bar Chart"}
+
     def _gge_slim(env: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "meta":    env["meta"],
@@ -1470,7 +1495,11 @@ async def genetics_gge(
                 "gge_which_won_where": env["tables"].get("gge_which_won_where", []),
                 "genotype_means":      env["tables"]["genotype_means"],
             },
-            "plots":           {k: v for k, v in env["plots"].items() if "gge" in k},
+            "plots":               {k: v for k, v in env["plots"].items() if "gge" in k},
+            "html_tables":         [t for t in env.get("html_tables", [])
+                                    if t.get("name") in _GGE_TABLE_NAMES],
+            "publication_figures": [f for f in env.get("publication_figures", [])
+                                    if f.get("name") in _GGE_FIG_NAMES],
             "interpretation":  env["interpretation"],
             "strict_template": env["strict_template"],
             "intelligence":    env["intelligence"],
@@ -1526,6 +1555,8 @@ async def genetics_correlations(
 
     # Correlations/path/selection index are inherently multi-trait — always
     # embed full per-trait envelopes so the frontend can tab through traits.
+    _CORR_TABLE_NAMES = {"Phenotypic Correlations", "Path Analysis", "Selection Index"}
+    _CORR_FIG_NAMES   = {"Phenotypic Correlation Heatmap", "Genotype Means Bar Chart"}
     slim = {
         "meta":    envelope["meta"],
         "tables": {
@@ -1533,8 +1564,12 @@ async def genetics_correlations(
             "path_analysis":   envelope["tables"].get("path_analysis", {}),
             "selection_index": envelope["tables"].get("selection_index", {}),
         },
-        "plots":           {k: v for k, v in envelope["plots"].items()
-                            if any(x in k for x in ["heatmap", "path", "corr"])},
+        "plots":               {k: v for k, v in envelope["plots"].items()
+                                if any(x in k for x in ["heatmap", "path", "corr"])},
+        "html_tables":         [t for t in envelope.get("html_tables", [])
+                                if t.get("name") in _CORR_TABLE_NAMES],
+        "publication_figures": [f for f in envelope.get("publication_figures", [])
+                                if f.get("name") in _CORR_FIG_NAMES],
         "interpretation":  envelope["interpretation"],
         "strict_template": envelope["strict_template"],
         "intelligence":    envelope["intelligence"],
@@ -1593,14 +1628,21 @@ async def genetics_multivariate(
     )
     envelope = _build_trial_envelope(raw, primary, design, alpha)
 
+    _MV_TABLE_NAMES = {"PCA Loadings Matrix", "Cluster Membership"}
+    _MV_FIG_NAMES   = {"PCA Biplot", "Hierarchical Dendrogram", "PCA Scree Plot"}
+
     def _mv_slim(env: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "meta":    env["meta"],
             "tables": {
                 "multivariate": env["tables"].get("multivariate", {}),
             },
-            "plots":           {k: v for k, v in env["plots"].items()
-                                if any(x in k for x in ["pca", "scree", "dendrogram", "cluster"])},
+            "plots":               {k: v for k, v in env["plots"].items()
+                                    if any(x in k for x in ["pca", "scree", "dendrogram", "cluster"])},
+            "html_tables":         [t for t in env.get("html_tables", [])
+                                    if t.get("name") in _MV_TABLE_NAMES],
+            "publication_figures": [f for f in env.get("publication_figures", [])
+                                    if f.get("name") in _MV_FIG_NAMES],
             "interpretation":  env["interpretation"],
             "strict_template": env["strict_template"],
             "intelligence":    env["intelligence"],
