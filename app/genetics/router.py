@@ -805,27 +805,45 @@ def _generate_genetics_academic_interp(
             f"{'stability parameters were estimated' if str(n_locs).isdigit() and int(str(n_locs)) >= 2 else 'stability analysis could not be performed'}."
         )
 
+    _herit_detail = (
+        "High heritability (H\u00b2 \u2265 60%) indicates that a large proportion of phenotypic"
+        " variation is attributable to genetic differences, making direct phenotypic selection"
+        " highly effective."
+        if h2_pct >= 60 else
+        "Moderate heritability suggests that environmental factors contribute substantially to"
+        " phenotypic variation, and multi-environment testing is essential before final selection"
+        " decisions."
+    )
     sec5 = (
         f"The {h2_label} heritability observed for {trait} has important implications for the "
         f"breeding programme. "
-        f"{'High heritability (H\u00b2 \u2265 60%) indicates that a large proportion of phenotypic variation is attributable to genetic differences, making direct phenotypic selection highly effective.' if h2_pct >= 60 else 'Moderate heritability suggests that environmental factors contribute substantially to phenotypic variation, and multi-environment testing is essential before final selection decisions.'} "
+        f"{_herit_detail} "
         f"The superior performance of {best_geno} for {trait} may reflect favourable allele "
         f"combinations at loci controlling the physiological pathways underlying this trait."
     )
 
+    _sel_strategy = (
+        "direct phenotypic selection in F\u2082\u2013F\u2083 generations is recommended"
+        if h2_pct >= 60 else
+        "progeny testing across multiple environments before selection is recommended"
+    )
     sec6 = (
         f"Based on the analysis of {trait}, the following breeding recommendations are proposed:\n"
         f"1. ADVANCE {best_geno}: Ranked highest — promote to replicated multi-location trials "
         f"or use as a parent in crossing programmes.\n"
         f"2. DISCARD {worst_geno}: Lowest performer — remove from the breeding pipeline.\n"
-        f"3. Selection Strategy: Given the {h2_label} heritability, "
-        f"{'direct phenotypic selection in F\u2082\u2013F\u2083 generations is recommended' if h2_pct >= 60 else 'progeny testing across multiple environments before selection is recommended'}.\n"
+        f"3. Selection Strategy: Given the {h2_label} heritability, {_sel_strategy}.\n"
         f"4. Multi-environment Validation: Validate across at least 5 locations over 2\u20133 seasons before variety release."
     )
 
+    _env_coverage = (
+        "provides a reasonable basis for multi-environment inferences"
+        if str(n_locs).isdigit() and int(str(n_locs)) >= 3 else
+        "limits generalisability; at least 3\u20135 locations are recommended for variety release"
+    )
     sec7 = (
         f"This study was conducted across {n_locs} location(s), which "
-        f"{'provides a reasonable basis for multi-environment inferences' if str(n_locs).isdigit() and int(str(n_locs)) >= 3 else 'limits generalisability; at least 3\u20135 locations are recommended for variety release'}. "
+        f"{_env_coverage}. "
         "Future studies should integrate genomic data to enable marker-assisted selection (MAS) "
         "and genomic selection (GS), which can substantially accelerate genetic gains. "
         "Economic modelling incorporating input costs and market prices should also be conducted "
