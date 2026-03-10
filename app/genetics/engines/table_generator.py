@@ -440,6 +440,160 @@ def _table_correlations(envelope: Dict) -> Optional[str]:
     )
 
 
+def _table_genotypic_correlations(envelope: Dict) -> Optional[str]:
+    """Genotypic correlation matrix (ANCOVA-derived) with per-cell warnings."""
+    tables = envelope.get("tables", {})
+    corr   = tables.get("correlations")
+    if not corr or not isinstance(corr, dict):
+        return None
+
+    gc = corr.get("genotypic_correlations") or corr.get("genotypic_matrix")
+    if not gc or not isinstance(gc, dict):
+        return None
+
+    matrix = gc.get("matrix") or gc
+    if not matrix or not isinstance(matrix, dict):
+        return None
+
+    traits = list(matrix.keys())
+    if not traits:
+        return None
+
+    headers = ["Trait"] + traits
+    rows: List[List[str]] = []
+    has_warnings = False
+    for t1 in traits:
+        row_cells = [t1]
+        for t2 in traits:
+            if t1 == t2:
+                row_cells.append("1.000")
+            else:
+                cell = (matrix.get(t1) or {}).get(t2)
+                if isinstance(cell, dict):
+                    r_g = cell.get("r_g")
+                    warn = cell.get("warning", "")
+                    cell_str = _fmt(r_g, 3)
+                    if warn:
+                        has_warnings = True
+                        cell_str = f"<span title='{warn}' style='color:#b45309'>{cell_str}*</span>"
+                    row_cells.append(cell_str)
+                elif cell is not None:
+                    row_cells.append(_fmt(cell, 3))
+                else:
+                    row_cells.append("—")
+        rows.append(row_cells)
+
+    method = gc.get("method", "ANCOVA covariance components (Searle 1961)")
+    footnotes = [
+        f"Method: {method}.",
+        "Formula: r<sub>g</sub>(xy) = COV<sub>g</sub>(xy) / √(σ²<sub>g</sub>(x) × σ²<sub>g</sub>(y))",
+    ]
+    if has_warnings:
+        footnotes.append(
+            "* Highlighted cells: |r<sub>g</sub>| ≥ 0.95 — high correlation detected; "
+            "verify covariance matrix and sample size."
+        )
+
+    return _html_table(
+        "Table 6B", "Genotypic Correlation Matrix (ANCOVA-Derived)",
+        headers, rows, footnotes=footnotes, left_cols=[0],
+    )
+
+
+def _table_path_vif(envelope: Dict) -> Optional[str]:
+    """VIF diagnostics table for path analysis multicollinearity."""
+    tables = envelope.get("tables", {})
+    path   = tables.get("path_analysis")
+    if not path or not isinstance(path, dict):
+        return None
+
+    diag = path.get("diagnostics")
+    if not diag or not isinstance(diag, dict):
+        return None
+
+    vifs = diag.get("vif", {})
+    cond = diag.get("condition_number")
+    mc_flag = diag.get("multicollinearity_flag", "")
+
+    if not vifs:
+        return None
+
+    rows: List[List[str]] = []
+    for pred, vif_val in sorted(vifs.items()):
+        flag = ""
+        if isinstance(vif_val, (int, float)):
+            if vif_val > 10:
+                flag = "❌ High"
+            elif vif_val > 5:
+                flag = "⚠️ Moderate"
+            else:
+                flag = "✓ Low"
+        rows.append([str(pred), _fmt(vif_val, 2), flag])
+
+    footnotes = [
+        "VIF = Variance Inflation Factor. VIF > 10: high multicollinearity; "
+        "VIF 5–10: moderate; VIF < 5: acceptable.",
+        f"Correlation matrix condition number: {_fmt(cond, 1)}. "
+        f"Overall multicollinearity level: <strong>{mc_flag}</strong>.",
+        "If VIF > 10, ridge regression (k = 0.10) was applied to stabilise path coefficients.",
+    ]
+    return _html_table(
+        "Table 6C", "Path Analysis — Multicollinearity Diagnostics (VIF)",
+        ["Predictor Trait", "VIF", "Assessment"],
+        rows, footnotes=footnotes, left_cols=[0, 2],
+    )
+
+
+def _table_expected_gains(envelope: Dict, trait: str) -> Optional[str]:
+    """Expected genetic gains from selection index with implausibility flags."""
+    tables = envelope.get("tables", {})
+    si     = tables.get("selection_index")
+    if not si or not isinstance(si, dict):
+        return None
+
+    gains = si.get("expected_genetic_gain", {})
+    if not gains:
+        return None
+
+    r_IH  = si.get("index_accuracy_r_IH")
+    diag  = si.get("matrix_diagnostics", {})
+    warns = si.get("warnings", [])
+
+    rows: List[List[str]] = []
+    for tname, g in gains.items():
+        if isinstance(g, dict):
+            abs_g = g.get("absolute")
+            pct   = g.get("percent")
+            flag  = g.get("flag", "")
+            rows.append([str(tname), _fmt(abs_g, 4), _fmt(pct, 2), str(flag) if flag else "✓"])
+        else:
+            rows.append([str(tname), _fmt(g, 4), "—", "—"])
+
+    footnotes = [
+        "ΔG = i × σ²<sub>g</sub> × b / σ<sub>I</sub>, "
+        "where i = selection intensity (default 2.06 for top 5%).",
+        "% Gain = (ΔG / trait mean) × 100.",
+    ]
+    if r_IH is not None:
+        footnotes.append(
+            f"Index accuracy r<sub>IH</sub> = {_fmt(r_IH, 4)} "
+            "(correlation between selection index I and aggregate breeding value H)."
+        )
+    if diag:
+        footnotes.append(
+            f"Phenotypic covariance matrix source: {diag.get('P_matrix_source', 'raw data')}. "
+            f"Condition number: {_fmt(diag.get('P_condition_number'), 1)}."
+        )
+    for w in warns:
+        footnotes.append(f"⚠️ {w}")
+
+    return _html_table(
+        "Table 8B", f"Expected Genetic Gains from Selection Index",
+        ["Trait", "ΔG (absolute)", "% Gain", "Status"],
+        rows, footnotes=footnotes, left_cols=[0, 3],
+    )
+
+
 def _table_path_analysis(envelope: Dict, target_trait: str = "") -> Optional[str]:
     """Build path analysis coefficient HTML table."""
     tables = envelope.get("tables", {})
@@ -487,44 +641,71 @@ def _table_path_analysis(envelope: Dict, target_trait: str = "") -> Optional[str
 
 
 def _table_selection_index(envelope: Dict, trait: str) -> Optional[str]:
-    """Build selection index HTML table."""
+    """Build selection index genotype ranking HTML table."""
     tables = envelope.get("tables", {})
     si     = tables.get("selection_index")
     if not si:
         return None
 
-    records: List[Dict] = []
-    if isinstance(si, list):
+    # Prefer the dict of {genotype: score} from the new engine output
+    if isinstance(si, dict):
+        scores_dict = si.get("genotype_index_scores") or {}
+        if scores_dict:
+            records = [
+                {"genotype": k, "index_value": v}
+                for k, v in scores_dict.items()
+            ]
+        else:
+            records = si.get("index") or si.get("genotypes") or []
+            if not records:
+                records = [{"genotype": k, "index_value": v}
+                           for k, v in si.items()
+                           if k not in ("weights", "traits", "formula",
+                                        "expected_genetic_gain", "index_weights",
+                                        "matrix_diagnostics", "warnings",
+                                        "index_accuracy_r_IH", "top_selections",
+                                        "sigma_index", "discriminant_function",
+                                        "method", "formula_description",
+                                        "economic_weights", "per_location")]
+    elif isinstance(si, list):
         records = si
-    elif isinstance(si, dict):
-        records = si.get("index") or si.get("genotypes") or []
-        if not records and si:
-            records = [{"genotype": k, "index_value": v}
-                       for k, v in si.items()
-                       if k not in ("weights", "traits", "formula")]
+    else:
+        records = []
 
     if not records:
         return None
 
     rows: List[List[str]] = []
     for rank, rec in enumerate(
-        sorted(records, key=lambda r: float(r.get("index_value", r.get("value", 0)) or 0), reverse=True),
+        sorted(records, key=lambda r: float(r.get("index_value", r.get("value", 0)) or 0),
+               reverse=True),
         1,
     ):
         gid = rec.get("genotype") or rec.get("Genotype", f"G{rank}")
         idx = rec.get("index_value") or rec.get("value") or rec.get("index")
-        rows.append([str(rank), str(gid), _fmt(idx, 4)])
+        is_top = rank <= 3
+        gid_cell = f"<strong>{gid}</strong>" if is_top else str(gid)
+        rows.append([str(rank), gid_cell, _fmt(idx, 4)])
+
+    r_IH = si.get("index_accuracy_r_IH") if isinstance(si, dict) else None
+    fn = si.get("discriminant_function", "") if isinstance(si, dict) else ""
+
+    footnotes = [
+        "Smith-Hazel selection index: I = b′x, where b = P⁻¹Ga.",
+        "Higher index value → higher selection priority. Top 3 genotypes in bold.",
+    ]
+    if fn:
+        footnotes.append(f"Discriminant function: {fn}")
+    if r_IH is not None:
+        footnotes.append(
+            f"Index accuracy r<sub>IH</sub> = {_fmt(r_IH, 4)} "
+            "(correlation between index I and aggregate breeding value H)."
+        )
 
     return _html_table(
-        "Table 8", f"Selection Index Rankings for {trait}",
-        ["Rank", "Genotype", "Selection Index Value"],
-        rows,
-        footnotes=[
-            "Selection index (Smith-Hazel): I = Σ(b<sub>i</sub> × P<sub>i</sub>), "
-            "where b<sub>i</sub> are economic weights and P<sub>i</sub> are phenotypic values.",
-            "Higher index value → higher selection priority.",
-        ],
-        left_cols=[1],
+        "Table 8", f"Selection Index Genotype Rankings",
+        ["Rank", "Genotype", "Index Score (I)"],
+        rows, footnotes=footnotes, left_cols=[1],
     )
 
 
@@ -655,15 +836,18 @@ def build_html_tables(
         if html:
             result.append({"name": name, "html": html})
 
-    _add("Variance Components",          _table_variance_components(envelope, trait))
-    _add("Heritability & Genetic Advance", _table_heritability_ga(envelope, trait))
-    _add("Combined ANOVA",               _table_combined_anova(envelope, trait))
-    _add("Genotype Means & Rankings",    _table_genotype_means(envelope, trait, genotype_col))
-    _add("Stability Analysis",           _table_stability(envelope, trait))
-    _add("Phenotypic Correlations",      _table_correlations(envelope))
-    _add("Path Analysis",                _table_path_analysis(envelope, target_trait))
-    _add("Selection Index",              _table_selection_index(envelope, trait))
-    _add("PCA Loadings Matrix",          _table_pca_loadings(envelope))
-    _add("Cluster Membership",           _table_cluster_membership(envelope))
+    _add("Variance Components",              _table_variance_components(envelope, trait))
+    _add("Heritability & Genetic Advance",   _table_heritability_ga(envelope, trait))
+    _add("Combined ANOVA",                   _table_combined_anova(envelope, trait))
+    _add("Genotype Means & Rankings",        _table_genotype_means(envelope, trait, genotype_col))
+    _add("Stability Analysis",               _table_stability(envelope, trait))
+    _add("Phenotypic Correlations",          _table_correlations(envelope))
+    _add("Genotypic Correlations",           _table_genotypic_correlations(envelope))
+    _add("Multicollinearity Diagnostics",    _table_path_vif(envelope))
+    _add("Path Analysis",                    _table_path_analysis(envelope, target_trait))
+    _add("Selection Index",                  _table_selection_index(envelope, trait))
+    _add("Expected Genetic Gains",           _table_expected_gains(envelope, trait))
+    _add("PCA Loadings Matrix",              _table_pca_loadings(envelope))
+    _add("Cluster Membership",               _table_cluster_membership(envelope))
 
     return result

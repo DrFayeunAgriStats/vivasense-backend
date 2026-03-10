@@ -1555,7 +1555,9 @@ async def genetics_correlations(
 
     # Correlations/path/selection index are inherently multi-trait — always
     # embed full per-trait envelopes so the frontend can tab through traits.
-    _CORR_TABLE_NAMES = {"Phenotypic Correlations", "Path Analysis", "Selection Index"}
+    _CORR_TABLE_NAMES = {"Phenotypic Correlations", "Genotypic Correlations",
+                         "Multicollinearity Diagnostics", "Path Analysis",
+                         "Selection Index", "Expected Genetic Gains"}
     _CORR_FIG_NAMES   = {"Phenotypic Correlation Heatmap", "Genotype Means Bar Chart"}
     slim = {
         "meta":    envelope["meta"],
