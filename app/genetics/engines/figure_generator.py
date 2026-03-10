@@ -440,7 +440,6 @@ def _fig_pca_biplot(envelope: Dict, trait: str) -> Optional[str]:
     tables = envelope.get("tables", {})
     mv     = tables.get("multivariate")
 
-    # Check pipeline-generated biplot first
     plots = envelope.get("plots", {})
     if plots.get("pca_biplot"):
         return None
@@ -452,20 +451,16 @@ def _fig_pca_biplot(envelope: Dict, trait: str) -> Optional[str]:
     if not pca or not isinstance(pca, dict):
         return None
 
-    scores   = pca.get("scores") or pca.get("genotype_scores")
-    loadings = pca.get("loadings") or pca.get("trait_loadings")
-    geno_ids = pca.get("genotype_ids") or pca.get("labels") or []
-    traits   = pca.get("trait_names") or pca.get("traits") or []
-    explained = pca.get("explained") or pca.get("explained_variance_ratio") or []
-
-    if scores is None:
+    biplot_data = pca.get("biplot_data", {})
+    if not biplot_data:
         return None
 
-    try:
-        sc = np.array(scores)
-        if sc.ndim != 2 or sc.shape[1] < 2:
-            return None
-    except Exception:
+    genotype_points = biplot_data.get("genotype_points", [])
+    loading_vectors = biplot_data.get("loading_vectors", [])
+    x_label = biplot_data.get("x_axis_label", "PC1")
+    y_label = biplot_data.get("y_axis_label", "PC2")
+
+    if not genotype_points:
         return None
 
     fig, ax = plt.subplots(figsize=(7, 6))
@@ -473,30 +468,31 @@ def _fig_pca_biplot(envelope: Dict, trait: str) -> Optional[str]:
     ax.axvline(0, color="grey", linewidth=0.5, linestyle="--")
 
     # Genotype scores
-    ax.scatter(sc[:, 0], sc[:, 1], color=_GENO_COLOR, s=50, zorder=5, alpha=0.8)
-    for i, gid in enumerate(geno_ids[:len(sc)]):
-        ax.annotate(str(gid), (sc[i, 0], sc[i, 1]),
+    gx = [float(pt["x"]) for pt in genotype_points]
+    gy = [float(pt["y"]) for pt in genotype_points]
+    ax.scatter(gx, gy, color=_GENO_COLOR, s=50, zorder=5, alpha=0.8)
+    for pt in genotype_points:
+        ax.annotate(str(pt["id"]), (float(pt["x"]), float(pt["y"])),
                     textcoords="offset points", xytext=(4, 3), fontsize=7)
 
-    # Trait loading vectors
-    if loadings is not None:
-        try:
-            lo = np.array(loadings)
-            scale = np.max(np.abs(sc[:, :2])) / np.max(np.abs(lo[:, :2])) * 0.7 if lo.size else 1
-            for j, tname in enumerate(traits[:len(lo)]):
-                ax.annotate("",
-                    xy=(lo[j, 0] * scale, lo[j, 1] * scale),
-                    xytext=(0, 0),
-                    arrowprops=dict(arrowstyle="->", color=_ENV_COLOR, lw=1.2))
-                ax.text(lo[j, 0] * scale * 1.05, lo[j, 1] * scale * 1.05,
-                        str(tname), fontsize=7, color=_ENV_COLOR, fontweight="bold")
-        except Exception:
-            pass
+    # Trait loading vectors — scale to fit within genotype score range
+    if loading_vectors:
+        max_score = max((abs(v) for v in gx + gy), default=1.0)
+        max_loading = max(
+            (max(abs(float(lv["x"])), abs(float(lv["y"]))) for lv in loading_vectors),
+            default=1.0,
+        )
+        scale = max_score / max_loading * 0.7 if max_loading > 0 else 1.0
+        for lv in loading_vectors:
+            lx, ly = float(lv["x"]) * scale, float(lv["y"]) * scale
+            ax.annotate("",
+                xy=(lx, ly), xytext=(0, 0),
+                arrowprops=dict(arrowstyle="->", color=_ENV_COLOR, lw=1.2))
+            ax.text(lx * 1.05, ly * 1.05,
+                    str(lv["trait"]), fontsize=7, color=_ENV_COLOR, fontweight="bold")
 
-    pc1_pct = f" ({float(explained[0])*100:.1f}%)" if len(explained) > 0 else ""
-    pc2_pct = f" ({float(explained[1])*100:.1f}%)" if len(explained) > 1 else ""
-    ax.set_xlabel(f"PC1{pc1_pct}")
-    ax.set_ylabel(f"PC2{pc2_pct}")
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
     ax.set_title("Figure 6: PCA Biplot (Genotype Scores + Trait Loadings)", fontweight="bold")
 
     legend = [
@@ -511,11 +507,10 @@ def _fig_pca_biplot(envelope: Dict, trait: str) -> Optional[str]:
 # ── Figure 7: Dendrogram ──────────────────────────────────────────────────────
 
 def _fig_dendrogram(envelope: Dict) -> Optional[str]:
-    """Hierarchical clustering dendrogram from multivariate results."""
+    """Hierarchical clustering dendrogram — reconstructed from nested tree dict."""
     tables = envelope.get("tables", {})
     mv     = tables.get("multivariate")
 
-    # Check pipeline-generated dendrogram first
     plots = envelope.get("plots", {})
     if plots.get("dendrogram"):
         return None
@@ -527,30 +522,74 @@ def _fig_dendrogram(envelope: Dict) -> Optional[str]:
     if not hc or not isinstance(hc, dict):
         return None
 
-    linkage_mat = hc.get("linkage_matrix") or hc.get("linkage")
-    labels      = hc.get("labels") or hc.get("genotype_ids") or []
+    tree = hc.get("dendrogram_data", {}).get("tree", {})
+    if not tree or not isinstance(tree, dict):
+        return None
 
-    if linkage_mat is None:
+    # ── Step 1: collect leaf names in DFS (left-to-right) order ────────────
+    def _get_leaves(node: Dict) -> List[str]:
+        if node.get("leaf"):
+            return [str(node["id"])]
+        result: List[str] = []
+        for child in node.get("children", []):
+            result.extend(_get_leaves(child))
+        return result
+
+    leaf_names = _get_leaves(tree)
+    if len(leaf_names) < 3:
+        return None
+
+    # ── Step 2: reconstruct scipy-compatible linkage matrix via post-order DFS ──
+    leaf_idx: Dict[str, int] = {name: i for i, name in enumerate(leaf_names)}
+    linkage_rows: List[List[float]] = []
+    counter = [len(leaf_names)]
+
+    def _traverse(node: Dict):  # returns (node_idx, cluster_size) or (-1, 0) on error
+        if node.get("leaf"):
+            return leaf_idx.get(str(node["id"]), -1), 1
+        children = node.get("children", [])
+        if len(children) != 2:
+            return -1, 0
+        l_idx, l_cnt = _traverse(children[0])
+        r_idx, r_cnt = _traverse(children[1])
+        if l_idx < 0 or r_idx < 0:
+            return -1, 0
+        my_idx = counter[0]
+        counter[0] += 1
+        cnt = l_cnt + r_cnt
+        linkage_rows.append([float(l_idx), float(r_idx), float(node.get("height", 0.0)), float(cnt)])
+        return my_idx, cnt
+
+    _traverse(tree)
+    if not linkage_rows:
         return None
 
     try:
-        from scipy.cluster.hierarchy import dendrogram as _dendrogram
-        lm = np.array(linkage_mat)
-        if lm.ndim != 2 or lm.shape[1] < 4:
-            return None
-    except Exception:
-        return None
+        from scipy.cluster.hierarchy import dendrogram as _sci_dendrogram
+        lm = np.array(linkage_rows)
+        n_clusters = int(hc.get("n_clusters", 3))
+        color_threshold = 0.7 * float(lm[:, 2].max()) if lm[:, 2].max() > 0 else None
 
-    fig, ax = plt.subplots(figsize=(max(8, len(labels) * 0.5 + 3), 5))
-    _dendrogram(lm, labels=labels if labels else None,
-                leaf_rotation=45, leaf_font_size=8,
-                color_threshold=0.7 * max(lm[:, 2]),
-                ax=ax)
-    ax.set_title("Figure 7: Hierarchical Clustering Dendrogram (Genotypes)", fontweight="bold")
-    ax.set_xlabel("Genotype")
-    ax.set_ylabel("Distance")
-    fig.tight_layout()
-    return _encode(fig)
+        fig, ax = plt.subplots(figsize=(max(8, len(leaf_names) * 0.6 + 3), 5))
+        _sci_dendrogram(
+            lm,
+            labels=leaf_names,
+            leaf_rotation=45,
+            leaf_font_size=8,
+            color_threshold=color_threshold,
+            ax=ax,
+        )
+        ax.set_title(
+            "Figure 7: Hierarchical Clustering Dendrogram (Ward Linkage, Euclidean Distance)",
+            fontweight="bold",
+        )
+        ax.set_xlabel("Genotype")
+        ax.set_ylabel("Distance")
+        fig.tight_layout()
+        return _encode(fig)
+    except Exception as exc:
+        logger.warning("Dendrogram reconstruction failed: %s", exc)
+        return None
 
 
 # ── Figure 8: Scree Plot ──────────────────────────────────────────────────────
@@ -571,7 +610,12 @@ def _fig_scree_plot(envelope: Dict) -> Optional[str]:
         return None
 
     try:
-        exp = [float(v) * 100 for v in explained]
+        # explained_variance_ratio may be a list of dicts {PC, percent, cumulative_percent}
+        # or a list of raw floats (0–1)
+        if isinstance(explained[0], dict):
+            exp = [float(v.get("percent", 0)) for v in explained]
+        else:
+            exp = [float(v) * 100 for v in explained]
     except Exception:
         return None
 

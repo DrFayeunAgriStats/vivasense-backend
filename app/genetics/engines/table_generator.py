@@ -528,6 +528,112 @@ def _table_selection_index(envelope: Dict, trait: str) -> Optional[str]:
     )
 
 
+# ── Table 9: PCA Loadings ─────────────────────────────────────────────────────
+
+def _table_pca_loadings(envelope: Dict) -> Optional[str]:
+    """PCA loadings matrix — traits × principal components."""
+    mv = envelope.get("tables", {}).get("multivariate")
+    if not mv or not isinstance(mv, dict):
+        return None
+    pca = mv.get("pca")
+    if not pca or not isinstance(pca, dict):
+        return None
+    loadings = pca.get("loadings", {})   # {PC1: {trait: val}, PC2: {...}, ...}
+    if not loadings:
+        return None
+
+    pcs = sorted(loadings.keys())[:4]    # at most 4 PCs
+    if not pcs:
+        return None
+    trait_names = list(loadings[pcs[0]].keys())
+    if not trait_names:
+        return None
+
+    # Resolved explained-variance percent per PC
+    ev_list = pca.get("explained_variance_ratio", [])
+    ev_pct: Dict[str, float] = {}
+    for item in ev_list:
+        if isinstance(item, dict):
+            ev_pct[str(item.get("PC", ""))] = float(item.get("percent", 0))
+
+    # Build column headers with explained variance
+    headers = ["Trait"] + [
+        f"{pc} ({ev_pct.get(pc, 0):.1f}%)" if pc in ev_pct else pc
+        for pc in pcs
+    ]
+
+    # Per-PC find highest-absolute-loading trait for bolding
+    max_trait: Dict[str, str] = {}
+    for pc in pcs:
+        col = loadings.get(pc, {})
+        if col:
+            max_trait[pc] = max(col, key=lambda t: abs(col.get(t, 0)))
+
+    rows: List[List[str]] = []
+    for tname in trait_names:
+        row = [tname]
+        for pc in pcs:
+            val = loadings.get(pc, {}).get(tname)
+            cell = _fmt(val, 4) if val is not None else "—"
+            if max_trait.get(pc) == tname:
+                cell = f"<strong>{cell}</strong>"
+            row.append(cell)
+        rows.append(row)
+
+    return _html_table(
+        "Table 9", "PCA Loadings Matrix (Traits × Principal Components)",
+        headers, rows,
+        footnotes=[
+            "Values are eigenvector loadings (range −1 to +1).",
+            "<strong>Bold</strong> = highest absolute loading per PC (strongest contributor).",
+            "Positive loading → trait increases along that PC axis; negative → decreases.",
+        ],
+        left_cols=[0],
+    )
+
+
+# ── Table 10: Cluster Membership ──────────────────────────────────────────────
+
+def _table_cluster_membership(envelope: Dict) -> Optional[str]:
+    """Cluster membership summary from hierarchical or k-means clustering."""
+    mv = envelope.get("tables", {}).get("multivariate")
+    if not mv or not isinstance(mv, dict):
+        return None
+
+    # Prefer hierarchical; fall back to k-means
+    hc = mv.get("hierarchical_clustering")
+    km = mv.get("kmeans_clustering")
+    source = hc if (hc and isinstance(hc, dict)) else (km if isinstance(km, dict) else None)
+    if source is None:
+        return None
+
+    cluster_members: Dict = source.get("cluster_members", {})
+    if not cluster_members:
+        return None
+
+    method = source.get("method", "Cluster analysis")
+
+    rows: List[List[str]] = []
+    for cluster_name in sorted(cluster_members.keys()):
+        members = cluster_members[cluster_name]
+        rows.append([
+            cluster_name.replace("_", " "),
+            str(len(members)),
+            ", ".join(sorted(str(m) for m in members)),
+        ])
+
+    return _html_table(
+        "Table 10", "Cluster Membership Summary",
+        ["Cluster", "n", "Genotypes"],
+        rows,
+        footnotes=[
+            f"Clustering method: {method}.",
+            "Genotypes within a cluster share similar multi-trait performance profiles.",
+        ],
+        left_cols=[0, 2],
+    )
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 
 def build_html_tables(
@@ -557,5 +663,7 @@ def build_html_tables(
     _add("Phenotypic Correlations",      _table_correlations(envelope))
     _add("Path Analysis",                _table_path_analysis(envelope, target_trait))
     _add("Selection Index",              _table_selection_index(envelope, trait))
+    _add("PCA Loadings Matrix",          _table_pca_loadings(envelope))
+    _add("Cluster Membership",           _table_cluster_membership(envelope))
 
     return result
