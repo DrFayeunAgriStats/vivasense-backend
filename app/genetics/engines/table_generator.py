@@ -388,18 +388,18 @@ def _table_correlations(envelope: Dict) -> Optional[str]:
     """Build phenotypic correlation matrix HTML table."""
     tables = envelope.get("tables", {})
     corr   = tables.get("correlations")
-    if not corr:
+    if not corr or not isinstance(corr, dict):
         return None
 
-    # Handle nested structure: {"matrix": {"t1": {"t2": {"r": …, "p_value": …}}}}
-    matrix: Optional[Dict] = None
-    if isinstance(corr, dict):
-        matrix = corr.get("matrix") or corr.get("phenotypic_matrix")
-        if matrix is None and corr:
-            # corr might be the matrix itself if pipeline stored it directly
-            first_val = next(iter(corr.values()), None)
-            if isinstance(first_val, dict):
-                matrix = corr
+    # Pipeline stores as {"phenotypic": {"matrix": {...}}, "genotypic": {...}}
+    # OR legacy flat {"matrix": {...}}
+    pheno = corr.get("phenotypic") or {}
+    matrix: Optional[Dict] = (
+        pheno.get("matrix")
+        or corr.get("matrix")
+        or corr.get("phenotypic_matrix")
+    )
+    n_obs = pheno.get("n_observations") or corr.get("n_observations", "")
     if not matrix:
         return None
 
@@ -428,12 +428,13 @@ def _table_correlations(envelope: Dict) -> Optional[str]:
                     row_cells.append("—")
         rows.append(row_cells)
 
+    obs_note = f"n = {n_obs} plot observations." if n_obs else ""
     return _html_table(
         "Table 6", "Phenotypic Correlation Matrix",
         headers, rows,
         footnotes=[
-            "Pearson phenotypic correlations. Significance: *** p &lt; 0.001; "
-            "** p &lt; 0.01; * p &lt; 0.05; ns = not significant.",
+            f"Pearson product-moment phenotypic correlations.{' ' + obs_note if obs_note else ''}",
+            "Significance codes: *** p &lt; 0.001; ** p &lt; 0.01; * p &lt; 0.05; ns = not significant.",
             "Values on diagonal = 1 (self-correlation).",
         ],
         left_cols=[0],
@@ -447,7 +448,10 @@ def _table_genotypic_correlations(envelope: Dict) -> Optional[str]:
     if not corr or not isinstance(corr, dict):
         return None
 
-    gc = corr.get("genotypic_correlations") or corr.get("genotypic_matrix")
+    # Pipeline stores genotypic data under "genotypic" key
+    gc = (corr.get("genotypic")
+          or corr.get("genotypic_correlations")
+          or corr.get("genotypic_matrix"))
     if not gc or not isinstance(gc, dict):
         return None
 
@@ -565,6 +569,12 @@ def _table_expected_gains(envelope: Dict, trait: str) -> Optional[str]:
             abs_g = g.get("absolute")
             pct   = g.get("percent")
             flag  = g.get("flag", "")
+            # Auto-flag even for old responses that don't include the flag key
+            if not flag and pct is not None:
+                if abs(pct) > 500:
+                    flag = "❌ >500% implausible"
+                elif abs(pct) > 100:
+                    flag = "⚠️ >100% — verify"
             rows.append([str(tname), _fmt(abs_g, 4), _fmt(pct, 2), str(flag) if flag else "✓"])
         else:
             rows.append([str(tname), _fmt(g, 4), "—", "—"])
@@ -595,48 +605,63 @@ def _table_expected_gains(envelope: Dict, trait: str) -> Optional[str]:
 
 
 def _table_path_analysis(envelope: Dict, target_trait: str = "") -> Optional[str]:
-    """Build path analysis coefficient HTML table."""
+    """Build path analysis coefficient HTML table from direct/indirect effects dicts."""
     tables = envelope.get("tables", {})
     path   = tables.get("path_analysis")
-    if not path:
+    if not path or not isinstance(path, dict):
         return None
 
-    # Try to find direct/indirect effect records
-    records: List[Dict] = []
-    if isinstance(path, list):
-        records = path
-    elif isinstance(path, dict):
-        records = path.get("direct_effects") or path.get("coefficients") or []
-        if not records and path:
-            records = [{"trait": k, **v} if isinstance(v, dict) else {"trait": k, "value": v}
-                       for k, v in path.items() if k not in ("target", "formula", "r_squared")]
+    direct_fx  = path.get("direct_effects", {})
+    indirect_fx = path.get("indirect_effects", {})
+    target     = path.get("target_trait") or target_trait or ""
+    R2         = path.get("R_squared")
+    residual   = path.get("residual_effect", {})
+    if isinstance(residual, dict):
+        residual = residual.get("value")
 
-    if not records:
+    # direct_effects is a dict {trait: {value, correlation_with_target, ...}}
+    if not direct_fx or not isinstance(direct_fx, dict):
         return None
 
     rows: List[List[str]] = []
-    for rec in records:
-        trait   = rec.get("trait") or rec.get("source") or "—"
-        direct  = rec.get("direct") or rec.get("direct_effect") or rec.get("coefficient") or rec.get("value")
-        r_total = rec.get("r") or rec.get("total_correlation")
-        indirect = rec.get("indirect") or rec.get("indirect_total")
+    for pred, info in direct_fx.items():
+        if not isinstance(info, dict):
+            continue
+        direct_val = info.get("value")
+        r_total    = info.get("correlation_with_target")
+        # Sum all indirect effects for this predictor
+        ind_dict   = indirect_fx.get(pred, {}) if isinstance(indirect_fx, dict) else {}
+        ind_total  = sum(
+            v.get("value", 0) if isinstance(v, dict) else float(v)
+            for v in ind_dict.values()
+        ) if ind_dict else None
         rows.append([
-            str(trait),
-            _fmt(direct, 4),
-            _fmt(indirect, 4),
+            str(pred),
+            _fmt(direct_val, 4),
+            _fmt(ind_total, 4) if ind_total is not None else "—",
             _fmt(r_total, 4),
         ])
 
-    target_label = f" on {target_trait}" if target_trait else ""
+    if not rows:
+        return None
+
+    target_label = f" on {target}" if target else ""
+    footnotes = [
+        "Standardised path coefficients (direct effects) from P⁻¹r solution.",
+        "Indirect effect total = sum of all indirect paths via other predictors.",
+        "Total phenotypic correlation ≈ direct + sum(indirect).",
+    ]
+    if R2 is not None:
+        footnotes.append(f"Model R² = {_fmt(R2, 4)}; residual effect = {_fmt(residual, 4)}.")
+    mc = path.get("diagnostics", {}).get("multicollinearity_flag", "")
+    if mc:
+        footnotes.append(f"Multicollinearity assessment: <strong>{mc}</strong> "
+                         "(see VIF Diagnostics table).")
+
     return _html_table(
-        "Table 7", f"Path Analysis Coefficients{target_label}",
-        ["Causal Trait", "Direct Effect", "Indirect Effects (Total)", "Total Correlation (r)"],
-        rows,
-        footnotes=[
-            "Path coefficients computed by stepwise multiple regression.",
-            "Total correlation = direct + indirect effects.",
-        ],
-        left_cols=[0],
+        "Table 7", f"Path Analysis — Direct and Indirect Effects{target_label}",
+        ["Causal Trait", "Direct Effect (p)", "Indirect Effects (Σ)", "Total Correlation (r)"],
+        rows, footnotes=footnotes, left_cols=[0],
     )
 
 
