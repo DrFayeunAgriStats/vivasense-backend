@@ -61,6 +61,9 @@ export interface GeneticsRequestOpts {
   primaryTrait?: string;
 }
 
+/** Alias — import whichever name your component uses */
+export type GeneticsOptions = GeneticsRequestOpts;
+
 export interface VarianceComponentRecord {
   grand_mean?: number;
   n_genotypes?: number;
@@ -175,6 +178,10 @@ function buildGeneticsFormData(
   // ✅ CORRECT: map display names → CSV column names, then join
   if (selectedTraits.length > 0) {
     const csvTraitNames = selectedTraits.map(traitDisplayToColumn);
+    console.log("[Genetics] Trait name conversion:");
+    selectedTraits.forEach((display, i) =>
+      console.log(`  "${display}" → "${csvTraitNames[i]}"`)
+    );
     fd.append("traits", csvTraitNames.join(","));
   }
 
