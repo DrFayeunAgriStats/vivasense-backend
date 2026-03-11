@@ -2043,8 +2043,16 @@ _ai_api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("AI_KEY")
 backend = VivaSenseBackend(ai_api_key=_ai_api_key)
 
 # Genetics module
-from genetics import genetics_router
-app.include_router(genetics_router)
+try:
+    from genetics import genetics_router
+    GENETICS_AVAILABLE = True
+except Exception as e:
+    print(f"Warning: Genetics module import failed: {e}")
+    GENETICS_AVAILABLE = False
+    genetics_router = None
+
+if GENETICS_AVAILABLE and genetics_router is not None:
+    app.include_router(genetics_router)
 
 # Store background tasks
 background_tasks_store = {}
