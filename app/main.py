@@ -2551,8 +2551,8 @@ if __name__ == "__main__":
         print("\nPress Ctrl+C to stop")
         
         uvicorn.run(
-            "main:app",
+            app,
             host=args.host,
-            port=int(os.environ.get("PORT", 8000)),
+            port=int(os.environ.get("PORT", args.port)),
             reload=args.reload
         )
