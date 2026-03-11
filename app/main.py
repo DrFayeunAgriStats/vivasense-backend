@@ -2503,7 +2503,20 @@ async def cleanup_analysis(analysis_id: str, delay: int = 3600):
 
 if __name__ == "__main__":
     import argparse
-    
+    import sys
+
+    # Startup diagnostic — printed to stderr so Render logs capture it
+    print("=== VivaSense startup diagnostic ===", flush=True)
+    for _pkg in ["fastapi", "uvicorn", "pandas", "numpy", "scipy", "statsmodels",
+                 "matplotlib", "seaborn", "openpyxl", "sklearn", "anthropic"]:
+        try:
+            __import__(_pkg)
+            print(f"  [OK] {_pkg}", flush=True)
+        except ImportError as _e:
+            print(f"  [MISSING] {_pkg}: {_e}", flush=True)
+    print(f"  PORT env = {os.environ.get('PORT', 'not set')}", flush=True)
+    print("=== end diagnostic ===", flush=True)
+
     parser = argparse.ArgumentParser(description='VivaSense Statistical Backend')
     parser.add_argument('--host', default='0.0.0.0', help='Host to bind to')
     parser.add_argument('--port', type=int, default=8000, help='Port to bind to')
@@ -2550,9 +2563,15 @@ if __name__ == "__main__":
         print(f"🔍 Health check: http://{args.host}:{args.port}/health")
         print("\nPress Ctrl+C to stop")
         
-        uvicorn.run(
-            app,
-            host=args.host,
-            port=int(os.environ.get("PORT", args.port)),
-            reload=args.reload
-        )
+        try:
+            uvicorn.run(
+                app,
+                host=args.host,
+                port=int(os.environ.get("PORT", args.port)),
+                reload=args.reload
+            )
+        except Exception as _e:
+            import traceback as _tb
+            print(f"FATAL: uvicorn.run failed: {_e}", flush=True)
+            _tb.print_exc()
+            sys.exit(1)
