@@ -2300,7 +2300,7 @@ async def analyze_descriptive(data: Dict):
 async def analyze_oneway(data: Dict):
     """One-way ANOVA — completely randomized design (CRD)."""
     df, response, alpha = _parse_anova_request(data)
-    treatment = _resolve_col(data, df, ("treatment", "factor", "group", "predictor", "treatment_col", "independent"))
+    treatment = _resolve_col(data, df, "treatment", "factor", "group", "predictor", "treatment_col", "independent")
     if not treatment:
         raise HTTPException(status_code=400, detail="A treatment/factor column is required")
     result = _anova_with_plots(df, response, [treatment], alpha=alpha)
@@ -2312,8 +2312,8 @@ async def analyze_oneway(data: Dict):
 async def analyze_oneway_rcbd(data: Dict):
     """One-way ANOVA in a Randomized Complete Block Design (RCBD)."""
     df, response, alpha = _parse_anova_request(data)
-    treatment = _resolve_col(data, df, ("treatment", "factor", "group", "predictor", "treatment_col", "independent"))
-    block     = _resolve_col(data, df, ("block", "block_col", "replicate", "rep"))
+    treatment = _resolve_col(data, df, "treatment", "factor", "group", "predictor", "treatment_col", "independent")
+    block     = _resolve_col(data, df, "block", "block_col", "replicate", "rep")
     if not treatment:
         raise HTTPException(status_code=400, detail="A treatment/factor column is required")
     if not block:
@@ -2512,6 +2512,114 @@ async def analyze_friedman(data: Dict):
     except Exception as e:
         logger.error("Friedman test failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =========================
+# MULTI-TRAIT ENDPOINTS
+# =========================
+
+def _run_multitrait(data: Dict, design: str) -> Dict:
+    """Run a single-trait analysis function for each trait in data['traits']."""
+    rows = data.get('data')
+    if not rows:
+        raise HTTPException(status_code=400, detail="'data' field is required")
+    df = pd.DataFrame(rows)
+    traits = data.get('traits') or data.get('responses') or []
+    if isinstance(traits, str):
+        traits = [t.strip() for t in traits.split(',') if t.strip()]
+    if not traits:
+        raise HTTPException(status_code=400, detail="'traits' list is required for multi-trait analysis")
+    alpha = float(data.get('alpha', 0.05))
+    results = {}
+    for trait in traits:
+        if trait not in df.columns:
+            results[trait] = {'status': 'error', 'error': f'Column {trait!r} not found'}
+            continue
+        single = dict(data)
+        single['response'] = trait
+        try:
+            _, _, _ = _parse_anova_request(single)   # validates data + response
+        except Exception:
+            pass
+        try:
+            if design == 'descriptive':
+                treatment = _resolve_col(single, df, 'treatment', 'factor', 'group', 'predictor')
+                if not treatment:
+                    raise HTTPException(status_code=400, detail='A treatment/factor column is required')
+                analyzer = StatisticalAnalyzer(AnalysisConfig(alpha=alpha))
+                df2 = df.copy(); df2[trait] = pd.to_numeric(df2[trait], errors='coerce')
+                results[trait] = analyzer.descriptive_statistics(df2, trait, [treatment])
+            elif design == 'oneway':
+                treatment = _resolve_col(single, df, 'treatment', 'factor', 'group', 'predictor')
+                if not treatment:
+                    raise HTTPException(status_code=400, detail='A treatment/factor column is required')
+                df2 = df.copy(); df2[trait] = pd.to_numeric(df2[trait], errors='coerce')
+                results[trait] = _anova_with_plots(df2, trait, [treatment], alpha=alpha)
+            elif design == 'oneway_rcbd':
+                treatment = _resolve_col(single, df, 'treatment', 'factor', 'group', 'predictor')
+                block     = _resolve_col(single, df, 'block', 'block_col', 'replicate', 'rep')
+                if not treatment:
+                    raise HTTPException(status_code=400, detail='A treatment/factor column is required')
+                if not block:
+                    raise HTTPException(status_code=400, detail='A block column is required')
+                df2 = df.copy(); df2[trait] = pd.to_numeric(df2[trait], errors='coerce')
+                results[trait] = _anova_with_plots(df2, trait, [treatment], blocks=[block], alpha=alpha)
+            elif design == 'twoway':
+                ta = _resolve_col(single, df, 'treatment_a', 'factor_a')
+                tb = _resolve_col(single, df, 'treatment_b', 'factor_b')
+                if not ta or not tb:
+                    raise HTTPException(status_code=400, detail='treatment_a and treatment_b are required')
+                df2 = df.copy(); df2[trait] = pd.to_numeric(df2[trait], errors='coerce')
+                results[trait] = _anova_with_plots(df2, trait, [ta, tb], alpha=alpha)
+            elif design == 'rcbd_factorial':
+                ta    = _resolve_col(single, df, 'treatment_a', 'factor_a')
+                tb    = _resolve_col(single, df, 'treatment_b', 'factor_b')
+                block = _resolve_col(single, df, 'block', 'block_col', 'replicate', 'rep')
+                if not ta or not tb:
+                    raise HTTPException(status_code=400, detail='treatment_a and treatment_b are required')
+                if not block:
+                    raise HTTPException(status_code=400, detail='A block column is required')
+                df2 = df.copy(); df2[trait] = pd.to_numeric(df2[trait], errors='coerce')
+                results[trait] = _anova_with_plots(df2, trait, [ta, tb], blocks=[block], alpha=alpha)
+            elif design == 'splitplot':
+                wp    = _resolve_col(single, df, 'whole_plot', 'main_plot')
+                sp    = _resolve_col(single, df, 'sub_plot')
+                block = _resolve_col(single, df, 'block', 'block_col', 'replicate', 'rep')
+                if not wp or not sp or not block:
+                    raise HTTPException(status_code=400, detail='whole_plot, sub_plot, and block are required')
+                df2 = df.copy(); df2[trait] = pd.to_numeric(df2[trait], errors='coerce')
+                results[trait] = _anova_with_plots(df2, trait, [wp, sp], blocks=[block], alpha=alpha)
+            results[trait]['status'] = results[trait].get('status', 'success')
+        except HTTPException as e:
+            results[trait] = {'status': 'error', 'error': e.detail}
+        except Exception as e:
+            results[trait] = {'status': 'error', 'error': str(e)}
+    return {'status': 'success', 'design': f'multitrait_{design}', 'traits': traits, 'results': results}
+
+
+@app.post("/analyze/anova/multitrait/oneway")
+async def multitrait_oneway(data: Dict):
+    return _run_multitrait(data, 'oneway')
+
+@app.post("/analyze/anova/multitrait/oneway_rcbd")
+async def multitrait_oneway_rcbd(data: Dict):
+    return _run_multitrait(data, 'oneway_rcbd')
+
+@app.post("/analyze/anova/multitrait/twoway")
+async def multitrait_twoway(data: Dict):
+    return _run_multitrait(data, 'twoway')
+
+@app.post("/analyze/anova/multitrait/rcbd_factorial")
+async def multitrait_rcbd_factorial(data: Dict):
+    return _run_multitrait(data, 'rcbd_factorial')
+
+@app.post("/analyze/anova/multitrait/splitplot")
+async def multitrait_splitplot(data: Dict):
+    return _run_multitrait(data, 'splitplot')
+
+@app.post("/analyze/multitrait/descriptive")
+async def multitrait_descriptive(data: Dict):
+    return _run_multitrait(data, 'descriptive')
 
 # =========================
 # BACKGROUND TASKS
