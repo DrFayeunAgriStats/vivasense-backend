@@ -2226,6 +2226,23 @@ def _parse_anova_request(data: Dict) -> Tuple[pd.DataFrame, str, float]:
     return df, response, alpha
 
 
+def _resolve_col(data: Dict, df: pd.DataFrame, *keys) -> Optional[str]:
+    """Try multiple field-name aliases; match case-insensitively against df columns."""
+    col_lower = {c.lower(): c for c in df.columns}
+    for key in keys:
+        val = data.get(key)
+        if not val:
+            continue
+        if isinstance(val, list):
+            val = val[0]
+        if val in df.columns:
+            return val
+        # case-insensitive fallback
+        if val.lower() in col_lower:
+            return col_lower[val.lower()]
+    return None
+
+
 def _anova_with_plots(df: pd.DataFrame, response: str, predictors: List[str],
                       blocks: List[str] = None, alpha: float = 0.05) -> Dict:
     """Run ANOVA via StatisticalAnalyzer and attach plots + interpretation."""
@@ -2255,13 +2272,24 @@ def _anova_with_plots(df: pd.DataFrame, response: str, predictors: List[str],
 async def analyze_descriptive(data: Dict):
     """Descriptive statistics for one or two grouping factors."""
     df, response, alpha = _parse_anova_request(data)
-    predictors = [
-        col for key in ("treatment", "treatment_a", "treatment_b", "block")
-        if (col := data.get(key)) and col in df.columns
-    ]
+    _TREATMENT_ALIASES = ("treatment", "factor", "group", "predictor", "treatment_col", "independent")
+    _BLOCK_ALIASES     = ("block", "block_col", "replicate", "rep")
+    predictors = []
+    for key_a, key_b, aliases in [
+        ("treatment_a", "treatment_b", None),
+        ("treatment",   None,           _TREATMENT_ALIASES),
+        ("block",       None,           _BLOCK_ALIASES),
+    ]:
+        c1 = _resolve_col(data, df, *(aliases or (key_a,)))
+        if c1 and c1 not in predictors:
+            predictors.append(c1)
+        if key_b:
+            c2 = _resolve_col(data, df, key_b)
+            if c2 and c2 not in predictors:
+                predictors.append(c2)
     if not predictors:
         raise HTTPException(status_code=400,
-                            detail="At least one of 'treatment', 'treatment_a', 'treatment_b', 'block' is required")
+                            detail="At least one grouping column is required (send as 'treatment', 'factor', 'group', or 'block')")
     analyzer = StatisticalAnalyzer(AnalysisConfig(alpha=alpha))
     desc = analyzer.descriptive_statistics(df, response, predictors)
     return {"status": "success", "design": "descriptive", "response": response,
@@ -2272,9 +2300,9 @@ async def analyze_descriptive(data: Dict):
 async def analyze_oneway(data: Dict):
     """One-way ANOVA — completely randomized design (CRD)."""
     df, response, alpha = _parse_anova_request(data)
-    treatment = data.get("treatment")
-    if not treatment or treatment not in df.columns:
-        raise HTTPException(status_code=400, detail="'treatment' column is required")
+    treatment = _resolve_col(data, df, ("treatment", "factor", "group", "predictor", "treatment_col", "independent"))
+    if not treatment:
+        raise HTTPException(status_code=400, detail="A treatment/factor column is required")
     result = _anova_with_plots(df, response, [treatment], alpha=alpha)
     return {"status": "success", "design": "oneway", "response": response,
             "treatment": treatment, **result}
@@ -2284,12 +2312,12 @@ async def analyze_oneway(data: Dict):
 async def analyze_oneway_rcbd(data: Dict):
     """One-way ANOVA in a Randomized Complete Block Design (RCBD)."""
     df, response, alpha = _parse_anova_request(data)
-    treatment = data.get("treatment")
-    block = data.get("block")
-    if not treatment or treatment not in df.columns:
-        raise HTTPException(status_code=400, detail="'treatment' column is required")
-    if not block or block not in df.columns:
-        raise HTTPException(status_code=400, detail="'block' column is required")
+    treatment = _resolve_col(data, df, ("treatment", "factor", "group", "predictor", "treatment_col", "independent"))
+    block     = _resolve_col(data, df, ("block", "block_col", "replicate", "rep"))
+    if not treatment:
+        raise HTTPException(status_code=400, detail="A treatment/factor column is required")
+    if not block:
+        raise HTTPException(status_code=400, detail="A block/replicate column is required")
     result = _anova_with_plots(df, response, [treatment], blocks=[block], alpha=alpha)
     return {"status": "success", "design": "oneway_rcbd", "response": response,
             "treatment": treatment, "block": block, **result}
