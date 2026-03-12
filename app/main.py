@@ -3517,3 +3517,9 @@ async def multitrait_splitplot(
         df, "splitplot", trait_list, float(alpha),
         block=block, main_plot=main_plot, sub_plot=sub_plot
     )
+
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
