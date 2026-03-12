@@ -783,65 +783,68 @@ class StatisticalAnalyzer:
         return assumptions
     
     def compact_letter_display(self, tukey_result) -> Dict[str, str]:
-        """Generate compact letter display from Tukey HSD results"""
+        """Generate compact letter display from Tukey HSD results.
+
+        Uses statsmodels TukeyHSDResults attributes:
+          .groupsunique  — array of unique group names
+          .reject        — bool array, length n*(n-1)/2, ordered as
+                           combinations(groupsunique, 2)
+        """
         try:
-            groups = list(tukey_result.groups_unique)
-            n_groups = len(groups)
-            
-            if n_groups == 0:
+            group_names = list(tukey_result.groupsunique)
+            n = len(group_names)
+            if n == 0:
                 return {}
-            
-            # Create p-value matrix
-            p_matrix = np.ones((n_groups, n_groups))
-            
-            # Fill matrix with p-values
-            for i, g1 in enumerate(groups):
-                for j, g2 in enumerate(groups):
-                    if i < j:
-                        # Find the comparison in tukey result
-                        mask1 = (tukey_result.groups == g1) & (tukey_result.groups_other == g2)
-                        mask2 = (tukey_result.groups == g2) & (tukey_result.groups_other == g1)
-                        
-                        if mask1.any():
-                            p_matrix[i, j] = tukey_result.pvalues[mask1][0]
-                            p_matrix[j, i] = p_matrix[i, j]
-                        elif mask2.any():
-                            p_matrix[i, j] = tukey_result.pvalues[mask2][0]
-                            p_matrix[j, i] = p_matrix[i, j]
-            
-            # Generate letters using algorithm
-            letters = {group: '' for group in groups}
-            
-            # Start with first group
-            current_letter = 65  # ASCII 'A'
-            
-            for i in range(n_groups):
-                if not letters[groups[i]]:
-                    # Start new letter group
-                    group_members = [i]
-                    letters[groups[i]] = chr(current_letter)
-                    
-                    # Find all groups not significantly different from current group
-                    for j in range(i + 1, n_groups):
-                        if not letters[groups[j]]:
-                            # Check if non-significant with all current group members
-                            non_sig_with_all = True
-                            for member in group_members:
-                                if p_matrix[member, j] <= self.config.alpha:
-                                    non_sig_with_all = False
-                                    break
-                            
-                            if non_sig_with_all:
-                                group_members.append(j)
-                                letters[groups[j]] = chr(current_letter)
-                    
-                    current_letter += 1
-            
-            return letters
-            
+
+            # Build significance matrix from the flat .reject array
+            reject = tukey_result.reject
+            sig = np.zeros((n, n), dtype=bool)
+            idx = 0
+            for i in range(n):
+                for j in range(i + 1, n):
+                    sig[i, j] = sig[j, i] = bool(reject[idx])
+                    idx += 1
+
+            # Sort groups by descending mean so letters read a > b > c
+            try:
+                group_means = {
+                    g: float(np.mean(tukey_result.data[tukey_result.groups == g]))
+                    for g in group_names
+                }
+                order = sorted(range(n), key=lambda i: group_means[group_names[i]], reverse=True)
+            except Exception:
+                order = list(range(n))
+
+            sorted_names = [group_names[i] for i in order]
+            sorted_sig   = sig[np.ix_(order, order)]
+
+            # CLD: assign letters so groups sharing a letter are non-significantly different
+            letter_groups: List[set] = []
+            for i in range(n):
+                placed = False
+                for lg in letter_groups:
+                    if all(not sorted_sig[i, j] for j in lg):
+                        lg.add(i)
+                        placed = True
+                        break
+                if not placed:
+                    letter_groups.append({i})
+
+            result: Dict[str, str] = {g: '' for g in group_names}
+            for letter_idx, lg in enumerate(letter_groups):
+                ch = chr(ord('a') + letter_idx)
+                for i in lg:
+                    result[sorted_names[i]] += ch
+
+            for g in group_names:
+                if not result[g]:
+                    result[g] = chr(ord('a') + len(letter_groups))
+
+            return result
+
         except Exception as e:
-            logger.error(f"Letter display generation failed: {str(e)}")
-            return {group: chr(65 + i) for i, group in enumerate(groups)}
+            logger.warning("compact_letter_display failed: %s", e)
+            return {}
     
     def build_publication_tables(self, result: Dict, response: str,
                                 primary_predictor: str = None,
