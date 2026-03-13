@@ -2450,6 +2450,8 @@ def rcbd_factorial_engine(
     lv = levene_test(d, trait, "_AB_")
     guidance = assumption_guidance(sh, lv, "Factorial in RCBD")
     tukey_df, means_letters = tukey_letters(d, trait, "_AB_", alpha)
+    _, means_a = tukey_letters(d, trait, a, alpha)
+    _, means_b = tukey_letters(d, trait, b, alpha)
 
     plots = {
         "mean_plot": mean_plot(d, trait, "_AB_", f"Means +/- SE by {a}:{b} (RCBD)"),
@@ -2471,6 +2473,45 @@ def rcbd_factorial_engine(
     ml   = means_letters.rename(columns={"_AB_": "A:B"})
     best = str(ml.iloc[0]["A:B"]) if not ml.empty else None
 
+    def _factor_rows(mt: pd.DataFrame, col: str) -> List[Dict]:
+        rows = []
+        for _, r in mt.iterrows():
+            rows.append({
+                col: str(r[col]),
+                "mean": float(r["mean"]),
+                "sd": float(r.get("sd", 0)),
+                "se": float(r.get("se", 0)),
+                "n": int(r.get("n", 0)),
+                "letter": str(r.get("letters", "")),
+            })
+        return rows
+
+    interaction_rows: List[Dict] = []
+    for _, r in means_letters.iterrows():
+        ab_val = str(r["_AB_"])
+        mask = d["_AB_"] == ab_val
+        if mask.any():
+            a_val = str(d.loc[mask, a].iloc[0])
+            b_val = str(d.loc[mask, b].iloc[0])
+        else:
+            parts = ab_val.split(":", 1)
+            a_val, b_val = (parts[0], parts[1]) if len(parts) == 2 else (ab_val, "")
+        interaction_rows.append({
+            a: a_val,
+            b: b_val,
+            "mean": float(r["mean"]),
+            "sd": float(r.get("sd", 0)),
+            "se": float(r.get("se", 0)),
+            "n": int(r.get("n", 0)),
+            "letter": str(r.get("letters", "")),
+        })
+
+    means_separation = {
+        a: _factor_rows(means_a, a),
+        b: _factor_rows(means_b, b),
+        "interaction": interaction_rows,
+    }
+
     return {
         "meta": {
             "design": "Factorial in RCBD",
@@ -2489,6 +2530,7 @@ def rcbd_factorial_engine(
             "assumptions": [sh, lv],
             "assumption_guidance": guidance,
         },
+        "means_separation": means_separation,
         "plots": plots,
         "interpretation": interpret_anova("Factorial RCBD ANOVA", p_map, cv, alpha),
         "strict_template": {},  # populated by attach_strict_template below
