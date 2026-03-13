@@ -611,37 +611,41 @@ class StatisticalAnalyzer:
         
         return {"errors": errors, "warnings": warnings}
     
-    def build_formula(self, response: str, predictors: List[str], 
+    @staticmethod
+    def _q(col: str) -> str:
+        """Wrap a column name in patsy Q() so spaces/dashes/parens are safe."""
+        return f"Q('{col}')"
+
+    def build_formula(self, response: str, predictors: List[str],
                      blocks: List[str] = None) -> str:
         """Build model formula with interactions"""
         all_predictors = predictors.copy()
-        
-        # Add blocks if provided
+
         if blocks:
             all_predictors.extend(blocks)
-        
-        # Start with main effects
-        formula = f"{response} ~ " + " + ".join(all_predictors)
-        
-        # Add interactions if requested and appropriate
+
+        r  = self._q(response)
+        ps = [self._q(p) for p in all_predictors]
+
+        formula = f"{r} ~ " + " + ".join(ps)
+
         if self.config.include_interactions and len(predictors) >= 2:
             interactions = []
-            
-            # Add two-way interactions
-            for i in range(len(predictors)):
-                for j in range(i+1, len(predictors)):
-                    interactions.append(f"{predictors[i]}:{predictors[j]}")
-            
-            # Add three-way interactions if specified and enough predictors
+            qp = [self._q(p) for p in predictors]
+
+            for i in range(len(qp)):
+                for j in range(i + 1, len(qp)):
+                    interactions.append(f"{qp[i]}:{qp[j]}")
+
             if self.config.max_interaction_level >= 3 and len(predictors) >= 3:
-                for i in range(len(predictors)):
-                    for j in range(i+1, len(predictors)):
-                        for k in range(j+1, len(predictors)):
-                            interactions.append(f"{predictors[i]}:{predictors[j]}:{predictors[k]}")
-            
+                for i in range(len(qp)):
+                    for j in range(i + 1, len(qp)):
+                        for k in range(j + 1, len(qp)):
+                            interactions.append(f"{qp[i]}:{qp[j]}:{qp[k]}")
+
             if interactions:
                 formula += " + " + " + ".join(interactions)
-        
+
         return formula
     
     def calculate_effect_sizes(self, anova_table: pd.DataFrame, 
@@ -1349,10 +1353,16 @@ class StatisticalAnalyzer:
                 means_dict[predictor] = {str(k): float(v) for k, v in means.items()}
             
             # Tukey HSD for significant main effects
+            # ANOVA table index uses Q('col') keys when build_formula wraps names
+            def _anova_key(col):
+                qkey = f"Q('{col}')"
+                return qkey if qkey in anova_table.index else col
+
             letters_dict = {}
             for predictor in predictors:
-                if predictor in anova_table.index:
-                    p_value = anova_table.loc[predictor, 'PR(>F)']
+                akey = _anova_key(predictor)
+                if akey in anova_table.index:
+                    p_value = anova_table.loc[akey, 'PR(>F)']
                     if pd.notna(p_value) and p_value < self.config.alpha:
                         try:
                             tukey = pairwise_tukeyhsd(df[response], df[predictor], 
