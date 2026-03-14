@@ -2864,6 +2864,227 @@ async def api_health():
 
 
 # =========================
+# EXCEL EXPORT
+# =========================
+
+def _fmt_p_excel(p) -> str:
+    """Format p-value for Excel cells: '<0.001', 4 d.p., or '' for null."""
+    if p is None:
+        return ""
+    try:
+        pf = float(p)
+        if math.isnan(pf) or math.isinf(pf):
+            return ""
+        return "<0.001" if pf < 0.001 else f"{pf:.4f}"
+    except (TypeError, ValueError):
+        return str(p)
+
+
+@app.post("/export/anova/excel")
+async def export_anova_excel(request: Request):
+    """
+    Export ANOVA analysis results to a formatted Excel workbook (.xlsx).
+
+    Body: { "results": <full anova endpoint response>, "trait": "optional name" }
+    Returns: Excel file download.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid JSON body.")
+
+    # Accept either {results: {...}} wrapper or the result dict directly
+    results = body.get("results", body)
+    trait   = body.get("trait") or results.get("response", "Analysis")
+
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        raise HTTPException(status_code=500, detail="openpyxl not installed — Excel export unavailable.")
+
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)  # drop the default blank sheet
+
+    # ── Style helpers ─────────────────────────────────────────────────────────
+    hdr_font  = Font(bold=True, color="FFFFFF", size=10)
+    hdr_fill  = PatternFill("solid", fgColor="1A3A5C")
+    hdr_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ctr_align = Alignment(horizontal="center", vertical="center")
+    lft_align = Alignment(horizontal="left",   vertical="center")
+    total_font = Font(bold=True)
+    thin = Side(style="thin")
+    box  = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    def _write_sheet(ws, title: str, headers: list, rows: list,
+                     footnotes: list = None, left_cols: set = None):
+        left_cols = left_cols or {0}
+        r = 1
+        # Title
+        cell = ws.cell(row=r, column=1, value=title)
+        cell.font = Font(bold=True, size=12)
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=max(len(headers), 1))
+        r += 1
+        # Headers
+        for ci, h in enumerate(headers, 1):
+            c = ws.cell(row=r, column=ci, value=h)
+            c.font  = hdr_font
+            c.fill  = hdr_fill
+            c.alignment = hdr_align
+            c.border = box
+        r += 1
+        # Data rows
+        for data_row in rows:
+            is_total = (isinstance(data_row, (list, tuple)) and
+                        len(data_row) > 0 and str(data_row[0]).strip().lower() == "total")
+            for ci, val in enumerate(data_row, 1):
+                c = ws.cell(row=r, column=ci, value=val)
+                c.border = box
+                c.alignment = lft_align if (ci - 1) in left_cols else ctr_align
+                if is_total:
+                    c.font = total_font
+            r += 1
+        # Footnotes
+        if footnotes:
+            r += 1
+            n_cols = max(len(headers), 1)
+            for fn in footnotes:
+                c = ws.cell(row=r, column=1, value=fn)
+                c.font = Font(italic=True, size=9)
+                if n_cols > 1:
+                    ws.merge_cells(start_row=r, start_column=1,
+                                   end_row=r, end_column=n_cols)
+                r += 1
+        # Auto-width
+        for col in ws.columns:
+            max_len = max((len(str(cell.value or "")) for cell in col), default=8)
+            ws.column_dimensions[get_column_letter(col[0].column)].width = min(max_len + 4, 45)
+
+    pub      = results.get("publication_tables", {})
+    raw_anova = results.get("anova", {})
+
+    # ── Sheet 1: ANOVA Table ─────────────────────────────────────────────────
+    anova_pub = pub.get("anova_table", {})
+    if anova_pub or raw_anova:
+        ws = wb.create_sheet("ANOVA Table")
+        # Build headers — column header must be exactly "p-value"
+        default_headers = ["Source of Variation", "df", "SS", "MS", "F-value", "p-value", "Sig."]
+        pub_headers = anova_pub.get("headers", default_headers)
+        headers = [("p-value" if h.lower() in ("p-value", "p value", "pr(>f)") else h)
+                   for h in pub_headers]
+
+        # Build rows from raw anova data (numeric p-values → correct formatting)
+        rows = []
+        if raw_anova:
+            ss_total = df_total = 0.0
+            for src, vals in raw_anova.items():
+                if not isinstance(vals, dict):
+                    continue
+                ss  = vals.get("sum_sq")
+                df_ = vals.get("df")
+                ms  = (float(ss) / float(df_)
+                       if (ss is not None and df_ and float(df_) > 0) else None)
+                f   = vals.get("F")
+                p   = vals.get("PR(>F)") or vals.get("p_value")
+                try:
+                    df_total += float(df_ or 0)
+                    ss_total += float(ss or 0)
+                except Exception:
+                    pass
+                rows.append([
+                    src,
+                    int(float(df_)) if df_ is not None else "",
+                    round(float(ss), 4) if ss is not None else "",
+                    round(ms, 4)        if ms is not None else "",
+                    round(float(f), 3)  if f  is not None else "",
+                    _fmt_p_excel(p),    # correctly formatted p-value
+                    "",                 # sig stars omitted (Excel can't render HTML spans)
+                ])
+            # Total row
+            rows.append(["Total",
+                          int(df_total) if df_total else "",
+                          round(ss_total, 4), "", "", "", ""])
+        else:
+            # Fall back to pre-formatted publication table rows
+            rows = anova_pub.get("rows", [])
+
+        title = anova_pub.get("title", f"Analysis of Variance for {trait}")
+        _write_sheet(ws, title, headers, rows, anova_pub.get("footnotes"), left_cols={0})
+
+        # Footer block (R², CV, F-test summary) in a separate area
+        footer = anova_pub.get("footer", {})
+        if footer:
+            start = ws.max_row + 2
+            for i, (_, text) in enumerate(footer.items()):
+                c = ws.cell(row=start + i, column=1, value=text)
+                c.font = Font(italic=True, size=9)
+                ws.merge_cells(start_row=start + i, start_column=1,
+                               end_row=start + i, end_column=len(headers))
+
+    # ── Sheet 2: Descriptive Statistics ──────────────────────────────────────
+    desc_pub = pub.get("descriptive_table", {})
+    if desc_pub:
+        ws = wb.create_sheet("Descriptive Stats")
+        _write_sheet(ws,
+                     desc_pub.get("title", f"Descriptive Statistics for {trait}"),
+                     desc_pub.get("headers", []),
+                     desc_pub.get("rows", []),
+                     desc_pub.get("footnotes"),
+                     left_cols={0})
+
+    # ── Sheet 3: Post-hoc Comparisons ────────────────────────────────────────
+    ph_pub = pub.get("posthoc_table", {})
+    if ph_pub:
+        ws = wb.create_sheet("Post-hoc")
+        _write_sheet(ws,
+                     ph_pub.get("title", "Post-hoc Comparisons"),
+                     ph_pub.get("headers", []),
+                     ph_pub.get("rows", []),
+                     ph_pub.get("footnotes"),
+                     left_cols={0, 3})
+
+    # ── Sheet 4: Assumption Tests ─────────────────────────────────────────────
+    assump_pub = pub.get("assumptions_table", {})
+    if assump_pub:
+        ws = wb.create_sheet("Assumption Tests")
+        _write_sheet(ws,
+                     assump_pub.get("title", "Assumption Tests"),
+                     assump_pub.get("headers", []),
+                     assump_pub.get("rows", []),
+                     assump_pub.get("footnotes"),
+                     left_cols={0, 4})
+
+    # ── Sheet 5: Model Fit ────────────────────────────────────────────────────
+    mfit_pub = pub.get("model_fit_table", {})
+    if mfit_pub:
+        ws = wb.create_sheet("Model Fit")
+        _write_sheet(ws,
+                     mfit_pub.get("title", "Model Fit Statistics"),
+                     mfit_pub.get("headers", []),
+                     mfit_pub.get("rows", []),
+                     mfit_pub.get("footnotes"),
+                     left_cols={0, 2})
+
+    if not wb.sheetnames:
+        raise HTTPException(status_code=400,
+                            detail="No analysis data found. Pass the full ANOVA endpoint response in 'results'.")
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    safe = "".join(c for c in trait if c.isalnum() or c in "-_ ").strip().replace(" ", "_") or "anova"
+    filename = f"VivaSense_ANOVA_{safe}.xlsx"
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# =========================
 # BACKGROUND TASKS
 # =========================
 

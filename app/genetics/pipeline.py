@@ -178,7 +178,7 @@ class GeneticsPipeline:
         if len(trait_cols) >= 2:
             try:
                 ph_corr = self.corr_engine.phenotypic_correlations(df, trait_cols, loc_col)
-                ge_corr = self.corr_engine.genotypic_correlations(df, trait_cols, design.genotype_col, vc_results)
+                ge_corr = self.corr_engine.genotypic_correlations(df, trait_cols, design.genotype_col, vc_results, rep_col=design.rep_col)
                 corr_result = {"phenotypic": ph_corr, "genotypic": ge_corr}
             except Exception:
                 logger.error("Correlation analysis failed:\n%s", traceback.format_exc())

@@ -1728,3 +1728,233 @@ async def genetics_markers(
         )
 
     return _json_response(_build_marker_envelope(raw, alpha))
+
+
+# ── Multiple Regression ────────────────────────────────────────────────────────
+
+def _build_regression_envelope(
+    reg_result: Dict[str, Any],
+    filename: str,
+    alpha: float,
+) -> Dict[str, Any]:
+    """
+    Wrap MultipleRegressionEngine output into the V2.2 envelope format.
+    """
+    from .compat import interpret_genetics
+
+    reg = reg_result.get("regression", {})
+    model_fit   = reg.get("model_fit", {})
+    coefs       = reg.get("coefficients", [])
+    vif         = reg.get("vif", {})
+    assumptions = reg.get("assumptions", {})
+    warnings_   = reg.get("warnings", [])
+    response    = reg.get("response", "response")
+    predictors  = reg.get("predictors", [])
+
+    r2     = model_fit.get("r_squared")
+    adj_r2 = model_fit.get("adj_r_squared")
+    f_p    = model_fit.get("f_p_value")
+    f_stat = model_fit.get("f_statistic")
+    rmse   = model_fit.get("rmse")
+    n_obs  = model_fit.get("n_obs", 0)
+
+    # VIF flat records (for tables)
+    vif_records = [
+        {
+            "predictor":      pred,
+            "vif":            round_val(_safe(info.get("vif"))),
+            "flag":           info.get("flag", "ok"),
+            "interpretation": info.get("interpretation", ""),
+        }
+        for pred, info in vif.items()
+    ]
+
+    # Assumption records
+    norm_rec = assumptions.get("normality", {})
+    hom_rec  = assumptions.get("homoscedasticity", {})
+    assumption_records = [
+        {
+            "test":           norm_rec.get("test", "Normality"),
+            "statistic":      round_val(_safe(norm_rec.get("statistic"))),
+            "p_value":        round_val(_safe(norm_rec.get("p_value"))),
+            "p_display":      norm_rec.get("p_display", "N/A"),
+            "passed":         norm_rec.get("passed"),
+            "interpretation": norm_rec.get("interpretation", ""),
+        },
+        {
+            "test":           hom_rec.get("test", "Homoscedasticity"),
+            "statistic":      round_val(_safe(hom_rec.get("statistic"))),
+            "p_value":        round_val(_safe(hom_rec.get("p_value"))),
+            "p_display":      hom_rec.get("p_display", "N/A"),
+            "passed":         hom_rec.get("passed"),
+            "interpretation": hom_rec.get("interpretation", ""),
+        },
+    ]
+
+    # Guidance: both passed?
+    norm_passed = norm_rec.get("passed")
+    hom_passed  = hom_rec.get("passed")
+    if norm_passed is True and hom_passed is True:
+        assumption_guidance_overall = "All tested regression assumptions are satisfied."
+    elif norm_passed is False or hom_passed is False:
+        assumption_guidance_overall = (
+            "One or more regression assumptions were violated — interpret results with caution."
+        )
+    else:
+        assumption_guidance_overall = "Assumption test results are inconclusive."
+
+    # Model fit record (single row)
+    fit_record = {k: round_val(_safe(v)) if isinstance(v, (int, float)) else v
+                  for k, v in model_fit.items()}
+
+    # Plain-English interpretation
+    r2_pct = f"{float(r2) * 100:.1f}" if r2 is not None else "—"
+    f_sig  = "significant" if f_p is not None and float(f_p) < alpha else "non-significant"
+    interp = (
+        f"Multiple regression of {response} on {len(predictors)} predictor(s) "
+        f"({', '.join(predictors)}) explained {r2_pct}% of the variance "
+        f"(R² = {round_val(_safe(r2))}, adj R² = {round_val(_safe(adj_r2))}, "
+        f"RMSE = {round_val(rmse)}, n = {n_obs}). "
+        f"The overall model was {f_sig} "
+        f"(F = {round_val(_safe(f_stat))}, p {fmt_p_display(f_p)})."
+    )
+
+    # Intelligence blocks
+    vif_severe = [p for p, info in vif.items() if info.get("flag") == "severe"]
+    vif_moderate = [p for p, info in vif.items() if info.get("flag") == "moderate"]
+
+    exec_insight = (
+        f"The regression model explains {r2_pct}% of variation in {response}. "
+        f"The overall F-test is {f_sig}. "
+        + (f"Severe multicollinearity detected for: {', '.join(vif_severe)}. " if vif_severe else "")
+        + (f"Moderate multicollinearity for: {', '.join(vif_moderate)}. " if vif_moderate else "")
+    )
+
+    sig_preds = [c["term"] for c in coefs if c["term"] != "Intercept"
+                 and c.get("p_value") is not None and float(c["p_value"]) < alpha]
+    reviewer_radar = [
+        f"Report standardised (β) coefficients alongside unstandardised estimates.",
+        f"State whether predictor variables were checked for multicollinearity before modelling.",
+        f"Confirm that the sample size satisfies the 10-observations-per-predictor rule "
+        f"(current: {n_obs} obs, {len(predictors)} predictors).",
+        "Include residual diagnostic plots (QQ-plot, residuals vs fitted) in supplementary materials.",
+    ]
+    decision_rules = [
+        (f"Significant predictors (p < {alpha}): {', '.join(sig_preds)}."
+         if sig_preds else f"No predictor reached significance at α = {alpha}."),
+        (f"Multicollinearity concern: {', '.join(vif_severe + vif_moderate)}."
+         if (vif_severe or vif_moderate) else "No multicollinearity issues detected."),
+        (f"Normality assumption {'met' if norm_passed else 'violated' if norm_passed is False else 'untested'}; "
+         f"homoscedasticity {'met' if hom_passed else 'violated' if hom_passed is False else 'untested'}."),
+    ]
+
+    envelope: Dict[str, Any] = {
+        "meta": {
+            "design":       "Multiple Linear Regression (OLS)",
+            "response":     response,
+            "predictors":   predictors,
+            "n_obs":        n_obs,
+            "n_predictors": len(predictors),
+            "filename":     filename,
+            "alpha":        alpha,
+            "warnings":     warnings_,
+        },
+        "tables": {
+            "coefficients":        coefs,
+            "model_fit":           [fit_record],
+            "vif":                 vif_records,
+            "assumptions":         assumption_records,
+            "assumption_guidance": {"overall": assumption_guidance_overall},
+        },
+        "plots":  {},
+        "interpretation": interp,
+        "strict_template": {},
+        "intelligence": {
+            "executive_insight":   exec_insight,
+            "reviewer_radar":      reviewer_radar,
+            "decision_rules":      decision_rules,
+            "assumptions_verdict": assumption_guidance_overall,
+        },
+    }
+    return envelope
+
+
+@genetics_router.post("/regression")
+async def genetics_regression(
+    file: UploadFile = File(
+        ...,
+        description="CSV or Excel file containing response and predictor columns",
+    ),
+    response_col: str = Form(
+        ...,
+        description="Dependent variable column name",
+    ),
+    predictor_cols: str = Form(
+        ...,
+        description=(
+            "Comma-separated list of predictor column names "
+            "(e.g. 'Plant_Height,Days_to_Flowering,Leaf_Area')"
+        ),
+    ),
+    alpha: float = Form(
+        0.05,
+        description="Significance level for tests and confidence intervals (default 0.05)",
+    ),
+):
+    """
+    Multiple linear regression (OLS) with full diagnostics.
+
+    Computes:
+    - Coefficient table: β, SE, t-statistic, p-value, 95% CI, significance stars
+    - Model fit: R², adjusted R², F-statistic, RMSE, AIC, BIC
+    - VIF (Variance Inflation Factor) for multicollinearity detection
+    - Assumption tests: Shapiro-Wilk on residuals (normality), Breusch-Pagan (homoscedasticity)
+
+    **Minimum requirements**: response column + at least one predictor, ≥ k+2 complete rows.
+    """
+    from .engines.regression import MultipleRegressionEngine
+
+    df = await _load_file(file)
+
+    # Parse predictor list — accept comma-separated string or JSON array
+    preds_raw = predictor_cols.strip()
+    if preds_raw.startswith("["):
+        try:
+            import json as _json
+            preds_parsed = _json.loads(preds_raw)
+            if isinstance(preds_parsed, list):
+                predictors = [str(p).strip() for p in preds_parsed if str(p).strip()]
+            else:
+                predictors = [preds_raw]
+        except Exception:
+            predictors = [p.strip() for p in preds_raw.split(",") if p.strip()]
+    else:
+        predictors = [p.strip() for p in preds_raw.split(",") if p.strip()]
+
+    if not predictors:
+        raise HTTPException(
+            status_code=400,
+            detail="predictor_cols must contain at least one column name.",
+        )
+
+    require_cols(df, [response_col] + predictors)
+
+    engine = MultipleRegressionEngine()
+    result = engine.analyze(df, response=response_col, predictors=predictors, alpha=alpha)
+
+    if result.get("status") == "failed":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Regression analysis failed.",
+                "error":   result.get("error", "Unknown error."),
+                "warnings": result.get("warnings", []),
+            },
+        )
+
+    envelope = _build_regression_envelope(
+        result,
+        filename=file.filename or "upload",
+        alpha=alpha,
+    )
+    return _json_response(envelope)
