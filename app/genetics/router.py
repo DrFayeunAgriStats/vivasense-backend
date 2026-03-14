@@ -1885,17 +1885,31 @@ async def genetics_regression(
         ...,
         description="CSV or Excel file containing response and predictor columns",
     ),
-    response_col: str = Form(
-        ...,
-        description="Dependent variable column name",
-    ),
-    predictor_cols: str = Form(
-        ...,
+    response_col: Optional[str] = Form(
+        None,
         description=(
-            "Comma-separated list of predictor column names "
-            "(e.g. 'Plant_Height,Days_to_Flowering,Leaf_Area')"
+            "Dependent variable column name. "
+            "If omitted, the last trait in 'traits' is used as the response."
         ),
     ),
+    predictor_cols: Optional[str] = Form(
+        None,
+        description=(
+            "Comma-separated predictor column names "
+            "(e.g. 'Plant_Height,Days_to_Flowering'). "
+            "If omitted, all traits except the response are used."
+        ),
+    ),
+    traits: Optional[str] = Form(
+        None,
+        description=(
+            "JSON array of trait column names sent by the genetics frontend UI "
+            "(e.g. '[\"Yield\",\"PH\",\"Pods\"]'). "
+            "Last trait = response; remaining = predictors. "
+            "Ignored when response_col / predictor_cols are provided."
+        ),
+    ),
+    genotype_col: Optional[str] = Form(None, description="Ignored for regression — accepted for frontend compatibility"),
     alpha: float = Form(
         0.05,
         description="Significance level for tests and confidence intervals (default 0.05)",
@@ -1903,6 +1917,12 @@ async def genetics_regression(
 ):
     """
     Multiple linear regression (OLS) with full diagnostics.
+
+    Accepts two calling conventions:
+    1. Explicit fields:  response_col + predictor_cols  (direct API use)
+    2. Traits array:     traits JSON array              (genetics frontend UI)
+       Last trait in the array → response variable.
+       All other traits        → predictors.
 
     Computes:
     - Coefficient table: β, SE, t-statistic, p-value, 95% CI, significance stars
@@ -1912,29 +1932,60 @@ async def genetics_regression(
 
     **Minimum requirements**: response column + at least one predictor, ≥ k+2 complete rows.
     """
+    import json as _json
     from .engines.regression import MultipleRegressionEngine
 
     df = await _load_file(file)
 
-    # Parse predictor list — accept comma-separated string or JSON array
-    preds_raw = predictor_cols.strip()
-    if preds_raw.startswith("["):
-        try:
-            import json as _json
-            preds_parsed = _json.loads(preds_raw)
-            if isinstance(preds_parsed, list):
+    # ── Resolve response + predictors from whichever convention was used ──────
+    if response_col and predictor_cols:
+        # Convention 1: explicit fields
+        preds_raw = predictor_cols.strip()
+        if preds_raw.startswith("["):
+            try:
+                preds_parsed = _json.loads(preds_raw)
                 predictors = [str(p).strip() for p in preds_parsed if str(p).strip()]
-            else:
-                predictors = [preds_raw]
-        except Exception:
+            except Exception:
+                predictors = [p.strip() for p in preds_raw.split(",") if p.strip()]
+        else:
             predictors = [p.strip() for p in preds_raw.split(",") if p.strip()]
+
+    elif traits:
+        # Convention 2: traits array from the genetics frontend UI
+        try:
+            trait_list = _json.loads(traits)
+            if not isinstance(trait_list, list):
+                raise ValueError("traits must be a JSON array")
+            trait_list = [str(t).strip() for t in trait_list if str(t).strip()]
+        except Exception:
+            # fallback: comma-separated string
+            trait_list = [t.strip() for t in traits.split(",") if t.strip()]
+
+        if len(trait_list) < 2:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Multiple regression requires at least 2 traits: "
+                    "the last selected trait becomes the response variable, "
+                    "all others become predictors."
+                ),
+            )
+        response_col = trait_list[-1]   # last selected trait = Y
+        predictors   = trait_list[:-1]  # all others = X
+
     else:
-        predictors = [p.strip() for p in preds_raw.split(",") if p.strip()]
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Provide either (a) response_col + predictor_cols, "
+                "or (b) a traits JSON array with ≥ 2 traits."
+            ),
+        )
 
     if not predictors:
         raise HTTPException(
             status_code=400,
-            detail="predictor_cols must contain at least one column name.",
+            detail="At least one predictor column is required.",
         )
 
     require_cols(df, [response_col] + predictors)
