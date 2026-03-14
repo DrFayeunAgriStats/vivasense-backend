@@ -25,9 +25,10 @@ import os
 import math
 
 # FastAPI imports
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Request
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+import httpx
 import uvicorn
 
 # Suppress warnings
@@ -2633,6 +2634,234 @@ async def multitrait_splitplot(data: Dict):
 @app.post("/analyze/multitrait/descriptive")
 async def multitrait_descriptive(data: Dict):
     return _run_multitrait(data, 'descriptive')
+
+# =========================
+# AI INTERPRETATION ENDPOINTS
+# =========================
+
+_ANTHROPIC_URL     = "https://api.anthropic.com/v1/messages"
+_ANTHROPIC_VERSION = "2023-06-01"
+_SONNET_MODEL      = "claude-sonnet-4-6"
+
+def _anthropic_headers() -> dict:
+    return {
+        "x-api-key":         _ai_api_key or "",
+        "anthropic-version": _ANTHROPIC_VERSION,
+        "content-type":      "application/json",
+    }
+
+_INTERPRET_SYSTEM = (
+    "You are Dr. Fayeun, a plant breeding statistician. "
+    "Interpret the statistical results clearly and concisely for a researcher. "
+    "Focus on practical significance: which treatments/genotypes performed best, "
+    "what the effect sizes mean, whether assumptions were met. "
+    "Use plain English. Avoid unnecessary jargon. Be direct and actionable."
+)
+
+async def _static_sse(text: str):
+    """Emit static text as Anthropic-compatible SSE so streaming frontends work."""
+    yield f"data: {json.dumps({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}})}\n\n"
+    chunk = 80
+    for i in range(0, len(text), chunk):
+        yield f"data: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': text[i:i+chunk]}})}\n\n"
+    yield f"data: {json.dumps({'type': 'message_stop'})}\n\n"
+
+
+@app.post("/api/interpret")
+async def api_interpret(request: Request):
+    """
+    AI-powered interpretation of analysis results.
+    Body: { analysis_type, results, crop?, treatment_description?, study_objective?,
+            location?, additional_context?, stream? }
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid JSON body.")
+
+    analysis_type = body.get("analysis_type", "ANOVA")
+    results       = body.get("results", {})
+    stream        = body.get("stream", True)
+
+    # Build context block from optional fields
+    ctx_lines = []
+    for field, label in [("crop",                  "Crop"),
+                         ("treatment_description", "Treatment"),
+                         ("study_objective",       "Objective"),
+                         ("location",              "Location"),
+                         ("additional_context",    "Notes")]:
+        if body.get(field):
+            ctx_lines.append(f"{label}: {body[field]}")
+    context_block = ("STUDY CONTEXT:\n" + "\n".join(ctx_lines) + "\n\n") if ctx_lines else ""
+
+    # Static fallback text — pulled from the result JSON the frontend already has
+    static_text = (
+        results.get("interpretation")
+        or (results.get("strict_template") or {}).get("interpretation_template")
+        or (results.get("intelligence") or {}).get("executive_insight")
+        or "Analysis complete. Review the tables above for detailed results."
+    )
+
+    # If no API key, return static fallback immediately
+    if not _ai_api_key:
+        if stream:
+            return StreamingResponse(
+                _static_sse(static_text),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+        return {"interpretation": static_text, "source": "static", "fallback_used": True}
+
+    # Strip base64 plots before sending to Anthropic (saves tokens)
+    def _strip_plots(obj):
+        if isinstance(obj, dict):
+            return {k: _strip_plots(v) for k, v in obj.items()
+                    if k not in ("mean_plot", "box_plot", "interaction_plot",
+                                 "significance_heatmap", "correlation_heatmap",
+                                 "pca_biplot", "plots", "publication_bar", "bar")}
+        if isinstance(obj, list):
+            return [_strip_plots(i) for i in obj]
+        return obj
+
+    results_stripped = _strip_plots(results)
+    user_msg = (
+        f"Please interpret these {analysis_type} results for the researcher.\n\n"
+        f"{context_block}"
+        f"RESULTS:\n{json.dumps(results_stripped, indent=2)}"
+    )
+
+    payload = {
+        "model":      _SONNET_MODEL,
+        "max_tokens": 1500,
+        "system":     _INTERPRET_SYSTEM,
+        "messages":   [{"role": "user", "content": user_msg}],
+        "stream":     bool(stream),
+    }
+
+    if stream:
+        async def _generate():
+            try:
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    async with client.stream(
+                        "POST", _ANTHROPIC_URL,
+                        headers=_anthropic_headers(), json=payload
+                    ) as resp:
+                        if resp.status_code != 200:
+                            err = await resp.aread()
+                            # Fall back to static on API error
+                            async for chunk in _static_sse(static_text):
+                                yield chunk
+                            return
+                        async for line in resp.aiter_lines():
+                            if line.startswith("data: "):
+                                yield f"{line}\n\n"
+            except Exception:
+                async for chunk in _static_sse(static_text):
+                    yield chunk
+
+        return StreamingResponse(
+            _generate(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    else:
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(
+                    _ANTHROPIC_URL, headers=_anthropic_headers(), json=payload
+                )
+            if resp.status_code == 200:
+                text = resp.json()["content"][0]["text"]
+                return {"interpretation": text, "source": "ai", "fallback_used": False}
+        except Exception:
+            pass
+        return {"interpretation": static_text, "source": "static", "fallback_used": True}
+
+
+@app.post("/api/followup")
+async def api_followup(request: Request):
+    """
+    AI follow-up questions on analysis results.
+    Body: { messages: [{role, content}], analysis_results, user_context?, stream? }
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid JSON body.")
+
+    messages         = body.get("messages", [])
+    analysis_results = body.get("analysis_results", {})
+    stream           = body.get("stream", True)
+
+    fallback_msg = "AI follow-up is not available at the moment. Please review the analysis tables above."
+
+    if not _ai_api_key:
+        if stream:
+            return StreamingResponse(
+                _static_sse(fallback_msg),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+        return {"content": fallback_msg, "source": "static", "fallback_used": True}
+
+    system = (
+        _INTERPRET_SYSTEM
+        + f"\n\nANALYSIS RESULTS:\n{json.dumps(analysis_results, indent=2)}"
+    )
+    payload = {
+        "model":      _SONNET_MODEL,
+        "max_tokens": 1500,
+        "system":     system,
+        "messages":   messages,
+        "stream":     bool(stream),
+    }
+
+    if stream:
+        async def _gen():
+            try:
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    async with client.stream(
+                        "POST", _ANTHROPIC_URL,
+                        headers=_anthropic_headers(), json=payload
+                    ) as resp:
+                        if resp.status_code != 200:
+                            async for chunk in _static_sse(fallback_msg):
+                                yield chunk
+                            return
+                        async for line in resp.aiter_lines():
+                            if line.startswith("data: "):
+                                yield f"{line}\n\n"
+            except Exception:
+                async for chunk in _static_sse(fallback_msg):
+                    yield chunk
+
+        return StreamingResponse(
+            _gen(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    else:
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(
+                    _ANTHROPIC_URL, headers=_anthropic_headers(), json=payload
+                )
+            if resp.status_code == 200:
+                return {"content": resp.json()["content"][0]["text"], "source": "ai"}
+        except Exception:
+            pass
+        return {"content": fallback_msg, "source": "static", "fallback_used": True}
+
+
+@app.api_route("/api/health", methods=["GET", "HEAD"])
+async def api_health():
+    return {
+        "status": "ok",
+        "service": "VivaSense AI",
+        "api_key_configured": bool(_ai_api_key),
+        "endpoints": ["/api/interpret", "/api/followup"],
+    }
+
 
 # =========================
 # BACKGROUND TASKS
