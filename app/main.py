@@ -639,13 +639,34 @@ async def chat(request: Request, body: ChatRequest):
         return {"content": text}
 
 
+async def _static_sse_stream(text: str):
+    """Emit a static text string as Anthropic-compatible SSE so streaming frontends work."""
+    yield f"data: {json.dumps({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}})}\n\n"
+    chunk_size = 80
+    for i in range(0, len(text), chunk_size):
+        chunk = text[i:i + chunk_size]
+        yield f"data: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': chunk}})}\n\n"
+    yield f"data: {json.dumps({'type': 'message_stop'})}\n\n"
+
+
 @app.post("/api/interpret")
 async def interpret(request: Request, body: InterpretRequest):
     client_ip = request.client.host
     if is_rate_limited(client_ip):
         raise HTTPException(status_code=429, detail="Too many requests. Please wait a moment.")
     if not ANTHROPIC_API_KEY:
-        raise HTTPException(status_code=503, detail="AI service not configured.")
+        static_text = (
+            body.results.get("interpretation")
+            or body.results.get("strict_template", {}).get("interpretation_template")
+            or "Analysis complete. Review the tables above for detailed results."
+        )
+        if body.stream:
+            return StreamingResponse(
+                _static_sse_stream(static_text),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+        return {"interpretation": static_text, "source": "static", "fallback_used": True}
 
     context_lines = []
     if body.crop:
@@ -803,7 +824,14 @@ async def followup(request: Request, body: FollowupRequest):
     if is_rate_limited(client_ip):
         raise HTTPException(status_code=429, detail="Too many requests. Please wait a moment.")
     if not ANTHROPIC_API_KEY:
-        raise HTTPException(status_code=503, detail="AI service not configured.")
+        fallback_msg = "AI follow-up is not available at the moment. Please review the analysis results above."
+        if body.stream:
+            return StreamingResponse(
+                _static_sse_stream(fallback_msg),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+        return {"content": fallback_msg, "source": "static", "fallback_used": True}
 
     results_context = json.dumps(body.analysis_results, indent=2)
     context_block = ""
