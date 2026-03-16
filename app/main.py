@@ -48,6 +48,10 @@ from __future__ import annotations
 
 import io
 import os
+import gc
+import asyncio
+import concurrent.futures
+import functools
 import json
 import base64
 import hashlib
@@ -56,6 +60,8 @@ import warnings
 from typing import Any, Dict, List, Optional, Tuple
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
+
+import psutil
 
 import numpy as np
 import pandas as pd
@@ -105,6 +111,13 @@ app.add_middleware(
 
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")  # Set in Render dashboard: ADMIN_TOKEN=your-secret
 USAGE_LOG: deque = deque(maxlen=2000)        # Rolling in-memory log, last 2000 events
+
+# ── Resource limits ──────────────────────────────────────────
+MAX_FILE_SIZE_BYTES: int = 10 * 1024 * 1024   # 10 MB
+MAX_COMPUTATION_SECONDS: int = 30             # timeout per analysis request
+
+# Thread pool for running sync engine functions with timeout support
+_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
 # Endpoint → friendly design label
 DESIGN_LABELS: Dict[str, str] = {
@@ -171,6 +184,8 @@ async def usage_logger_middleware(request: Request, call_next):
             duration_ms=duration_ms,
             ip=ip,
         )
+        if path.startswith("/analyze/"):
+            gc.collect()
     return response
 
 
@@ -864,7 +879,19 @@ def root():
 
 @app.api_route("/health", methods=["GET", "HEAD"])
 def health():
-    return {"status": "healthy", "version": "2.0.0"}
+    proc = psutil.Process()
+    mem = proc.memory_info()
+    vm = psutil.virtual_memory()
+    return {
+        "status": "healthy",
+        "version": "2.0.0",
+        "memory": {
+            "process_rss_mb": round(mem.rss / 1024 / 1024, 1),
+            "process_vms_mb": round(mem.vms / 1024 / 1024, 1),
+            "system_used_percent": vm.percent,
+            "system_available_mb": round(vm.available / 1024 / 1024, 1),
+        },
+    }
 
 
 # ============================================================
@@ -931,7 +958,7 @@ def df_to_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
 def _b64_png(fig) -> str:
     buf = io.BytesIO()
     fig.tight_layout()
-    fig.savefig(buf, format="png", dpi=170)
+    fig.savefig(buf, format="png", dpi=100)
     plt.close(fig)
     buf.seek(0)
     return base64.b64encode(buf.read()).decode("utf-8")
@@ -943,6 +970,11 @@ async def load_csv(upload: UploadFile) -> pd.DataFrame:
     if not (upload.filename or "").lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV files are supported.")
     content = await upload.read()
+    if len(content) > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large ({len(content) // 1024} KB). Maximum allowed size is 10 MB.",
+        )
     try:
         df = pd.read_csv(io.BytesIO(content))
     except Exception as e:
@@ -951,6 +983,21 @@ async def load_csv(upload: UploadFile) -> pd.DataFrame:
         raise HTTPException(status_code=400, detail="Uploaded CSV is empty.")
     df.columns = [str(c).strip() for c in df.columns]
     return df
+
+
+async def run_with_timeout(fn, *args, **kwargs):
+    """Run a synchronous engine function in a thread with a 30-second timeout."""
+    loop = asyncio.get_event_loop()
+    try:
+        return await asyncio.wait_for(
+            loop.run_in_executor(_executor, functools.partial(fn, *args, **kwargs)),
+            timeout=MAX_COMPUTATION_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail=f"Analysis timed out after {MAX_COMPUTATION_SECONDS}s. Try a smaller dataset.",
+        )
 
 
 def require_cols(df: pd.DataFrame, cols: List[str]) -> None:
@@ -2771,7 +2818,8 @@ async def analyze_anova_oneway(
 ):
     df = await load_csv(file)
     require_cols(df, [factor, trait])
-    return attach_strict_template(oneway_engine(df, factor, trait, float(alpha)), float(alpha))
+    result = await run_with_timeout(oneway_engine, df, factor, trait, float(alpha))
+    return attach_strict_template(result, float(alpha))
 
 
 @app.post("/analyze/anova/oneway_rcbd")
@@ -2785,7 +2833,8 @@ async def analyze_anova_oneway_rcbd(
     """One-way ANOVA in RCBD - most common Nigerian field trial design."""
     df = await load_csv(file)
     require_cols(df, [block, treatment, trait])
-    return attach_strict_template(oneway_rcbd_engine(df, block, treatment, trait, float(alpha)), float(alpha))
+    result = await run_with_timeout(oneway_rcbd_engine, df, block, treatment, trait, float(alpha))
+    return attach_strict_template(result, float(alpha))
 
 
 @app.post("/analyze/anova/twoway")
@@ -2798,7 +2847,8 @@ async def analyze_anova_twoway(
 ):
     df = await load_csv(file)
     require_cols(df, [factor_a, factor_b, trait])
-    return attach_strict_template(twoway_engine(df, factor_a, factor_b, trait, float(alpha)), float(alpha))
+    result = await run_with_timeout(twoway_engine, df, factor_a, factor_b, trait, float(alpha))
+    return attach_strict_template(result, float(alpha))
 
 
 @app.post("/analyze/anova/rcbd_factorial")
@@ -2812,7 +2862,8 @@ async def analyze_anova_rcbd_factorial(
 ):
     df = await load_csv(file)
     require_cols(df, [block, factor_a, factor_b, trait])
-    return attach_strict_template(rcbd_factorial_engine(df, block, factor_a, factor_b, trait, float(alpha)), float(alpha))
+    result = await run_with_timeout(rcbd_factorial_engine, df, block, factor_a, factor_b, trait, float(alpha))
+    return attach_strict_template(result, float(alpha))
 
 
 @app.post("/analyze/anova/splitplot")
@@ -2826,7 +2877,8 @@ async def analyze_anova_splitplot(
 ):
     df = await load_csv(file)
     require_cols(df, [block, main_plot, sub_plot, trait])
-    return attach_strict_template(splitplot_engine(df, block, main_plot, sub_plot, trait, float(alpha)), float(alpha))
+    result = await run_with_timeout(splitplot_engine, df, block, main_plot, sub_plot, trait, float(alpha))
+    return attach_strict_template(result, float(alpha))
 
 
 
@@ -3110,7 +3162,7 @@ async def analyze_kruskal(
     """Kruskal-Wallis H-test with Dunn post-hoc (non-parametric CRD)."""
     df = await load_csv(file)
     require_cols(df, [factor, trait])
-    return kruskal_wallis_engine(df, factor, trait, float(alpha))
+    return await run_with_timeout(kruskal_wallis_engine, df, factor, trait, float(alpha))
 
 
 @app.post("/analyze/nonparametric/friedman")
@@ -3124,7 +3176,7 @@ async def analyze_friedman(
     """Friedman test with Wilcoxon pairwise post-hoc (non-parametric RCBD)."""
     df = await load_csv(file)
     require_cols(df, [block, treatment, trait])
-    return friedman_engine(df, block, treatment, trait, float(alpha))
+    return await run_with_timeout(friedman_engine, df, block, treatment, trait, float(alpha))
 
 
 # ============================================================
@@ -3514,7 +3566,7 @@ async def multitrait_oneway(
     df = await load_csv(file)
     trait_list = [t.strip() for t in traits.split(",") if t.strip()]
     require_cols(df, [factor] + trait_list)
-    return multitrait_engine(df, "oneway", trait_list, float(alpha), factor=factor)
+    return await run_with_timeout(multitrait_engine, df, "oneway", trait_list, float(alpha), factor=factor)
 
 
 @app.post("/analyze/anova/multitrait/oneway_rcbd")
@@ -3529,8 +3581,8 @@ async def multitrait_oneway_rcbd(
     df = await load_csv(file)
     trait_list = [t.strip() for t in traits.split(",") if t.strip()]
     require_cols(df, [block, treatment] + trait_list)
-    return multitrait_engine(
-        df, "oneway_rcbd", trait_list, float(alpha), block=block, treatment=treatment
+    return await run_with_timeout(
+        multitrait_engine, df, "oneway_rcbd", trait_list, float(alpha), block=block, treatment=treatment
     )
 
 
@@ -3546,8 +3598,8 @@ async def multitrait_twoway(
     df = await load_csv(file)
     trait_list = [t.strip() for t in traits.split(",") if t.strip()]
     require_cols(df, [factor_a, factor_b] + trait_list)
-    return multitrait_engine(
-        df, "twoway", trait_list, float(alpha), factor_a=factor_a, factor_b=factor_b
+    return await run_with_timeout(
+        multitrait_engine, df, "twoway", trait_list, float(alpha), factor_a=factor_a, factor_b=factor_b
     )
 
 
@@ -3564,8 +3616,8 @@ async def multitrait_rcbd_factorial(
     df = await load_csv(file)
     trait_list = [t.strip() for t in traits.split(",") if t.strip()]
     require_cols(df, [block, factor_a, factor_b] + trait_list)
-    return multitrait_engine(
-        df, "rcbd_factorial", trait_list, float(alpha),
+    return await run_with_timeout(
+        multitrait_engine, df, "rcbd_factorial", trait_list, float(alpha),
         block=block, factor_a=factor_a, factor_b=factor_b
     )
 
@@ -3583,8 +3635,8 @@ async def multitrait_splitplot(
     df = await load_csv(file)
     trait_list = [t.strip() for t in traits.split(",") if t.strip()]
     require_cols(df, [block, main_plot, sub_plot] + trait_list)
-    return multitrait_engine(
-        df, "splitplot", trait_list, float(alpha),
+    return await run_with_timeout(
+        multitrait_engine, df, "splitplot", trait_list, float(alpha),
         block=block, main_plot=main_plot, sub_plot=sub_plot
     )
 
