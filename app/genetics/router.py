@@ -1095,21 +1095,31 @@ def build_genetics_publication_tables(
     }
 
     # ── TABLE 5: STABILITY (Eberhart & Russell) ────────────────────────
+    def _num(v) -> Optional[float]:
+        """Extract numeric value from a plain scalar or a dict with a 'value' key."""
+        if v is None:
+            return None
+        if isinstance(v, dict):
+            v = v.get("value")
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
     stab_recs = tables.get("stability", [])
     stab_rows: List[List[str]] = []
     for rec in stab_recs:
         gid  = rec.get("Genotype") or rec.get("genotype", "\u2014")
         mean = rec.get("grand_mean") or rec.get("mean")
-        bi   = rec.get("bi") or rec.get("regression_coefficient")
-        s2di = rec.get("S2di") or rec.get("s2di") or rec.get("stability_variance")
-        asv  = rec.get("ASV") or rec.get("asv")
-        cls  = rec.get("classification", "\u2014")
-        bi_f = float(str(bi)) if bi else None
-        bi_note = ("Stable (bi \u2248 1)" if bi_f and abs(bi_f - 1.0) < 0.15 else
-                   "Responsive to good envs" if bi_f and bi_f > 1 else
-                   "Stable in poor envs" if bi_f else "\u2014")
-        stab_rows.append([str(gid), _gfmt(mean, 2), _gfmt(bi, 3), _gfmt(s2di, 4),
-                          _gfmt(asv, 3), str(cls), bi_note])
+        bi_f   = _num(rec.get("bi") or rec.get("regression_coefficient"))
+        s2di_f = _num(rec.get("S2di") or rec.get("s2di") or rec.get("stability_variance"))
+        asv_f  = _num(rec.get("ASV") or rec.get("asv"))
+        cls    = rec.get("classification", "\u2014")
+        bi_note = ("Stable (bi \u2248 1)" if bi_f is not None and abs(bi_f - 1.0) < 0.15 else
+                   "Responsive to good envs" if bi_f is not None and bi_f > 1 else
+                   "Stable in poor envs" if bi_f is not None else "\u2014")
+        stab_rows.append([str(gid), _gfmt(mean, 2), _gfmt(bi_f, 3), _gfmt(s2di_f, 4),
+                          _gfmt(asv_f, 3), str(cls), bi_note])
     pub["stability_table"] = {
         "title": f"Stability Parameters (Eberhart & Russell, 1966) for {trait}",
         "table_number": "Table 5",

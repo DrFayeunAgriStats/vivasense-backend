@@ -2067,7 +2067,7 @@ async def gc_middleware(request: Request, call_next):
 
 # ── Resource limits ──────────────────────────────────────────────────────────
 MAX_FILE_SIZE_BYTES: int = 10 * 1024 * 1024   # 10 MB
-MAX_COMPUTATION_SECONDS: int = 30             # timeout per analysis request
+MAX_COMPUTATION_SECONDS: int = 120            # timeout per analysis request (genetics analyses need ~60-90s)
 _executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
 # Initialize backend — pick up AI key from environment if present (singleton)
