@@ -1,4 +1,8 @@
 # Version 2.0.0
+import gc
+import asyncio
+import concurrent.futures
+import functools
 import pandas as pd
 import numpy as np
 import statsmodels.api as sm
@@ -23,6 +27,7 @@ from datetime import datetime
 import uuid
 import os
 import math
+import psutil
 
 # FastAPI imports
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Request
@@ -52,7 +57,7 @@ logger = logging.getLogger(__name__)
 class AnalysisConfig:
     """Configuration for statistical analysis"""
     alpha: float = 0.05
-    figure_dpi: int = 300
+    figure_dpi: int = 100
     figure_format: str = 'png'
     include_interactions: bool = True
     max_interaction_level: int = 2
@@ -1275,7 +1280,7 @@ class StatisticalAnalyzer:
 
             plt.tight_layout()
             buf = BytesIO()
-            plt.savefig(buf, format="png", dpi=300, bbox_inches="tight")
+            plt.savefig(buf, format="png", dpi=100, bbox_inches="tight")
             buf.seek(0)
             encoded = base64.b64encode(buf.read()).decode()
             plt.close()
@@ -2052,7 +2057,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize backend — pick up AI key from environment if present
+
+@app.middleware("http")
+async def gc_middleware(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/analyze/"):
+        gc.collect()
+    return response
+
+# ── Resource limits ──────────────────────────────────────────────────────────
+MAX_FILE_SIZE_BYTES: int = 10 * 1024 * 1024   # 10 MB
+MAX_COMPUTATION_SECONDS: int = 30             # timeout per analysis request
+_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+
+# Initialize backend — pick up AI key from environment if present (singleton)
 _ai_api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("AI_KEY")
 backend = VivaSenseBackend(ai_api_key=_ai_api_key)
 
@@ -2089,11 +2107,35 @@ async def root():
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
+    proc = psutil.Process()
+    mem = proc.memory_info()
+    vm = psutil.virtual_memory()
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "version": "2.0.0"
+        "version": "2.0.0",
+        "memory": {
+            "process_rss_mb": round(mem.rss / 1024 / 1024, 1),
+            "process_vms_mb": round(mem.vms / 1024 / 1024, 1),
+            "system_used_percent": vm.percent,
+            "system_available_mb": round(vm.available / 1024 / 1024, 1),
+        },
     }
+
+
+async def run_with_timeout(fn, *args, **kwargs):
+    """Run a synchronous engine function in a thread with a 30-second timeout."""
+    loop = asyncio.get_event_loop()
+    try:
+        return await asyncio.wait_for(
+            loop.run_in_executor(_executor, functools.partial(fn, *args, **kwargs)),
+            timeout=MAX_COMPUTATION_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail=f"Analysis timed out after {MAX_COMPUTATION_SECONDS}s. Try a smaller dataset.",
+        )
 
 @app.post("/analyze/")
 async def analyze_file(
@@ -2121,17 +2163,23 @@ async def analyze_file(
     try:
         # Read file content
         content = await file.read()
-        
+
+        if len(content) > MAX_FILE_SIZE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large ({len(content) // 1024} KB). Maximum allowed size is 10 MB.",
+            )
+
         # Parse based on file extension
         if file.filename.endswith('.csv'):
             df = pd.read_csv(BytesIO(content))
         else:
             df = pd.read_excel(BytesIO(content))
-        
+
         logger.info(f"Loaded dataframe with {len(df)} rows and {len(df.columns)} columns")
-        
+
         # Process data
-        results = backend.process_dataframe(df, file.filename)
+        results = await run_with_timeout(backend.process_dataframe, df, file.filename)
         
         # Schedule cleanup if background tasks available
         if background_tasks:

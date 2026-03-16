@@ -21,7 +21,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 # ── Shared style constants ────────────────────────────────────────────────────
-_DPI = 300
+_DPI = 100
 _GENO_COLOR  = "#2563EB"  # blue
 _ENV_COLOR   = "#DC2626"  # red
 _HEAT_CMAP   = "RdYlGn"
