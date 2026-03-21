@@ -48,6 +48,10 @@ from __future__ import annotations
 
 import io
 import os
+import gc
+import asyncio
+import concurrent.futures
+import functools
 import json
 import base64
 import hashlib
@@ -56,6 +60,8 @@ import warnings
 from typing import Any, Dict, List, Optional, Tuple
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
+
+import psutil
 
 import numpy as np
 import pandas as pd
@@ -105,6 +111,13 @@ app.add_middleware(
 
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")  # Set in Render dashboard: ADMIN_TOKEN=your-secret
 USAGE_LOG: deque = deque(maxlen=2000)        # Rolling in-memory log, last 2000 events
+
+# ── Resource limits ──────────────────────────────────────────
+MAX_FILE_SIZE_BYTES: int = 10 * 1024 * 1024   # 10 MB
+MAX_COMPUTATION_SECONDS: int = 30             # timeout per analysis request
+
+# Thread pool for running sync engine functions with timeout support
+_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
 # Endpoint → friendly design label
 DESIGN_LABELS: Dict[str, str] = {
@@ -171,6 +184,8 @@ async def usage_logger_middleware(request: Request, call_next):
             duration_ms=duration_ms,
             ip=ip,
         )
+        if path.startswith("/analyze/"):
+            gc.collect()
     return response
 
 
@@ -639,13 +654,34 @@ async def chat(request: Request, body: ChatRequest):
         return {"content": text}
 
 
+async def _static_sse_stream(text: str):
+    """Emit a static text string as Anthropic-compatible SSE so streaming frontends work."""
+    yield f"data: {json.dumps({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}})}\n\n"
+    chunk_size = 80
+    for i in range(0, len(text), chunk_size):
+        chunk = text[i:i + chunk_size]
+        yield f"data: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': chunk}})}\n\n"
+    yield f"data: {json.dumps({'type': 'message_stop'})}\n\n"
+
+
 @app.post("/api/interpret")
 async def interpret(request: Request, body: InterpretRequest):
     client_ip = request.client.host
     if is_rate_limited(client_ip):
         raise HTTPException(status_code=429, detail="Too many requests. Please wait a moment.")
     if not ANTHROPIC_API_KEY:
-        raise HTTPException(status_code=503, detail="AI service not configured.")
+        static_text = (
+            body.results.get("interpretation")
+            or body.results.get("strict_template", {}).get("interpretation_template")
+            or "Analysis complete. Review the tables above for detailed results."
+        )
+        if body.stream:
+            return StreamingResponse(
+                _static_sse_stream(static_text),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+        return {"interpretation": static_text, "source": "static", "fallback_used": True}
 
     context_lines = []
     if body.crop:
@@ -803,7 +839,14 @@ async def followup(request: Request, body: FollowupRequest):
     if is_rate_limited(client_ip):
         raise HTTPException(status_code=429, detail="Too many requests. Please wait a moment.")
     if not ANTHROPIC_API_KEY:
-        raise HTTPException(status_code=503, detail="AI service not configured.")
+        fallback_msg = "AI follow-up is not available at the moment. Please review the analysis results above."
+        if body.stream:
+            return StreamingResponse(
+                _static_sse_stream(fallback_msg),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+        return {"content": fallback_msg, "source": "static", "fallback_used": True}
 
     results_context = json.dumps(body.analysis_results, indent=2)
     context_block = ""
@@ -836,7 +879,19 @@ def root():
 
 @app.api_route("/health", methods=["GET", "HEAD"])
 def health():
-    return {"status": "healthy", "version": "2.0.0"}
+    proc = psutil.Process()
+    mem = proc.memory_info()
+    vm = psutil.virtual_memory()
+    return {
+        "status": "healthy",
+        "version": "2.0.0",
+        "memory": {
+            "process_rss_mb": round(mem.rss / 1024 / 1024, 1),
+            "process_vms_mb": round(mem.vms / 1024 / 1024, 1),
+            "system_used_percent": vm.percent,
+            "system_available_mb": round(vm.available / 1024 / 1024, 1),
+        },
+    }
 
 
 # ============================================================
@@ -903,7 +958,7 @@ def df_to_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
 def _b64_png(fig) -> str:
     buf = io.BytesIO()
     fig.tight_layout()
-    fig.savefig(buf, format="png", dpi=170)
+    fig.savefig(buf, format="png", dpi=100)
     plt.close(fig)
     buf.seek(0)
     return base64.b64encode(buf.read()).decode("utf-8")
@@ -915,6 +970,11 @@ async def load_csv(upload: UploadFile) -> pd.DataFrame:
     if not (upload.filename or "").lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV files are supported.")
     content = await upload.read()
+    if len(content) > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large ({len(content) // 1024} KB). Maximum allowed size is 10 MB.",
+        )
     try:
         df = pd.read_csv(io.BytesIO(content))
     except Exception as e:
@@ -923,6 +983,21 @@ async def load_csv(upload: UploadFile) -> pd.DataFrame:
         raise HTTPException(status_code=400, detail="Uploaded CSV is empty.")
     df.columns = [str(c).strip() for c in df.columns]
     return df
+
+
+async def run_with_timeout(fn, *args, **kwargs):
+    """Run a synchronous engine function in a thread with a 30-second timeout."""
+    loop = asyncio.get_event_loop()
+    try:
+        return await asyncio.wait_for(
+            loop.run_in_executor(_executor, functools.partial(fn, *args, **kwargs)),
+            timeout=MAX_COMPUTATION_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail=f"Analysis timed out after {MAX_COMPUTATION_SECONDS}s. Try a smaller dataset.",
+        )
 
 
 def require_cols(df: pd.DataFrame, cols: List[str]) -> None:
@@ -2450,6 +2525,8 @@ def rcbd_factorial_engine(
     lv = levene_test(d, trait, "_AB_")
     guidance = assumption_guidance(sh, lv, "Factorial in RCBD")
     tukey_df, means_letters = tukey_letters(d, trait, "_AB_", alpha)
+    _, means_a = tukey_letters(d, trait, a, alpha)
+    _, means_b = tukey_letters(d, trait, b, alpha)
 
     plots = {
         "mean_plot": mean_plot(d, trait, "_AB_", f"Means +/- SE by {a}:{b} (RCBD)"),
@@ -2471,6 +2548,45 @@ def rcbd_factorial_engine(
     ml   = means_letters.rename(columns={"_AB_": "A:B"})
     best = str(ml.iloc[0]["A:B"]) if not ml.empty else None
 
+    def _factor_rows(mt: pd.DataFrame, col: str) -> List[Dict]:
+        rows = []
+        for _, r in mt.iterrows():
+            rows.append({
+                col: str(r[col]),
+                "mean": float(r["mean"]),
+                "sd": float(r.get("sd", 0)),
+                "se": float(r.get("se", 0)),
+                "n": int(r.get("n", 0)),
+                "letter": str(r.get("letters", "")),
+            })
+        return rows
+
+    interaction_rows: List[Dict] = []
+    for _, r in means_letters.iterrows():
+        ab_val = str(r["_AB_"])
+        mask = d["_AB_"] == ab_val
+        if mask.any():
+            a_val = str(d.loc[mask, a].iloc[0])
+            b_val = str(d.loc[mask, b].iloc[0])
+        else:
+            parts = ab_val.split(":", 1)
+            a_val, b_val = (parts[0], parts[1]) if len(parts) == 2 else (ab_val, "")
+        interaction_rows.append({
+            a: a_val,
+            b: b_val,
+            "mean": float(r["mean"]),
+            "sd": float(r.get("sd", 0)),
+            "se": float(r.get("se", 0)),
+            "n": int(r.get("n", 0)),
+            "letter": str(r.get("letters", "")),
+        })
+
+    means_separation = {
+        a: _factor_rows(means_a, a),
+        b: _factor_rows(means_b, b),
+        "interaction": interaction_rows,
+    }
+
     return {
         "meta": {
             "design": "Factorial in RCBD",
@@ -2489,6 +2605,7 @@ def rcbd_factorial_engine(
             "assumptions": [sh, lv],
             "assumption_guidance": guidance,
         },
+        "means_separation": means_separation,
         "plots": plots,
         "interpretation": interpret_anova("Factorial RCBD ANOVA", p_map, cv, alpha),
         "strict_template": {},  # populated by attach_strict_template below
@@ -2701,7 +2818,8 @@ async def analyze_anova_oneway(
 ):
     df = await load_csv(file)
     require_cols(df, [factor, trait])
-    return attach_strict_template(oneway_engine(df, factor, trait, float(alpha)), float(alpha))
+    result = await run_with_timeout(oneway_engine, df, factor, trait, float(alpha))
+    return attach_strict_template(result, float(alpha))
 
 
 @app.post("/analyze/anova/oneway_rcbd")
@@ -2715,7 +2833,8 @@ async def analyze_anova_oneway_rcbd(
     """One-way ANOVA in RCBD - most common Nigerian field trial design."""
     df = await load_csv(file)
     require_cols(df, [block, treatment, trait])
-    return attach_strict_template(oneway_rcbd_engine(df, block, treatment, trait, float(alpha)), float(alpha))
+    result = await run_with_timeout(oneway_rcbd_engine, df, block, treatment, trait, float(alpha))
+    return attach_strict_template(result, float(alpha))
 
 
 @app.post("/analyze/anova/twoway")
@@ -2728,7 +2847,8 @@ async def analyze_anova_twoway(
 ):
     df = await load_csv(file)
     require_cols(df, [factor_a, factor_b, trait])
-    return attach_strict_template(twoway_engine(df, factor_a, factor_b, trait, float(alpha)), float(alpha))
+    result = await run_with_timeout(twoway_engine, df, factor_a, factor_b, trait, float(alpha))
+    return attach_strict_template(result, float(alpha))
 
 
 @app.post("/analyze/anova/rcbd_factorial")
@@ -2742,7 +2862,8 @@ async def analyze_anova_rcbd_factorial(
 ):
     df = await load_csv(file)
     require_cols(df, [block, factor_a, factor_b, trait])
-    return attach_strict_template(rcbd_factorial_engine(df, block, factor_a, factor_b, trait, float(alpha)), float(alpha))
+    result = await run_with_timeout(rcbd_factorial_engine, df, block, factor_a, factor_b, trait, float(alpha))
+    return attach_strict_template(result, float(alpha))
 
 
 @app.post("/analyze/anova/splitplot")
@@ -2756,7 +2877,8 @@ async def analyze_anova_splitplot(
 ):
     df = await load_csv(file)
     require_cols(df, [block, main_plot, sub_plot, trait])
-    return attach_strict_template(splitplot_engine(df, block, main_plot, sub_plot, trait, float(alpha)), float(alpha))
+    result = await run_with_timeout(splitplot_engine, df, block, main_plot, sub_plot, trait, float(alpha))
+    return attach_strict_template(result, float(alpha))
 
 
 
@@ -3040,7 +3162,7 @@ async def analyze_kruskal(
     """Kruskal-Wallis H-test with Dunn post-hoc (non-parametric CRD)."""
     df = await load_csv(file)
     require_cols(df, [factor, trait])
-    return kruskal_wallis_engine(df, factor, trait, float(alpha))
+    return await run_with_timeout(kruskal_wallis_engine, df, factor, trait, float(alpha))
 
 
 @app.post("/analyze/nonparametric/friedman")
@@ -3054,7 +3176,7 @@ async def analyze_friedman(
     """Friedman test with Wilcoxon pairwise post-hoc (non-parametric RCBD)."""
     df = await load_csv(file)
     require_cols(df, [block, treatment, trait])
-    return friedman_engine(df, block, treatment, trait, float(alpha))
+    return await run_with_timeout(friedman_engine, df, block, treatment, trait, float(alpha))
 
 
 # ============================================================
@@ -3444,7 +3566,7 @@ async def multitrait_oneway(
     df = await load_csv(file)
     trait_list = [t.strip() for t in traits.split(",") if t.strip()]
     require_cols(df, [factor] + trait_list)
-    return multitrait_engine(df, "oneway", trait_list, float(alpha), factor=factor)
+    return await run_with_timeout(multitrait_engine, df, "oneway", trait_list, float(alpha), factor=factor)
 
 
 @app.post("/analyze/anova/multitrait/oneway_rcbd")
@@ -3459,8 +3581,8 @@ async def multitrait_oneway_rcbd(
     df = await load_csv(file)
     trait_list = [t.strip() for t in traits.split(",") if t.strip()]
     require_cols(df, [block, treatment] + trait_list)
-    return multitrait_engine(
-        df, "oneway_rcbd", trait_list, float(alpha), block=block, treatment=treatment
+    return await run_with_timeout(
+        multitrait_engine, df, "oneway_rcbd", trait_list, float(alpha), block=block, treatment=treatment
     )
 
 
@@ -3476,8 +3598,8 @@ async def multitrait_twoway(
     df = await load_csv(file)
     trait_list = [t.strip() for t in traits.split(",") if t.strip()]
     require_cols(df, [factor_a, factor_b] + trait_list)
-    return multitrait_engine(
-        df, "twoway", trait_list, float(alpha), factor_a=factor_a, factor_b=factor_b
+    return await run_with_timeout(
+        multitrait_engine, df, "twoway", trait_list, float(alpha), factor_a=factor_a, factor_b=factor_b
     )
 
 
@@ -3494,8 +3616,8 @@ async def multitrait_rcbd_factorial(
     df = await load_csv(file)
     trait_list = [t.strip() for t in traits.split(",") if t.strip()]
     require_cols(df, [block, factor_a, factor_b] + trait_list)
-    return multitrait_engine(
-        df, "rcbd_factorial", trait_list, float(alpha),
+    return await run_with_timeout(
+        multitrait_engine, df, "rcbd_factorial", trait_list, float(alpha),
         block=block, factor_a=factor_a, factor_b=factor_b
     )
 
@@ -3513,7 +3635,13 @@ async def multitrait_splitplot(
     df = await load_csv(file)
     trait_list = [t.strip() for t in traits.split(",") if t.strip()]
     require_cols(df, [block, main_plot, sub_plot] + trait_list)
-    return multitrait_engine(
-        df, "splitplot", trait_list, float(alpha),
+    return await run_with_timeout(
+        multitrait_engine, df, "splitplot", trait_list, float(alpha),
         block=block, main_plot=main_plot, sub_plot=sub_plot
     )
+
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
