@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: vivasense-genetics
+    env: python
+    buildCommand: |
+      apt-get update && apt-get install -y r-base \
+      r-cran-jsonlite r-cran-agricolae r-cran-dplyr r-cran-tidyr && \
+      pip install -r requirements.txt
+    startCommand: "uvicorn app_genetics:app --host 0.0.0.0 --port 8000"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11

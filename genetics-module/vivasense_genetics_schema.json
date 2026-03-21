@@ -1,0 +1,381 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "VivaSense Genetics Engine",
+    "description": "R-based genetics analysis system with support for single and multi-environment studies",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8000",
+      "description": "Local development server"
+    },
+    {
+      "url": "https://vivasense-r-api.onrender.com",
+      "description": "Production server"
+    }
+  ],
+  "paths": {
+    "/genetics/analyze": {
+      "post": {
+        "summary": "Run genetic analysis",
+        "description": "Analyzes genetic components using ANOVA-based variance partitioning",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GeneticsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful analysis",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeneticsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (data validation failed)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable entity (computation failed)"
+          }
+        }
+      }
+    },
+    "/genetics/validate": {
+      "post": {
+        "summary": "Validate data before analysis",
+        "description": "Check data structure, completeness, and basic assumptions",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValidationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Validation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "GeneticsRequest": {
+        "type": "object",
+        "required": ["data", "mode"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "description": "Array of observation records",
+            "items": {
+              "$ref": "#/components/schemas/Observation"
+            },
+            "minItems": 6,
+            "example": [
+              {
+                "genotype": "G01",
+                "rep": "R1",
+                "trait_value": 45.2
+              },
+              {
+                "genotype": "G01",
+                "rep": "R2",
+                "trait_value": 46.1
+              }
+            ]
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["single", "multi"],
+            "description": "Single-environment or multi-environment analysis",
+            "example": "single"
+          },
+          "trait_name": {
+            "type": "string",
+            "description": "Optional name of the trait being analyzed",
+            "example": "Plant Height (cm)"
+          },
+          "random_environment": {
+            "type": "boolean",
+            "description": "Multi-mode only. If true, treat environment as random effect and include in h2 denominator. Default: false",
+            "default": false
+          }
+        }
+      },
+      "Observation": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["genotype", "rep", "trait_value"],
+            "properties": {
+              "genotype": {
+                "type": "string",
+                "description": "Genotype identifier",
+                "example": "G01"
+              },
+              "rep": {
+                "type": "string",
+                "description": "Replication/block identifier",
+                "example": "R1"
+              },
+              "trait_value": {
+                "type": "number",
+                "description": "Measured trait value",
+                "example": 45.2
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["genotype", "environment", "rep", "trait_value"],
+            "properties": {
+              "genotype": {
+                "type": "string",
+                "example": "G01"
+              },
+              "environment": {
+                "type": "string",
+                "description": "Environment/location identifier (required for multi-mode)",
+                "example": "E1"
+              },
+              "rep": {
+                "type": "string",
+                "example": "R1"
+              },
+              "trait_value": {
+                "type": "number",
+                "example": 45.2
+              }
+            }
+          }
+        ]
+      },
+      "ValidationRequest": {
+        "type": "object",
+        "required": ["data", "mode"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["single", "multi"]
+          }
+        }
+      },
+      "GeneticsResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["SUCCESS", "ERROR"],
+            "example": "SUCCESS"
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["single", "multi"]
+          },
+          "data_validation": {
+            "type": "object",
+            "description": "Input data validation warnings (empty if no issues)",
+            "additionalProperties": true
+          },
+          "variance_warnings": {
+            "type": "object",
+            "description": "Warnings about variance components (negative values, low heritability, etc.)",
+            "additionalProperties": true
+          },
+          "result": {
+            "type": "object",
+            "properties": {
+              "environment_mode": {
+                "type": "string",
+                "enum": ["single", "multi"]
+              },
+              "n_genotypes": {
+                "type": "integer",
+                "example": 20
+              },
+              "n_reps": {
+                "type": "integer",
+                "description": "Number of replicates (single-env) or reps per G×E (multi-env)"
+              },
+              "n_environments": {
+                "type": "integer",
+                "description": "Multi-mode only"
+              },
+              "grand_mean": {
+                "type": "number",
+                "example": 52.34
+              },
+              "variance_components": {
+                "type": "object",
+                "properties": {
+                  "sigma2_genotype": {
+                    "type": "number",
+                    "description": "Genetic variance σ²G",
+                    "example": 8.45
+                  },
+                  "sigma2_error": {
+                    "type": "number",
+                    "description": "Residual/error variance σ²E or σ²error",
+                    "example": 2.34
+                  },
+                  "sigma2_ge": {
+                    "type": "number",
+                    "description": "Genotype-by-environment variance σ²G×E (multi-mode only)"
+                  },
+                  "sigma2_phenotypic": {
+                    "type": "number",
+                    "description": "Phenotypic variance σ²P (on entry-mean basis)"
+                  },
+                  "heritability_basis": {
+                    "type": "string",
+                    "description": "Multi-mode: 'fixed_environment_model' or 'random_environment_model'",
+                    "enum": ["fixed_environment_model", "random_environment_model"]
+                  }
+                },
+                "required": ["sigma2_genotype", "sigma2_error", "sigma2_phenotypic"]
+              },
+              "heritability": {
+                "type": "object",
+                "properties": {
+                  "h2_broad_sense": {
+                    "type": "number",
+                    "description": "Broad-sense heritability (0 to 1)",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "example": 0.782
+                  },
+                  "interpretation_basis": {
+                    "type": "string",
+                    "description": "Explains what the h² represents",
+                    "example": "entry-mean (single environment)"
+                  },
+                  "formula": {
+                    "type": "string",
+                    "description": "Multi-mode: mathematical formula used"
+                  }
+                },
+                "required": ["h2_broad_sense", "interpretation_basis"]
+              },
+              "genetic_parameters": {
+                "type": "object",
+                "properties": {
+                  "GCV": {
+                    "type": "number",
+                    "description": "Genotypic coefficient of variation (%)",
+                    "example": 12.45
+                  },
+                  "PCV": {
+                    "type": "number",
+                    "description": "Phenotypic coefficient of variation (%)"
+                  },
+                  "GAM": {
+                    "type": "number",
+                    "description": "Genetic advance at mean (absolute units)"
+                  },
+                  "GAM_percent": {
+                    "type": "number",
+                    "description": "Genetic advance at mean (% of mean)"
+                  },
+                  "selection_intensity": {
+                    "type": "number",
+                    "description": "Selection intensity used (default = 1.4 for ~30% selection)",
+                    "example": 1.4
+                  }
+                }
+              },
+              "anova_table": {
+                "type": "object",
+                "description": "ANOVA results (simplified for JSON)"
+              }
+            },
+            "required": [
+              "environment_mode",
+              "n_genotypes",
+              "grand_mean",
+              "variance_components",
+              "heritability",
+              "genetic_parameters"
+            ]
+          },
+          "interpretation": {
+            "type": "string",
+            "description": "Publication-ready interpretation text with warnings and recommendations",
+            "example": "Single-Environment Genetic Analysis\n==================================================\n\nTrait analyzed: Plant Height\nGenotypes: 20\nReplicates: 3\n..."
+          }
+        },
+        "required": ["status", "mode", "result", "interpretation"]
+      },
+      "ValidationResponse": {
+        "type": "object",
+        "properties": {
+          "is_valid": {
+            "type": "boolean"
+          },
+          "warnings": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "required": ["is_valid", "warnings"]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["ERROR"]
+          },
+          "mode": {
+            "type": "string"
+          },
+          "errors": {
+            "type": "object",
+            "description": "Detailed error information",
+            "additionalProperties": true
+          },
+          "result": {
+            "type": "null"
+          },
+          "interpretation": {
+            "type": "null"
+          }
+        },
+        "required": ["status", "errors"]
+      }
+    }
+  }
+}
