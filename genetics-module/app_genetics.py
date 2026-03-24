@@ -62,7 +62,7 @@ class GeneticsRequest(BaseModel):
     mode: str = Field(
         ...,
         description="Analysis mode: 'single' or 'multi'",
-        regex="^(single|multi)$"
+        pattern="^(single|multi)$"
     )
     trait_name: Optional[str] = Field(
         default="Trait",
