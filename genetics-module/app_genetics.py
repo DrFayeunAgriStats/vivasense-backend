@@ -10,6 +10,7 @@ Handles:
 """
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
 from typing import List, Optional, Dict, Any
@@ -157,6 +158,23 @@ app = FastAPI(
     description="R-based genetics analysis with single and multi-environment support",
     version="1.0.0"
 )
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://fieldtoinsightacademy.com.ng",
+        "https://www.fieldtoinsightacademy.com.ng",
+        "http://localhost:3000",
+        "http://localhost:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Multi-trait upload endpoints
+from multitrait_upload_routes import router as multitrait_router
+app.include_router(multitrait_router)
 
 
 # ============================================================================
@@ -443,8 +461,10 @@ async def root():
         "version": "1.0.0",
         "description": "R-based genetics analysis with single and multi-environment support",
         "endpoints": {
-            "POST /genetics/analyze": "Run genetic analysis",
+            "POST /genetics/analyze": "Run genetic analysis (manual input)",
             "POST /genetics/validate": "Validate data before analysis",
+            "POST /genetics/upload-preview": "Preview uploaded file + detect columns",
+            "POST /genetics/analyze-upload": "Analyze all traits in uploaded CSV/Excel",
             "GET /health": "Health check",
             "GET /docs": "Interactive API documentation (Swagger UI)"
         },

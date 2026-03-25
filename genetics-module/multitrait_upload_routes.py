@@ -1,0 +1,535 @@
+"""
+VivaSense Genetics - Multi-Trait File Upload Endpoints
+
+POST /genetics/upload-preview  — Read file, detect columns, return preview
+POST /genetics/analyze-upload  — Analyze each trait using the R genetics engine
+
+Design principle: No genetics logic in this file.
+All variance component estimation, heritability calculation, and interpretation
+are handled by the R engine (vivasense_genetics.R) through RGeneticsEngine.run_analysis().
+There is no Python-level ANOVA derivation here. The R engine is the sole source
+of truth for all genetic computations.
+
+Engine integration:
+    The shared genetics core is app_genetics.r_engine (RGeneticsEngine).
+    It is the same engine used by POST /genetics/analyze.
+    Accessed lazily inside handlers via `import app_genetics` to avoid
+    capturing the initial None value set before the startup event fires.
+"""
+
+import base64
+import io
+import logging
+from typing import Any, Dict, List, Optional
+
+import pandas as pd
+from fastapi import APIRouter, File, HTTPException, UploadFile
+
+from multitrait_upload_schemas import (
+    DatasetSummary,
+    DetectedColumn,
+    DetectedColumns,
+    SummaryTableRow,
+    TraitResult,
+    UploadAnalysisRequest,
+    UploadAnalysisResponse,
+    UploadPreviewResponse,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(tags=["Multi-Trait Upload"])
+
+
+# ============================================================================
+# COLUMN DETECTION PATTERNS
+# ============================================================================
+
+_GENOTYPE_PATTERNS = frozenset(
+    ["genotype", "variety", "cultivar", "entry", "line", "accession", "clone", "treatment"]
+)
+_REP_PATTERNS = frozenset(
+    ["rep", "replication", "block", "replicate", "repetition"]
+)
+_ENV_PATTERNS = frozenset(
+    ["environment", "location", "site", "season", "env", "loc", "year", "place"]
+)
+
+# Numeric columns whose names indicate identifiers/indices rather than traits.
+# These are excluded from the candidate-trait list even if they are numeric.
+_NUMERIC_ID_PATTERNS = frozenset([
+    "plot", "plotid", "plot_id", "plotno", "plot_no", "plot_number", "plot_num",
+    "row", "col", "column",
+    "id", "obs", "observation", "serial", "index", "no", "num", "number",
+    "farmerid", "farmer_id", "entry_id", "plant_no", "plant_number", "plant_num",
+])
+
+
+def _match_pattern(col_name: str, patterns: frozenset) -> Optional[str]:
+    """
+    Return a confidence string if col_name matches any pattern.
+    'high' = exact (case-insensitive) match.
+    'medium' = col contains pattern or pattern contains col.
+    None = no match.
+    """
+    lower = col_name.lower().strip()
+    if lower in patterns:
+        return "high"
+    for p in patterns:
+        if p in lower or lower in p:
+            return "medium"
+    return None
+
+
+def _is_numeric_id(col_name: str) -> bool:
+    """
+    Return True if the column name looks like a numeric identifier
+    (plot number, row, ID, etc.) that should not be treated as a trait.
+    """
+    lower = col_name.lower().strip()
+    if lower in _NUMERIC_ID_PATTERNS:
+        return True
+    # Ends with common ID suffixes
+    if lower.endswith(("_id", "_no", "_num", "_number", "_index", "_serial", "_code")):
+        return True
+    return False
+
+
+def detect_columns(df: pd.DataFrame) -> DetectedColumns:
+    """
+    Detect structural columns (genotype, rep, environment) by name matching,
+    then classify remaining numeric columns as candidate traits — excluding
+    obvious numeric identifiers.
+
+    Patterns are matched in priority order: genotype → rep → env.
+    A column matched as structural is removed from the trait candidate pool.
+    """
+    assigned: set = set()
+    genotype_col = rep_col = env_col = None
+
+    for col in df.columns:
+        if genotype_col is None:
+            conf = _match_pattern(col, _GENOTYPE_PATTERNS)
+            if conf:
+                genotype_col = DetectedColumn(column=col, confidence=conf)
+                assigned.add(col)
+                continue
+
+        if rep_col is None:
+            conf = _match_pattern(col, _REP_PATTERNS)
+            if conf:
+                rep_col = DetectedColumn(column=col, confidence=conf)
+                assigned.add(col)
+                continue
+
+        if env_col is None:
+            conf = _match_pattern(col, _ENV_PATTERNS)
+            if conf:
+                env_col = DetectedColumn(column=col, confidence=conf)
+                assigned.add(col)
+                continue
+
+    # Candidate traits: numeric, not assigned as structural, not an ID column
+    trait_cols: List[str] = []
+    for col in df.columns:
+        if col in assigned:
+            continue
+        if _is_numeric_id(col):
+            continue
+        if pd.api.types.is_numeric_dtype(df[col]):
+            trait_cols.append(col)
+        elif df[col].dtype == object:
+            # Coerce and accept if ≥70 % of rows parse as numeric
+            coerced = pd.to_numeric(df[col], errors="coerce")
+            if coerced.notna().sum() >= len(df) * 0.70:
+                trait_cols.append(col)
+
+    return DetectedColumns(
+        genotype=genotype_col,
+        rep=rep_col,
+        environment=env_col,
+        traits=trait_cols,
+    )
+
+
+# ============================================================================
+# FILE READING
+# ============================================================================
+
+def read_file(content: bytes, file_type: str) -> pd.DataFrame:
+    """Read CSV or Excel bytes into a DataFrame."""
+    try:
+        if file_type == "csv":
+            df = pd.read_csv(io.BytesIO(content))
+        else:
+            df = pd.read_excel(io.BytesIO(content))
+    except Exception as exc:
+        raise ValueError(f"Could not read file: {exc}") from exc
+
+    if df.empty:
+        raise ValueError("File is empty or has no data rows")
+    if len(df) < 6:
+        raise ValueError(f"File has only {len(df)} rows; minimum 6 required")
+
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+
+# ============================================================================
+# OBSERVATION BUILDER
+# ============================================================================
+
+def build_observations(
+    df: pd.DataFrame,
+    genotype_col: str,
+    rep_col: str,
+    trait_col: str,
+    env_col: Optional[str],
+) -> List[Dict[str, Any]]:
+    """
+    Reshape a wide DataFrame into the flat observation-record format expected
+    by RGeneticsEngine.run_analysis():
+
+        Single-env: [{"genotype": ..., "rep": ..., "trait_value": ...}, ...]
+        Multi-env:  [{"genotype": ..., "environment": ..., "rep": ..., "trait_value": ...}, ...]
+
+    Rows where trait_col is non-numeric or null are dropped.
+    Raises ValueError if fewer than 6 valid observations remain.
+
+    NOTE: The R engine (vivasense_genetics.R) performs all ANOVA computations
+    (SS, MS, F-tests, variance component estimation). There is no Python-level
+    ANOVA derivation here. build_observations() is a pure data reshaping step.
+    """
+    keep_cols = [genotype_col, rep_col, trait_col]
+    if env_col:
+        keep_cols = [genotype_col, env_col, rep_col, trait_col]
+
+    subset = df[keep_cols].copy()
+    subset[trait_col] = pd.to_numeric(subset[trait_col], errors="coerce")
+    subset = subset.dropna(subset=[trait_col])
+
+    if len(subset) < 6:
+        raise ValueError(
+            f"Trait '{trait_col}': only {len(subset)} valid observation(s) after "
+            "dropping missing values (minimum 6 required)"
+        )
+
+    records: List[Dict[str, Any]] = []
+    for _, row in subset.iterrows():
+        rec: Dict[str, Any] = {
+            "genotype": str(row[genotype_col]),
+            "rep": str(row[rep_col]),
+            "trait_value": float(row[trait_col]),
+        }
+        if env_col:
+            rec["environment"] = str(row[env_col])
+        records.append(rec)
+
+    return records
+
+
+# ============================================================================
+# BALANCE CHECKING
+# ============================================================================
+
+def check_balance(
+    df: pd.DataFrame,
+    genotype_col: str,
+    rep_col: str,
+    trait_col: str,
+    env_col: Optional[str],
+) -> List[str]:
+    """
+    Return human-readable warnings for unbalanced or incomplete experimental
+    structure relevant to the given trait.
+
+    Checks performed:
+    - Single-env: whether all genotypes have the same number of observations.
+    - Multi-env:  whether each genotype appears in every environment
+                  (completeness) and whether cell sizes are equal (balance).
+
+    The R engine can still analyse unbalanced data, but results may be less
+    reliable. Warnings are surfaced in TraitResult.data_warnings.
+    """
+    mask = pd.to_numeric(df[trait_col], errors="coerce").notna()
+    sub = df.loc[mask].copy()
+    warnings: List[str] = []
+
+    n_genotypes = sub[genotype_col].nunique()
+
+    if env_col:
+        n_envs = sub[env_col].nunique()
+
+        # Completeness: each genotype should appear in every environment
+        envs_per_geno = sub.groupby(genotype_col)[env_col].nunique()
+        incomplete = int((envs_per_geno < n_envs).sum())
+        if incomplete:
+            warnings.append(
+                f"{incomplete} of {n_genotypes} genotype(s) missing from at least one "
+                f"environment — incomplete G×E structure "
+                f"(expected {n_envs} environments per genotype)"
+            )
+
+        # Balance: all genotype×environment cells should have equal rep counts
+        cell_sizes = sub.groupby([genotype_col, env_col]).size()
+        min_cell = int(cell_sizes.min())
+        max_cell = int(cell_sizes.max())
+        if min_cell != max_cell:
+            warnings.append(
+                f"Unbalanced replication: genotype×environment cells range from "
+                f"{min_cell} to {max_cell} observations"
+            )
+    else:
+        # Single environment: all genotypes should have equal replication
+        obs_per_geno = sub.groupby(genotype_col).size()
+        min_obs = int(obs_per_geno.min())
+        max_obs = int(obs_per_geno.max())
+        if min_obs != max_obs:
+            warnings.append(
+                f"Unbalanced design: genotypes have between {min_obs} and "
+                f"{max_obs} observations (expected equal replication)"
+            )
+
+    return warnings
+
+
+# ============================================================================
+# SUMMARY HELPERS
+# ============================================================================
+
+def _classify_heritability(h2: float) -> str:
+    if h2 >= 0.60:
+        return "high"
+    if h2 >= 0.30:
+        return "moderate"
+    return "low"
+
+
+def _build_summary_row(trait: str, result_dict: Dict[str, Any]) -> SummaryTableRow:
+    """Extract scalar metrics from a GeneticsResponse dict for the summary table."""
+    res = result_dict.get("result") or {}
+    hp = res.get("heritability") or {}
+    gp = res.get("genetic_parameters") or {}
+    h2 = hp.get("h2_broad_sense")
+    return SummaryTableRow(
+        trait=trait,
+        grand_mean=res.get("grand_mean"),
+        h2=h2,
+        gcv=gp.get("GCV"),
+        pcv=gp.get("PCV"),
+        gam_percent=gp.get("GAM_percent"),
+        heritability_class=_classify_heritability(h2) if h2 is not None else None,
+        status="success",
+    )
+
+
+# ============================================================================
+# ENDPOINTS
+# ============================================================================
+
+@router.post(
+    "/genetics/upload-preview",
+    response_model=UploadPreviewResponse,
+    summary="Preview uploaded file and detect columns",
+)
+async def upload_preview(file: UploadFile = File(...)):
+    """
+    Read an uploaded CSV or Excel file, detect structural columns (genotype,
+    replication, environment) and candidate trait columns, and return a
+    5-row data preview.
+
+    No genetics computation is performed here. The user should confirm the
+    column mapping in the UI before calling /genetics/analyze-upload.
+    """
+    filename = file.filename or ""
+    if filename.endswith(".csv"):
+        file_type = "csv"
+    elif filename.endswith((".xlsx", ".xls")):
+        file_type = "xlsx"
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file type. Upload a .csv or .xlsx/.xls file.",
+        )
+
+    content = await file.read()
+    if len(content) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    try:
+        df = read_file(content, file_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    detected = detect_columns(df)
+
+    warn: List[str] = []
+    if detected.genotype is None:
+        warn.append("Could not detect genotype column — please specify manually")
+    if detected.rep is None:
+        warn.append("Could not detect replication column — please specify manually")
+    if not detected.traits:
+        warn.append(
+            "No numeric trait columns detected. "
+            "Verify that trait data is numeric and not labelled as an ID column."
+        )
+
+    mode_suggestion = "multi" if detected.environment is not None else "single"
+
+    # Serialise preview rows: replace NaN / NA with None (no numpy required)
+    preview_head = df.head(5)
+    data_preview: List[Dict[str, Any]] = [
+        {
+            col: (None if pd.isna(val) else val)
+            for col, val in row.items()
+        }
+        for row in preview_head.to_dict(orient="records")
+    ]
+
+    return UploadPreviewResponse(
+        detected_columns=detected,
+        n_rows=len(df),
+        n_columns=len(df.columns),
+        data_preview=data_preview,
+        mode_suggestion=mode_suggestion,
+        column_names=list(df.columns),
+        warnings=warn,
+    )
+
+
+@router.post(
+    "/genetics/analyze-upload",
+    response_model=UploadAnalysisResponse,
+    summary="Analyze all traits in an uploaded file",
+)
+async def analyze_upload(request: UploadAnalysisRequest):
+    """
+    For each requested trait column, reshape the uploaded data into flat
+    observation records and call the existing R genetics engine
+    (RGeneticsEngine.run_analysis) — the same engine as POST /genetics/analyze.
+
+    One trait failing does not abort the others. Failed traits are recorded
+    with their error messages in trait_results and failed_traits.
+
+    The R engine (vivasense_genetics.R) performs all ANOVA computations.
+    This endpoint contains no genetics computation logic.
+    """
+    # Lazy import: r_engine is None at module load time and is assigned by
+    # the FastAPI startup event in app_genetics.py. Accessing it through the
+    # module object always gives the current (post-startup) value.
+    import app_genetics  # noqa: PLC0415
+    if app_genetics.r_engine is None:
+        raise HTTPException(status_code=503, detail="R genetics engine not ready")
+    r_engine = app_genetics.r_engine
+
+    # Decode file
+    try:
+        file_bytes = base64.b64decode(request.base64_content)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid base64 content") from exc
+
+    try:
+        df = read_file(file_bytes, request.file_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # Validate that all named columns actually exist
+    required_cols = (
+        [request.genotype_column, request.rep_column]
+        + request.trait_columns
+        + ([request.environment_column] if request.environment_column else [])
+    )
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Columns not found in file: {missing}",
+        )
+
+    # Dataset-level summary (whole file, not per-trait)
+    n_genotypes = int(df[request.genotype_column].nunique())
+    n_reps = int(df[request.rep_column].nunique())
+    n_environments = (
+        int(df[request.environment_column].nunique())
+        if request.environment_column
+        else None
+    )
+    dataset_summary = DatasetSummary(
+        n_genotypes=n_genotypes,
+        n_reps=n_reps,
+        n_environments=n_environments,
+        n_traits=len(request.trait_columns),
+        mode=request.mode,
+    )
+
+    summary_table: List[SummaryTableRow] = []
+    trait_results: Dict[str, TraitResult] = {}
+    failed_traits: List[str] = []
+
+    env_col_for_mode = request.environment_column if request.mode == "multi" else None
+
+    for trait in request.trait_columns:
+        logger.info("Analyzing trait: %s", trait)
+        try:
+            balance_warnings = check_balance(
+                df=df,
+                genotype_col=request.genotype_column,
+                rep_col=request.rep_column,
+                trait_col=trait,
+                env_col=env_col_for_mode,
+            )
+            if balance_warnings:
+                for w in balance_warnings:
+                    logger.warning("Trait '%s': %s", trait, w)
+
+            observations = build_observations(
+                df=df,
+                genotype_col=request.genotype_column,
+                rep_col=request.rep_column,
+                trait_col=trait,
+                env_col=env_col_for_mode,
+            )
+
+            # r_engine.run_analysis() is the shared genetics core.
+            # It invokes genetics_analysis() in vivasense_genetics.R via
+            # subprocess and returns the parsed JSON as a plain dict that
+            # conforms to the GeneticsResponse schema.
+            result_dict = r_engine.run_analysis(
+                data=observations,
+                mode=request.mode,
+                trait_name=trait,
+                random_environment=request.random_environment,
+            )
+
+            # Validate the dict against the real GeneticsResponse schema.
+            # This surfaces any schema drift early rather than silently
+            # passing malformed data through trait_results.
+            from app_genetics import GeneticsResponse  # noqa: PLC0415
+            validated = GeneticsResponse(**result_dict)
+
+            trait_results[trait] = TraitResult(
+                status="success",
+                analysis_result=validated,
+                data_warnings=balance_warnings,
+            )
+            summary_table.append(_build_summary_row(trait, result_dict))
+
+        except Exception as exc:
+            logger.warning("Trait '%s' failed: %s", trait, exc)
+            failed_traits.append(trait)
+            # analysis_result stays None — schema validates because it is Optional
+            trait_results[trait] = TraitResult(
+                status="failed",
+                analysis_result=None,
+                error=str(exc),
+            )
+            summary_table.append(
+                SummaryTableRow(trait=trait, status="failed", error=str(exc))
+            )
+
+    return UploadAnalysisResponse(
+        summary_table=summary_table,
+        trait_results=trait_results,
+        dataset_summary=dataset_summary,
+        failed_traits=failed_traits,
+    )

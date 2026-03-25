@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \":*)",
+      "Bash(python -c \"import fastapi, pydantic, pandas; print\\(''core deps ok''\\)\")",
+      "Bash(Rscript --version)",
+      "Bash(Rscript -e \"cat\\(''R ok\\\\n''\\)\")",
+      "Bash(Rscript -e \"library\\(jsonlite\\); library\\(agricolae\\); cat\\(''R packages ok\\\\n''\\)\")",
+      "Bash(python -c \"import openpyxl; print\\(''openpyxl ok''\\)\")",
+      "Bash(python -c \"import scipy; print\\(''scipy ok''\\)\")",
+      "Bash(pip install:*)",
+      "Bash(python -c \"import openpyxl; print\\(''openpyxl'', openpyxl.__version__\\)\")",
+      "Bash(python test_upload_integration.py)",
+      "Bash(python -X utf8 test_upload_integration.py)"
+    ]
+  }
+}
