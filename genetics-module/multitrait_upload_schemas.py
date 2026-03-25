@@ -1,21 +1,11 @@
 """
 VivaSense Genetics - Multi-Trait Upload Response Schemas
-
-Import note: GeneticsResponse is imported from app_genetics.
-This is safe because app_genetics.py defines GeneticsResponse (line ~126)
-BEFORE it imports this module's router (line ~162). Python's partial-module
-resolution means the class is already in sys.modules['app_genetics'] when
-this file is first loaded.
 """
 
 from pydantic import BaseModel, Field
 from typing import Any, Dict, List, Optional
 
-# GeneticsResponse is the authoritative response type for a single-trait
-# analysis — the same type returned by POST /genetics/analyze.
-# It lives in app_genetics because that is where the R engine and its
-# response contract are defined.
-from app_genetics import GeneticsResponse
+from genetics_schemas import GeneticsResponse
 
 
 # ============================================================================

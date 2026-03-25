@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
 from typing import List, Optional, Dict, Any
+from genetics_schemas import GeneticsResult, GeneticsResponse
 import subprocess
 import json
 import tempfile
@@ -110,28 +111,6 @@ class GeneticParameters(BaseModel):
     GAM: Optional[float] = None
     GAM_percent: Optional[float] = None
     selection_intensity: float = 1.4
-
-
-class GeneticsResult(BaseModel):
-    """Core analysis result"""
-    environment_mode: str
-    n_genotypes: int
-    n_reps: int
-    n_environments: Optional[int] = None
-    grand_mean: float
-    variance_components: Dict[str, Any]
-    heritability: Dict[str, Any]
-    genetic_parameters: Dict[str, Any]
-
-
-class GeneticsResponse(BaseModel):
-    """Response payload for genetics analysis"""
-    status: str
-    mode: str
-    data_validation: Dict[str, Any] = Field(default_factory=dict)
-    variance_warnings: Dict[str, Any] = Field(default_factory=dict)
-    result: Optional[GeneticsResult] = None
-    interpretation: Optional[str] = None
 
 
 class ValidationResponse(BaseModel):

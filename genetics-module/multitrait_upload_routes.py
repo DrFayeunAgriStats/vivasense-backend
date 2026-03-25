@@ -35,6 +35,7 @@ from multitrait_upload_schemas import (
     UploadAnalysisResponse,
     UploadPreviewResponse,
 )
+from genetics_schemas import GeneticsResponse
 
 logger = logging.getLogger(__name__)
 
@@ -504,7 +505,6 @@ async def analyze_upload(request: UploadAnalysisRequest):
             # Validate the dict against the real GeneticsResponse schema.
             # This surfaces any schema drift early rather than silently
             # passing malformed data through trait_results.
-            from app_genetics import GeneticsResponse  # noqa: PLC0415
             validated = GeneticsResponse(**result_dict)
 
             trait_results[trait] = TraitResult(
