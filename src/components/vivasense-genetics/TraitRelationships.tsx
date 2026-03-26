@@ -308,6 +308,18 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
           </div>
         )}
 
+        {/* Statistical basis notes */}
+        <div className="space-y-1">
+          <p className="flex items-start gap-1.5 text-xs text-gray-400">
+            <span className="shrink-0 mt-px">ℹ</span>
+            {results.statistical_note}
+          </p>
+          <p className="flex items-start gap-1.5 text-xs text-gray-400">
+            <span className="shrink-0 mt-px">ℹ</span>
+            P-values are unadjusted for multiple comparisons.
+          </p>
+        </div>
+
         {/* Heatmap */}
         <CorrelationHeatmap data={results} />
 

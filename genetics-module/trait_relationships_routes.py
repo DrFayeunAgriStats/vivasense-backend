@@ -37,6 +37,13 @@ router = APIRouter(tags=["Trait Relationships"])
 
 _R_SCRIPT = "vivasense_trait_relationships.R"
 
+# Included in every CorrelationResponse so consumers always know the
+# statistical basis without having to read the documentation.
+_STATISTICAL_NOTE = (
+    "Correlations computed using genotype-level means; "
+    "significance based on number of genotypes."
+)
+
 
 # ============================================================================
 # ENGINE
@@ -281,4 +288,5 @@ async def compute_correlation(request: CorrelationRequest):
         logger.error("Correlation R error: %s", exc)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    result["statistical_note"] = _STATISTICAL_NOTE
     return CorrelationResponse(**result)

@@ -42,6 +42,7 @@ export interface CorrelationResponse {
   p_matrix: (number | null)[][];
   interpretation: string;
   warnings: string[];
+  statistical_note: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

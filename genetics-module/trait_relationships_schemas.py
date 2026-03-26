@@ -38,3 +38,7 @@ class CorrelationResponse(BaseModel):
     p_matrix: List[List[Optional[float]]]
     interpretation: str
     warnings: List[str] = Field(default_factory=list)
+    statistical_note: str = (
+        "Correlations computed using genotype-level means; "
+        "significance based on number of genotypes."
+    )
