@@ -213,6 +213,33 @@ export function fileToBase64(file: File): Promise<string> {
   });
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DATASET CONTEXT
+// Shared from the Upload File tab → Trait Relationships tab.
+// MultiTraitUpload emits this once the user confirms column mapping.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Snapshot of a confirmed upload session.
+ * Passed from MultiTraitUpload (via onDatasetReady) up to DataSourceTabs,
+ * then down into TraitRelationships so it can run correlation without
+ * requiring a second file upload.
+ */
+export interface UploadDatasetContext {
+  /** The original File object (kept for display purposes). */
+  file: File;
+  /** Pre-computed base64 string — avoids re-encoding when running correlation. */
+  base64Content: string;
+  fileType: "csv" | "xlsx" | "xls";
+  genotypeColumn: string;
+  repColumn: string;
+  /** Defined only when mode === "multi". */
+  environmentColumn?: string;
+  /** All numeric columns detected in the file (not just the ones selected for heritability). */
+  availableTraitColumns: string[];
+  mode: "single" | "multi";
+}
+
 /** Infer file_type from File.name */
 export function inferFileType(file: File): "csv" | "xlsx" | "xls" {
   const name = file.name.toLowerCase();

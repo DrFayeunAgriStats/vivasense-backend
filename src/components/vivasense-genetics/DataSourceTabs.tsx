@@ -1,36 +1,68 @@
 /**
  * DataSourceTabs
  * ==============
- * Wraps existing manual input form and the new multi-trait upload.
- * Drop this around the existing <DynamicInputForm /> in VivaSenseGeneticsPage.
+ * Wraps manual input, file upload, and (optionally) trait relationships.
+ *
+ * Dataset context sharing
+ * -----------------------
+ * When `traitRelationshipsContent` is provided, this component holds
+ * `datasetContext` in state.  It clones `uploadContent` and injects an
+ * `onDatasetReady` prop so that MultiTraitUpload can signal when a dataset
+ * is ready — without the parent page needing to manage that state.
  *
  * Usage in VivaSenseGeneticsPage.tsx:
  *
- *   import { DataSourceTabs } from "./DataSourceTabs";
- *   import { MultiTraitUpload } from "./MultiTraitUpload";
+ *   import { DataSourceTabs }     from "./DataSourceTabs";
+ *   import { MultiTraitUpload }   from "./MultiTraitUpload";
+ *   import { TraitRelationships } from "./TraitRelationships";
  *
  *   // Replace the bare <DynamicInputForm ... /> with:
  *   <DataSourceTabs
  *     manualContent={<DynamicInputForm ... />}
  *     uploadContent={<MultiTraitUpload />}
+ *     traitRelationshipsContent={(ctx) => <TraitRelationships datasetContext={ctx} />}
  *   />
+ *
+ * The `traitRelationshipsContent` prop is optional.  When omitted the third
+ * tab does not appear and the component behaves exactly as before.
  */
 
 import React, { useState } from "react";
+import { UploadDatasetContext } from "@/services/geneticsUploadApi";
 
-type TabId = "manual" | "upload";
+type TabId = "manual" | "upload" | "relationships";
 
 interface DataSourceTabsProps {
   /** The existing manual input form / component */
   manualContent: React.ReactNode;
-  /** The MultiTraitUpload component */
-  uploadContent: React.ReactNode;
+  /**
+   * The MultiTraitUpload component (or any element that accepts an optional
+   * `onDatasetReady` prop).  DataSourceTabs injects `onDatasetReady` via
+   * React.cloneElement to capture the dataset context.
+   */
+  uploadContent: React.ReactElement;
+  /**
+   * Render-prop for the Trait Relationships tab.
+   * Receives the current dataset context (null until the user confirms a
+   * column mapping in the Upload File tab).
+   * When omitted, the third tab is not rendered.
+   */
+  traitRelationshipsContent?: (ctx: UploadDatasetContext | null) => React.ReactNode;
 }
 
-export function DataSourceTabs({ manualContent, uploadContent }: DataSourceTabsProps) {
+export function DataSourceTabs({
+  manualContent,
+  uploadContent,
+  traitRelationshipsContent,
+}: DataSourceTabsProps) {
   const [active, setActive] = useState<TabId>("manual");
+  const [datasetContext, setDatasetContext] = useState<UploadDatasetContext | null>(null);
 
-  const tabs: { id: TabId; label: string; icon: string; description: string }[] = [
+  const showRelationships = typeof traitRelationshipsContent === "function";
+
+  type TabDef = { id: TabId; label: string; icon: string; description: string };
+
+  const tabs: TabDef[] = [
     {
       id: "manual",
       label: "Manual Input",
@@ -43,7 +75,23 @@ export function DataSourceTabs({ manualContent, uploadContent }: DataSourceTabsP
       icon: "📂",
       description: "CSV / Excel — analyze all traits at once",
     },
+    ...(showRelationships
+      ? [
+          {
+            id: "relationships" as TabId,
+            label: "Trait Relationships",
+            icon: "🔗",
+            description: "Correlations between traits",
+          },
+        ]
+      : []),
   ];
+
+  // Inject onDatasetReady into uploadContent so MultiTraitUpload can signal
+  // when the user has confirmed a column mapping.
+  const uploadWithCallback = React.cloneElement(uploadContent, {
+    onDatasetReady: (ctx: UploadDatasetContext) => setDatasetContext(ctx),
+  });
 
   return (
     <div className="w-full">
@@ -66,18 +114,29 @@ export function DataSourceTabs({ manualContent, uploadContent }: DataSourceTabsP
             <span className="hidden md:inline text-xs font-normal text-gray-400">
               — {tab.description}
             </span>
+            {/* Badge: shows when a dataset is ready and this tab is inactive */}
+            {tab.id === "relationships" &&
+              datasetContext !== null &&
+              active !== "relationships" && (
+                <span className="ml-1 h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
+              )}
           </button>
         ))}
       </div>
 
-      {/* Content */}
+      {/* Content — all panes stay mounted (display:block/hidden) */}
       <div>
         <div className={active === "manual" ? "block" : "hidden"}>
           {manualContent}
         </div>
         <div className={active === "upload" ? "block" : "hidden"}>
-          {uploadContent}
+          {uploadWithCallback}
         </div>
+        {showRelationships && (
+          <div className={active === "relationships" ? "block" : "hidden"}>
+            {traitRelationshipsContent(datasetContext)}
+          </div>
+        )}
       </div>
     </div>
   );

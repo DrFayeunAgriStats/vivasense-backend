@@ -19,11 +19,21 @@ import {
   inferFileType,
   UploadPreviewResponse,
   UploadAnalysisResponse,
+  UploadDatasetContext,
 } from "@/services/geneticsUploadApi";
 
 type Step = "idle" | "confirming" | "analyzing" | "results";
 
-export function MultiTraitUpload() {
+interface MultiTraitUploadProps {
+  /**
+   * Called once the user confirms column mapping, before analysis begins.
+   * Provides the dataset context needed by the Trait Relationships tab so
+   * it can run correlation without requiring a second file upload.
+   */
+  onDatasetReady?: (ctx: UploadDatasetContext) => void;
+}
+
+export function MultiTraitUpload({ onDatasetReady }: MultiTraitUploadProps = {}) {
   const [step, setStep] = useState<Step>("idle");
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<UploadPreviewResponse | null>(null);
@@ -54,6 +64,21 @@ export function MultiTraitUpload() {
 
     try {
       const base64_content = await fileToBase64(file);
+
+      // Share dataset context with sibling components (e.g. Trait Relationships)
+      // before the analysis call so the context is available immediately.
+      onDatasetReady?.({
+        file,
+        base64Content: base64_content,
+        fileType: inferFileType(file),
+        genotypeColumn: mapping.genotypeColumn,
+        repColumn: mapping.repColumn,
+        environmentColumn:
+          mapping.mode === "multi" ? mapping.environmentColumn || undefined : undefined,
+        availableTraitColumns: preview?.detected_columns.traits ?? mapping.selectedTraits,
+        mode: mapping.mode,
+      });
+
       const data = await analyzeUpload({
         base64_content,
         file_type: inferFileType(file),

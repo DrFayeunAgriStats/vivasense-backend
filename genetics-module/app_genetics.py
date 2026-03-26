@@ -155,6 +155,10 @@ app.add_middleware(
 from multitrait_upload_routes import router as multitrait_router
 app.include_router(multitrait_router)
 
+# Trait relationships endpoints (Phase 2)
+from trait_relationships_routes import router as tr_router
+app.include_router(tr_router)
+
 
 # ============================================================================
 # R ENGINE ORCHESTRATION
@@ -296,6 +300,10 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Failed to initialize R engine: {e}")
         raise
+
+    # Trait relationships engine — non-fatal if R script missing
+    from trait_relationships_routes import init_trait_relationships_engine
+    init_trait_relationships_engine()
 
 
 # ============================================================================
@@ -444,6 +452,7 @@ async def root():
             "POST /genetics/validate": "Validate data before analysis",
             "POST /genetics/upload-preview": "Preview uploaded file + detect columns",
             "POST /genetics/analyze-upload": "Analyze all traits in uploaded CSV/Excel",
+            "POST /genetics/correlation": "Phenotypic correlation between trait pairs",
             "GET /health": "Health check",
             "GET /docs": "Interactive API documentation (Swagger UI)"
         },
