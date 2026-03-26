@@ -40,8 +40,8 @@ _R_SCRIPT = "vivasense_trait_relationships.R"
 # Included in every CorrelationResponse so consumers always know the
 # statistical basis without having to read the documentation.
 _STATISTICAL_NOTE = (
-    "Correlations computed using genotype-level means; "
-    "significance based on number of genotypes."
+    "Correlations were computed using genotype-level means; "
+    "significance levels are based on the number of genotypes."
 )
 
 

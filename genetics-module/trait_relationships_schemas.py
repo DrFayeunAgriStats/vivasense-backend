@@ -39,6 +39,6 @@ class CorrelationResponse(BaseModel):
     interpretation: str
     warnings: List[str] = Field(default_factory=list)
     statistical_note: str = (
-        "Correlations computed using genotype-level means; "
-        "significance based on number of genotypes."
+        "Correlations were computed using genotype-level means; "
+        "significance levels are based on the number of genotypes."
     )
