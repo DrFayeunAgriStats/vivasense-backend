@@ -82,7 +82,7 @@ compute_single_environment <- function(data, trait_name = "Trait") {
   }
   
   list(
-    computation_mode = "single_environment",
+    environment_mode = "single_environment",
     n_genotypes = n_genotypes,
     n_reps = n_reps,
     grand_mean = grand_mean,
@@ -213,7 +213,7 @@ compute_multi_environment <- function(data, trait_name = "Trait",
   }
   
   list(
-    computation_mode = "multi_environment",
+    environment_mode = "multi_environment",
     n_genotypes = n_genotypes,
     n_environments = n_envs,
     n_reps = n_reps,
@@ -345,7 +345,7 @@ validate_variance_components <- function(result) {
     is_valid <- FALSE
   }
   
-  if (result$computation_mode == "multi_environment" && isTRUE(flags$negative_sigma2_ge)) {
+  if (result$environment_mode == "multi_environment" && isTRUE(flags$negative_sigma2_ge)) {
     warnings_list$negative_sigma2_ge <- list(
       value = flags$sigma2_ge_raw,
       message = "G×E variance was negative and truncated to zero. Genotypes interact weakly or not at all across environments; performance may be stable across conditions."
@@ -353,14 +353,14 @@ validate_variance_components <- function(result) {
   }
   
   # CRITICAL: Detect weak genotype signal
-  if (result$computation_mode == "multi_environment" && isTRUE(flags$weak_genotype_signal)) {
+  if (result$environment_mode == "multi_environment" && isTRUE(flags$weak_genotype_signal)) {
     warnings_list$weak_genotype_signal <- list(
       message = "Genotypic variance is weak relative to G×E. Genotype differentiation may be unreliable; G×E effects dominate the genetic variation."
     )
   }
   
   # CRITICAL: Detect weak or negligible G×E
-  if (result$computation_mode == "multi_environment" && isTRUE(flags$weak_ge_signal)) {
+  if (result$environment_mode == "multi_environment" && isTRUE(flags$weak_ge_signal)) {
     warnings_list$weak_ge_signal <- list(
       message = "G×E variance is negligible or zero. Genotype performance is relatively stable across environments."
     )
@@ -508,6 +508,6 @@ export_to_json <- function(analysis_result) {
   }
   
   # Convert to JSON
-  json_str <- toJSON(clean_result, pretty = TRUE, na = "null", digits = 10)
+  json_str <- toJSON(clean_result, pretty = TRUE, auto_unbox = TRUE, na = "null", digits = 10)
   return(json_str)
 }
