@@ -161,6 +161,21 @@ export async function previewUpload(file: File): Promise<UploadPreviewResponse> 
 export async function analyzeUpload(
   request: UploadAnalysisRequest
 ): Promise<UploadAnalysisResponse> {
+  // Temporary debug log — remove after integration is confirmed working.
+  console.log("[analyzeUpload] request fields:", {
+    file_type: request.file_type,
+    genotype_column: request.genotype_column,
+    rep_column: request.rep_column,
+    environment_column: request.environment_column,
+    trait_columns: request.trait_columns,
+    mode: request.mode,
+    random_environment: request.random_environment,
+    selection_intensity: request.selection_intensity,
+    base64_content: request.base64_content
+      ? `[base64, ${request.base64_content.length} chars]`
+      : "(empty — file encoding failed)",
+  });
+
   let response: Response;
   try {
     response = await fetch(`${ENGINE_BASE}/genetics/analyze-upload`, {

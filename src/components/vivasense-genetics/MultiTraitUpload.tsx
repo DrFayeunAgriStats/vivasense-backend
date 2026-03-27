@@ -130,7 +130,11 @@ export function MultiTraitUpload({ onDatasetReady }: MultiTraitUploadProps = {})
             {analysisError && (
               <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
                 <p className="font-medium">Analysis error</p>
-                <p>{analysisError}</p>
+                {/* Strip the "Analysis failed — " prefix so the backend detail
+                    message is shown directly. Falls back to full message. */}
+                <p className="mt-0.5 font-mono text-xs break-all">
+                  {analysisError.replace(/^Analysis failed — /, "")}
+                </p>
               </div>
             )}
             <ColumnMappingConfirm
