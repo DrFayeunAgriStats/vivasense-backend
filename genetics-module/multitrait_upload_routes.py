@@ -434,6 +434,10 @@ async def analyze_upload(request: UploadAnalysisRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    logger.info("analyze-upload dataframe shape: %s", df.shape)
+    logger.info("analyze-upload columns: %s", list(df.columns))
+    logger.info("analyze-upload head:\n%s", df.head())
+
     # Validate that all named columns actually exist
     required_cols = (
         [request.genotype_column, request.rep_column]
