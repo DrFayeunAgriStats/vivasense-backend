@@ -45,11 +45,11 @@ export interface UploadAnalysisRequest {
   file_type: "csv" | "xlsx" | "xls";
   genotype_column: string;
   rep_column: string;
-  environment_column?: string;
+  environment_column: string | null;
   trait_columns: string[];
   mode: "single" | "multi";
   random_environment?: boolean;
-  selection_intensity?: number;
+  selection_intensity: number;
 }
 
 export interface SummaryTableRow {

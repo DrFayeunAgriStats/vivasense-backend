@@ -84,10 +84,11 @@ export function MultiTraitUpload({ onDatasetReady }: MultiTraitUploadProps = {})
         file_type: inferFileType(file),
         genotype_column: mapping.genotypeColumn,
         rep_column: mapping.repColumn,
-        environment_column: mapping.mode === "multi" ? mapping.environmentColumn : undefined,
-        trait_columns: mapping.selectedTraits,
+        environment_column: mapping.mode === "multi" ? (mapping.environmentColumn || null) : null,
+        trait_columns: mapping.selectedTraits.length > 0 ? mapping.selectedTraits : [],
         mode: mapping.mode,
         random_environment: mapping.randomEnvironment,
+        selection_intensity: 2.06,
       });
       setResults(data);
       setStep("results");
