@@ -519,6 +519,9 @@ async def analyze_upload(request: UploadAnalysisRequest):
             summary_table.append(_build_summary_row(trait, result_dict))
 
         except Exception as exc:
+            import traceback as _tb
+            print(f"[TRAIT_FAIL] trait={trait} exc_type={type(exc).__name__} exc={exc}", flush=True)
+            print(_tb.format_exc(), flush=True)
             logger.warning("Trait '%s' failed: %s", trait, exc)
             failed_traits.append(trait)
             # analysis_result stays None — schema validates because it is Optional
