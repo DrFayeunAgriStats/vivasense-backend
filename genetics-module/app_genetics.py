@@ -219,7 +219,7 @@ source("{self.r_script_path}")
 # Load data from JSON
 data_json <- '{data_json}'
 data_list <- jsonlite::fromJSON(data_json)
-data <- as.data.frame(do.call(rbind, data_list))
+data <- as.data.frame(data_list)
 
 # Convert to proper types
 data$trait_value <- as.numeric(data$trait_value)
@@ -390,7 +390,7 @@ source("vivasense_genetics.R")
 
 # Load data
 data_list <- jsonlite::fromJSON('{data_json}')
-data <- as.data.frame(do.call(rbind, data_list))
+data <- as.data.frame(data_list)
 data$trait_value <- as.numeric(data$trait_value)
 
 # Validate

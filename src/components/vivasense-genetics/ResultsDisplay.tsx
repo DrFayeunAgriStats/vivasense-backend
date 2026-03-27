@@ -108,13 +108,14 @@ function SummaryRow({
   const bg = isEven ? "bg-white" : "bg-gray-50/50";
 
   if (row.status === "failed") {
+    const errorMsg = row.error ?? traitResult?.error ?? "unknown error";
     return (
       <tr className={bg}>
         <td className="px-4 py-3 font-medium text-gray-700">{row.trait}</td>
-        <td colSpan={6} className="px-4 py-3 text-red-500 text-xs">
-          Failed: {row.error ?? traitResult?.error ?? "unknown error"}
+        <td colSpan={7} className="px-4 py-3">
+          <p className="text-xs font-semibold text-red-600 mb-0.5">Failed</p>
+          <p className="font-mono text-xs text-red-500 break-all whitespace-pre-wrap">{errorMsg}</p>
         </td>
-        <td className="px-4 py-3" />
       </tr>
     );
   }

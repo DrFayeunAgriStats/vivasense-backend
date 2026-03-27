@@ -193,7 +193,10 @@ export async function analyzeUpload(
     throw new Error(`Analysis failed — ${detail}`);
   }
 
-  return response.json() as Promise<UploadAnalysisResponse>;
+  const data = (await response.json()) as UploadAnalysisResponse;
+  // Temporary debug log — remove after multi-env failure is resolved.
+  console.log("[analyzeUpload] full response:", JSON.stringify(data, null, 2));
+  return data;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
