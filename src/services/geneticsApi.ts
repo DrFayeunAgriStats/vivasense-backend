@@ -5,19 +5,10 @@
  *   POST /genetics/analyze   – single-trait ANOVA + heritability
  *   POST /genetics/validate  – data validation pre-flight
  *   GET  /health             – service health check
- *
- * Base URL is read from VITE_GENETICS_ENGINE_BASE (Lovable env var).
- * Fallback: https://vivasense-genetics.onrender.com
- *
- * NOTE: This file replaces any prior version that pointed to
- * https://vivasense-r-api.onrender.com or used paths /analysis/anova
- * or /analysis/upload. Those paths no longer exist.
  */
 
-const ENGINE_BASE: string =
-  import.meta.env.VITE_GENETICS_ENGINE_BASE ||
-  import.meta.env.VITE_GENETICS_API_BASE ||
-  "https://vivasense-genetics.onrender.com";
+import { API_BASE } from "./apiConfig";
+const ENGINE_BASE: string = API_BASE;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES

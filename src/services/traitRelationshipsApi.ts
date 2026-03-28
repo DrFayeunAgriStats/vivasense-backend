@@ -6,10 +6,8 @@
  * Uses the same VITE_GENETICS_ENGINE_BASE env variable as geneticsUploadApi.ts.
  */
 
-const ENGINE_BASE: string =
-  import.meta.env.VITE_GENETICS_ENGINE_BASE ||
-  import.meta.env.VITE_GENETICS_API_BASE ||
-  "https://vivasense-genetics.onrender.com";
+import { API_BASE } from "./apiConfig";
+const ENGINE_BASE: string = API_BASE;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -52,9 +50,12 @@ export interface CorrelationResponse {
 export async function computeCorrelation(
   request: CorrelationRequest
 ): Promise<CorrelationResponse> {
+  const correlationUrl = `${ENGINE_BASE}/genetics/correlation`;
+  console.log("[traitRelationshipsApi] POST", correlationUrl);
+
   let response: Response;
   try {
-    response = await fetch(`${ENGINE_BASE}/genetics/correlation`, {
+    response = await fetch(correlationUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),

@@ -9,10 +9,8 @@
  *   VITE_GENETICS_ENGINE_BASE = https://vivasense-genetics.onrender.com
  */
 
-const ENGINE_BASE: string =
-  import.meta.env.VITE_GENETICS_ENGINE_BASE ||
-  import.meta.env.VITE_GENETICS_API_BASE ||
-  "https://vivasense-genetics.onrender.com";
+import { API_BASE } from "./apiConfig";
+const ENGINE_BASE: string = API_BASE;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -131,9 +129,12 @@ export async function previewUpload(file: File): Promise<UploadPreviewResponse> 
   const fd = new FormData();
   fd.append("file", file);
 
+  const previewUrl = `${ENGINE_BASE}/genetics/upload-preview`;
+  console.log("[geneticsUploadApi] POST", previewUrl);
+
   let response: Response;
   try {
-    response = await fetch(`${ENGINE_BASE}/genetics/upload-preview`, {
+    response = await fetch(previewUrl, {
       method: "POST",
       body: fd,
     });
@@ -176,9 +177,12 @@ export async function analyzeUpload(
       : "(empty — file encoding failed)",
   });
 
+  const analyzeUrl = `${ENGINE_BASE}/genetics/analyze-upload`;
+  console.log("[geneticsUploadApi] POST", analyzeUrl);
+
   let response: Response;
   try {
-    response = await fetch(`${ENGINE_BASE}/genetics/analyze-upload`, {
+    response = await fetch(analyzeUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
