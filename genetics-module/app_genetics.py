@@ -294,6 +294,21 @@ r_engine = None
 @app.on_event("startup")
 async def startup_event():
     global r_engine
+
+    # Run R package installer to ensure all dependencies are present.
+    # Runs at startup so missing packages are installed even after a hot restart.
+    installer = Path(__file__).parent / "install_packages.R"
+    if installer.exists():
+        logger.info("Running install_packages.R …")
+        result = subprocess.run(
+            ["Rscript", str(installer)],
+            capture_output=True, text=True
+        )
+        if result.stdout:
+            logger.info("install_packages.R stdout: %s", result.stdout.strip())
+        if result.returncode != 0:
+            logger.warning("install_packages.R exited %d: %s", result.returncode, result.stderr.strip())
+
     try:
         r_engine = RGeneticsEngine("vivasense_genetics.R")
         logger.info("VivaSense R genetics engine ready")
