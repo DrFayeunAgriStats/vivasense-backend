@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install required R packages
-RUN R -e "install.packages(c('jsonlite','dplyr','readr'), repos='https://cloud.r-project.org/')"
+RUN R -e "install.packages(c('jsonlite','agricolae','dplyr','tidyr','readr'), repos='https://cloud.r-project.org/')"
 
 # Set working directory
 WORKDIR /app
@@ -23,7 +23,7 @@ COPY . .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Expose port
-EXPOSE 10000
+EXPOSE 8000
 
 # Start server
-CMD ["python", "-m", "uvicorn", "app_genetics:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn app_genetics:app --host 0.0.0.0 --port ${PORT:-8000}"]

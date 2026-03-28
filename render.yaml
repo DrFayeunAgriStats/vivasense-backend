@@ -1,21 +1,9 @@
 services:
   - type: web
     name: vivasense-backend-r
-    env: python
-    rootDir: genetics-module
-    buildCommand: |
-      apt-get update -qq && \
-      apt-get install -y --no-install-recommends \
-        r-base \
-        r-cran-jsonlite \
-        r-cran-agricolae \
-        r-cran-dplyr \
-        r-cran-tidyr \
-        r-cran-matrix \
-        r-cran-nlme && \
-      Rscript install_packages.R && \
-      pip install -r requirements.txt
-    startCommand: "uvicorn app_genetics:app --host 0.0.0.0 --port 8000"
+    env: docker
+    dockerfilePath: genetics-module/Dockerfile
+    dockerContext: genetics-module
     envVars:
-      - key: PYTHON_VERSION
-        value: "3.11"
+      - key: PORT
+        value: "8000"
