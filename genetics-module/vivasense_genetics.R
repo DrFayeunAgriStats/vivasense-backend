@@ -122,24 +122,61 @@ compute_single_environment <- function(data, trait_name = "Trait") {
 #' @param random_environment logical, if TRUE, include E in denominator of h2
 #' @return list with variance components for combined analysis
 #'
-compute_multi_environment <- function(data, trait_name = "Trait", 
+compute_multi_environment <- function(data, trait_name = "Trait",
                                        random_environment = FALSE) {
-  
-  # Ensure factors
-  data$genotype <- factor(data$genotype)
+
+  # Ensure factors — handles both lowercase (from Python) and Title Case
+  data$genotype    <- factor(data$genotype)
   data$environment <- factor(data$environment)
-  data$rep <- factor(data$rep)
-  
+  data$rep         <- factor(data$rep)
+
+  # ── Debug: log factor levels so failures are diagnosable in Render logs ──
+  cat(sprintf("[DEBUG] Trait: %s\n", trait_name))
+  cat(sprintf("[DEBUG] Levels Genotype (%d): %s\n",
+              nlevels(data$genotype),
+              paste(levels(data$genotype), collapse = ", ")))
+  cat(sprintf("[DEBUG] Levels Environment (%d): %s\n",
+              nlevels(data$environment),
+              paste(levels(data$environment), collapse = ", ")))
+  cat(sprintf("[DEBUG] Levels Rep/Block (%d): %s\n",
+              nlevels(data$rep),
+              paste(levels(data$rep), collapse = ", ")))
+  cat(sprintf("[DEBUG] Rows: %d\n", nrow(data)))
+
   n_genotypes <- nlevels(data$genotype)
-  n_envs <- nlevels(data$environment)
-  n_reps <- nlevels(data$rep)
-  
-  # ANOVA: Main effects + G×E interaction
-  # Assumes: rep nested in environment
-  model <- aov(trait_value ~ environment + rep %in% environment + genotype + 
-                 genotype:environment, data = data)
-  anova_table <- anova(model)
-  
+  n_envs      <- nlevels(data$environment)
+  n_reps      <- nlevels(data$rep)
+
+  # Guard: catch model errors and return them as structured failures
+  model_result <- tryCatch({
+
+    # ANOVA: Main effects + G×E interaction
+    # Assumes: rep nested in environment (RCBD across environments)
+    model <- aov(trait_value ~ environment + rep %in% environment + genotype +
+                   genotype:environment, data = data)
+    anova_table <- anova(model)
+
+    # Verify required terms exist in the anova table
+    required_terms <- c("genotype", "genotype:environment", "Residuals")
+    missing_terms  <- setdiff(required_terms, rownames(anova_table))
+    if (length(missing_terms) > 0) {
+      stop(paste("ANOVA table missing terms:", paste(missing_terms, collapse = ", "),
+                 "— check data balance and replication structure"))
+    }
+
+    list(ok = TRUE, anova_table = anova_table)
+
+  }, error = function(e) {
+    cat(sprintf("[ERROR] Trait %s — model failed: %s\n", trait_name, conditionMessage(e)))
+    list(ok = FALSE, message = conditionMessage(e))
+  })
+
+  if (!model_result$ok) {
+    stop(model_result$message)   # propagates to genetics_analysis tryCatch
+  }
+
+  anova_table <- model_result$anova_table
+
   # Extract mean squares
   ms_genotype <- anova_table["genotype", "Mean Sq"]
   ms_ge <- anova_table["genotype:environment", "Mean Sq"]
@@ -453,10 +490,22 @@ genetics_analysis <- function(data,
   
   # Run computation
   if (mode == "single") {
-    result <- compute_single_environment(data, trait_name = trait_name)
+    result <- tryCatch(
+      compute_single_environment(data, trait_name = trait_name),
+      error = function(e) {
+        cat(sprintf("[ERROR] single-env computation failed for %s: %s\n", trait_name, conditionMessage(e)))
+        return(list(.__error__ = conditionMessage(e)))
+      }
+    )
   } else if (mode == "multi") {
-    result <- compute_multi_environment(data, trait_name = trait_name, 
-                                        random_environment = random_environment)
+    result <- tryCatch(
+      compute_multi_environment(data, trait_name = trait_name,
+                                random_environment = random_environment),
+      error = function(e) {
+        cat(sprintf("[ERROR] multi-env computation failed for %s: %s\n", trait_name, conditionMessage(e)))
+        return(list(.__error__ = conditionMessage(e)))
+      }
+    )
   } else {
     return(list(
       status = "ERROR",
@@ -467,6 +516,17 @@ genetics_analysis <- function(data,
     ))
   }
   
+  # Propagate computation errors as structured responses
+  if (!is.null(result$`.__error__`)) {
+    return(list(
+      status = "ERROR",
+      mode = mode,
+      errors = list(computation_error = result$`.__error__`),
+      result = NULL,
+      interpretation = paste("Analysis failed:", result$`.__error__`)
+    ))
+  }
+
   # Validate variance components
   warnings_vc <- validate_variance_components(result)
   
