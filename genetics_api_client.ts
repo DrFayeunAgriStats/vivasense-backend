@@ -4,15 +4,16 @@
  * Add this file to your Lovable project root as: src/genetics_api_client.ts
  *
  * In Lovable → Settings → Environment Variables, add:
- *   VITE_GENETICS_API_BASE = https://vivasense-backend.onrender.com
+ *   VITE_GENETICS_ENGINE_BASE = https://vivasense-genetics.onrender.com
  *
  * Then import in your components:
  *   import { runVarianceComponents } from "@/genetics_api_client";
  */
 
 const GENETICS_BASE: string =
+  import.meta.env.VITE_GENETICS_ENGINE_BASE ||
   import.meta.env.VITE_GENETICS_API_BASE ||
-  "https://vivasense-backend.onrender.com";
+  "https://vivasense-genetics.onrender.com";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TRAIT NAME MAPPING — display labels → CSV column names

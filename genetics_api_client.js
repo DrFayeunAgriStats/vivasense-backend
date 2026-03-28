@@ -4,7 +4,7 @@
  * Paste this file into your Lovable project (or import from fia_api_client.js).
  *
  * Set in Lovable → Settings → Environment Variables:
- *   VITE_GENETICS_API_BASE = https://vivasense-backend.onrender.com
+ *   VITE_GENETICS_ENGINE_BASE = https://vivasense-genetics.onrender.com
  *
  * CORRECT TRAIT FORMAT:
  *   formData.append('traits', selectedTraits.join(','));
@@ -13,9 +13,9 @@
  */
 
 const GENETICS_BASE =
-  (typeof import.meta !== "undefined" && import.meta.env?.VITE_GENETICS_API_BASE) ||
-  (typeof process !== "undefined" && process.env?.VITE_GENETICS_API_BASE) ||
-  "https://vivasense-backend.onrender.com";
+  (typeof import.meta !== "undefined" && (import.meta.env?.VITE_GENETICS_ENGINE_BASE || import.meta.env?.VITE_GENETICS_API_BASE)) ||
+  (typeof process !== "undefined" && (process.env?.VITE_GENETICS_ENGINE_BASE || process.env?.VITE_GENETICS_API_BASE)) ||
+  "https://vivasense-genetics.onrender.com";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TRAIT NAME MAPPING — display labels → CSV column names
