@@ -7,8 +7,8 @@ so that both app_genetics.py and multitrait_upload_schemas.py can import them
 without creating a circular dependency.
 """
 
-from pydantic import BaseModel
-from typing import Any, Dict, Optional
+from pydantic import BaseModel, field_validator
+from typing import Any, Dict, List, Optional, Union
 
 
 class GeneticsResult(BaseModel):
@@ -27,7 +27,15 @@ class GeneticsResponse(BaseModel):
     """Response payload for genetics analysis"""
     status: str
     mode: str
-    data_validation: Dict[str, Any] = {}
-    variance_warnings: Dict[str, Any] = {}
+    # R serialises empty lists as [] not {} — accept both and normalise to dict
+    data_validation: Union[Dict[str, Any], List] = {}
+    variance_warnings: Union[Dict[str, Any], List] = {}
     result: Optional[GeneticsResult] = None
     interpretation: Optional[str] = None
+
+    @field_validator("data_validation", "variance_warnings", mode="before")
+    @classmethod
+    def coerce_empty_list_to_dict(cls, v: Any) -> Any:
+        if isinstance(v, list):
+            return {}
+        return v
