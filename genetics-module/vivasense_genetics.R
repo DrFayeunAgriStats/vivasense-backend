@@ -153,20 +153,30 @@ compute_multi_environment <- function(data, trait_name = "Trait",
   model_result <- tryCatch({
 
     # ANOVA: Main effects + G×E interaction
-    # Assumes: rep nested in environment (RCBD across environments)
-    model <- aov(trait_value ~ environment + rep %in% environment + genotype +
-                   genotype:environment, data = data)
+    # Use lm() with explicit environment:rep (= rep nested in environment) so
+    # that the anova table term names are fully predictable.  aov() with %in%
+    # can silently alias or drop the genotype:environment term on some R builds.
+    model <- lm(trait_value ~ environment + environment:rep + genotype +
+                  genotype:environment, data = data)
     anova_table <- anova(model)
 
-    # Verify required terms exist in the anova table
-    required_terms <- c("genotype", "genotype:environment", "Residuals")
-    missing_terms  <- setdiff(required_terms, rownames(anova_table))
-    if (length(missing_terms) > 0) {
-      stop(paste("ANOVA table missing terms:", paste(missing_terms, collapse = ", "),
-                 "— check data balance and replication structure"))
-    }
+    message(sprintf("[DEBUG] anova rownames: %s", paste(rownames(anova_table), collapse = " | ")))
 
-    list(ok = TRUE, anova_table = anova_table)
+    # Locate the G×E term flexibly — R may order as "genotype:environment"
+    # or "environment:genotype" depending on formula parsing.
+    ge_term <- rownames(anova_table)[
+      grepl("genotype", rownames(anova_table), fixed = TRUE) &
+      grepl("environment", rownames(anova_table), fixed = TRUE)
+    ]
+    if (length(ge_term) == 0) {
+      stop(paste(
+        "ANOVA table missing G\u00d7E term. Available terms:",
+        paste(rownames(anova_table), collapse = ", ")
+      ))
+    }
+    ge_term <- ge_term[1]   # use first match
+
+    list(ok = TRUE, anova_table = anova_table, ge_term = ge_term)
 
   }, error = function(e) {
     message(sprintf("[ERROR] Trait %s — model failed: %s", trait_name, conditionMessage(e)))
@@ -178,11 +188,12 @@ compute_multi_environment <- function(data, trait_name = "Trait",
   }
 
   anova_table <- model_result$anova_table
+  ge_term     <- model_result$ge_term
 
   # Extract mean squares
   ms_genotype <- anova_table["genotype", "Mean Sq"]
-  ms_ge <- anova_table["genotype:environment", "Mean Sq"]
-  ms_error <- anova_table["Residuals", "Mean Sq"]
+  ms_ge       <- anova_table[ge_term,    "Mean Sq"]
+  ms_error    <- anova_table["Residuals","Mean Sq"]
   
   # Variance components (fixed genotype, fixed environment, fixed reps)
   sigma2_error <- ms_error
