@@ -74,27 +74,24 @@ interpret_single_environment_strict <- function(result, warnings_vc) {
   )
   
   # === STEP 1: Report numerical values ===
-  text_parts$numerical <- sprintf(
-    "\nEstimated Variance Components:\n" %+%
-    "  Genotypic variance (σ²G):      %.4f\n" %+%
-    "  Phenotypic variance (σ²P):     %.4f\n" %+%
-    "  Environmental variance (σ²E):  %.4f\n" %+%
-    "  Broad-sense heritability (h²): %.4f\n",
-    vc$sigma2_genotype,
-    vc$sigma2_phenotypic,
-    vc$sigma2_error,
-    ifelse(is.na(h2), "not computed", sprintf("%.4f", h2))
+  h2_str <- if (is.na(h2)) "not computed" else sprintf("%.4f", h2)
+  text_parts$numerical <- paste0(
+    "\nEstimated Variance Components:\n",
+    sprintf("  Genotypic variance (\u03c3\u00b2G):      %.4f\n", vc$sigma2_genotype),
+    sprintf("  Phenotypic variance (\u03c3\u00b2P):     %.4f\n", vc$sigma2_phenotypic),
+    sprintf("  Environmental variance (\u03c3\u00b2E):  %.4f\n", vc$sigma2_error),
+    "  Broad-sense heritability (h\u00b2): ", h2_str, "\n"
   )
-  
+
   if (!is.na(gp$GCV)) {
-    text_parts$numerical <- paste0(text_parts$numerical, sprintf(
-      "\nGenetic Parameters:\n" %+%
-      "  Genotypic coefficient of variation (GCV): %.2f%%\n" %+%
-      "  Phenotypic coefficient of variation (PCV): %.2f%%\n" %+%
-      "  Genetic advance (absolute): %.3f\n" %+%
-      "  Genetic advance as percent of mean (GAM%%): %.2f%%\n",
-      gp$GCV, gp$PCV, gp$GAM, gp$GAM_percent
-    ))
+    text_parts$numerical <- paste0(
+      text_parts$numerical,
+      "\nGenetic Parameters:\n",
+      sprintf("  Genotypic coefficient of variation (GCV): %.2f%%\n",  gp$GCV),
+      sprintf("  Phenotypic coefficient of variation (PCV): %.2f%%\n", gp$PCV),
+      sprintf("  Genetic advance (absolute): %.3f\n",                  gp$GAM),
+      sprintf("  Genetic advance as percent of mean (GAM%%): %.2f%%\n", gp$GAM_percent)
+    )
   }
   
   # === STEP 2: Interpret heritability + Step 3: Joint h2 & GAM interpretation ===
@@ -116,63 +113,44 @@ interpret_single_environment_strict <- function(result, warnings_vc) {
     
     # High h2 + High GAM
     if (h2_class == "high" && gam_class == "high") {
-      interp <- sprintf(
-        "The estimated broad-sense heritability (h² = %.3f) indicates HIGH genetic control of the trait within this environment. " %+%
-        "The corresponding genetic advance as percent of mean (GAM = %.2f%%) is HIGH, suggesting substantial expected response to direct selection. " %+%
-        "The joint pattern of high h² and high GAM indicates that additive gene effects are likely important; direct phenotypic selection should be effective.",
-        h2, gp$GAM_percent
+      interp <- paste0(
+        sprintf("The estimated broad-sense heritability (h\u00b2 = %.3f) indicates HIGH genetic control of the trait within this environment. ", h2),
+        sprintf("The corresponding genetic advance as percent of mean (GAM = %.2f%%) is HIGH, suggesting substantial expected response to direct selection. ", gp$GAM_percent),
+        "The joint pattern of high h\u00b2 and high GAM indicates that additive gene effects are likely important; direct phenotypic selection should be effective."
       )
-    }
-    # High h2 + Moderate GAM
-    else if (h2_class == "high" && gam_class == "moderate") {
-      interp <- sprintf(
-        "The estimated broad-sense heritability (h² = %.3f) indicates HIGH genetic control within this environment. " %+%
-        "However, the genetic advance as percent of mean (GAM = %.2f%%) is only MODERATE, suggesting that while the trait is heritable, " %+%
-        "expected gains from selection are more modest. This pattern may reflect non-additive gene action, restricted allele frequency, or both.",
-        h2, gp$GAM_percent
+    } else if (h2_class == "high" && gam_class == "moderate") {
+      interp <- paste0(
+        sprintf("The estimated broad-sense heritability (h\u00b2 = %.3f) indicates HIGH genetic control within this environment. ", h2),
+        sprintf("However, the genetic advance as percent of mean (GAM = %.2f%%) is only MODERATE, suggesting that while the trait is heritable, ", gp$GAM_percent),
+        "expected gains from selection are more modest. This pattern may reflect non-additive gene action, restricted allele frequency, or both."
       )
-    }
-    # High h2 + Low GAM
-    else if (h2_class == "high" && gam_class == "low") {
-      interp <- sprintf(
-        "The estimated broad-sense heritability (h² = %.3f) indicates HIGH genetic control, yet the genetic advance as percent of mean (GAM = %.2f%%) is LOW. " %+%
-        "This dissociation suggests that while phenotypic variation is substantially genetic, the expected response to selection is limited. " %+%
-        "Non-additive gene effects, low effective population size, or strong inbreeding depression may be responsible.",
-        h2, gp$GAM_percent
+    } else if (h2_class == "high" && gam_class == "low") {
+      interp <- paste0(
+        sprintf("The estimated broad-sense heritability (h\u00b2 = %.3f) indicates HIGH genetic control, yet the genetic advance as percent of mean (GAM = %.2f%%) is LOW. ", h2, gp$GAM_percent),
+        "This dissociation suggests that while phenotypic variation is substantially genetic, the expected response to selection is limited. ",
+        "Non-additive gene effects, low effective population size, or strong inbreeding depression may be responsible."
       )
-    }
-    # Moderate h2 + High GAM
-    else if (h2_class == "moderate" && gam_class == "high") {
-      interp <- sprintf(
-        "The estimated broad-sense heritability (h² = %.3f) indicates MODERATE genetic control, with the genetic advance as percent of mean (GAM = %.2f%%) being HIGH. " %+%
-        "This combination suggests that while environmental influence is substantial, useful progress from direct selection is achievable. " %+%
-        "Both genetic and environmental management should be considered.",
-        h2, gp$GAM_percent
+    } else if (h2_class == "moderate" && gam_class == "high") {
+      interp <- paste0(
+        sprintf("The estimated broad-sense heritability (h\u00b2 = %.3f) indicates MODERATE genetic control, with the genetic advance as percent of mean (GAM = %.2f%%) being HIGH. ", h2, gp$GAM_percent),
+        "This combination suggests that while environmental influence is substantial, useful progress from direct selection is achievable. ",
+        "Both genetic and environmental management should be considered."
       )
-    }
-    # Moderate h2 + Moderate GAM
-    else if (h2_class == "moderate" && gam_class == "moderate") {
-      interp <- sprintf(
-        "The estimated broad-sense heritability (h² = %.3f) and genetic advance as percent of mean (GAM = %.2f%%) both indicate MODERATE genetic control. " %+%
-        "Selection may be useful, though environmental factors remain important. Progress should be expected to be steady but not rapid.",
-        h2, gp$GAM_percent
+    } else if (h2_class == "moderate" && gam_class == "moderate") {
+      interp <- paste0(
+        sprintf("The estimated broad-sense heritability (h\u00b2 = %.3f) and genetic advance as percent of mean (GAM = %.2f%%) both indicate MODERATE genetic control. ", h2, gp$GAM_percent),
+        "Selection may be useful, though environmental factors remain important. Progress should be expected to be steady but not rapid."
       )
-    }
-    # Moderate h2 + Low GAM
-    else if (h2_class == "moderate" && gam_class == "low") {
-      interp <- sprintf(
-        "The estimated broad-sense heritability (h² = %.3f) suggests MODERATE genetic control, but the genetic advance as percent of mean (GAM = %.2f%%) is LOW. " %+%
-        "Direct phenotypic selection may be slow. Consider investigating additive effects more carefully or combining selection with environmental optimization.",
-        h2, gp$GAM_percent
+    } else if (h2_class == "moderate" && gam_class == "low") {
+      interp <- paste0(
+        sprintf("The estimated broad-sense heritability (h\u00b2 = %.3f) suggests MODERATE genetic control, but the genetic advance as percent of mean (GAM = %.2f%%) is LOW. ", h2, gp$GAM_percent),
+        "Direct phenotypic selection may be slow. Consider investigating additive effects more carefully or combining selection with environmental optimization."
       )
-    }
-    # Low h2
-    else {
-      interp <- sprintf(
-        "The estimated broad-sense heritability (h² = %.3f) indicates LOW genetic control under the present environment. " %+%
-        "Phenotypic variation is dominated by environmental factors and/or measurement variation. " %+%
-        "Direct phenotypic selection is unlikely to be reliable; focus on improving growing conditions and management practices.",
-        h2
+    } else {
+      interp <- paste0(
+        sprintf("The estimated broad-sense heritability (h\u00b2 = %.3f) indicates LOW genetic control under the present environment. ", h2),
+        "Phenotypic variation is dominated by environmental factors and/or measurement variation. ",
+        "Direct phenotypic selection is unlikely to be reliable; focus on improving growing conditions and management practices."
       )
     }
     
@@ -187,22 +165,19 @@ interpret_single_environment_strict <- function(result, warnings_vc) {
     pcv_gcv_diff <- gp$PCV - gp$GCV
     
     if (pcv_gcv_diff <= 2) {
-      cv_interp <- sprintf(
-        "The genotypic coefficient of variation (GCV = %.2f%%) is only slightly lower than the phenotypic coefficient of variation (PCV = %.2f%%). " %+%
-        "Environmental influence on trait expression is limited, and trait variation reflects primarily genetic differences.",
-        gp$GCV, gp$PCV
+      cv_interp <- paste0(
+        sprintf("The genotypic coefficient of variation (GCV = %.2f%%) is only slightly lower than the phenotypic coefficient of variation (PCV = %.2f%%). ", gp$GCV, gp$PCV),
+        "Environmental influence on trait expression is limited, and trait variation reflects primarily genetic differences."
       )
     } else if (pcv_gcv_diff <= 7) {
-      cv_interp <- sprintf(
-        "The genotypic coefficient of variation (GCV = %.2f%%) is moderately lower than the phenotypic coefficient of variation (PCV = %.2f%%). " %+%
-        "Environmental factors exert appreciable influence on trait expression, though genetic variation remains substantial.",
-        gp$GCV, gp$PCV
+      cv_interp <- paste0(
+        sprintf("The genotypic coefficient of variation (GCV = %.2f%%) is moderately lower than the phenotypic coefficient of variation (PCV = %.2f%%). ", gp$GCV, gp$PCV),
+        "Environmental factors exert appreciable influence on trait expression, though genetic variation remains substantial."
       )
     } else {
-      cv_interp <- sprintf(
-        "The genotypic coefficient of variation (GCV = %.2f%%) is substantially lower than the phenotypic coefficient of variation (PCV = %.2f%%). " %+%
-        "Environmental factors strongly affect trait expression, and environmental standardization or management may improve selection response.",
-        gp$GCV, gp$PCV
+      cv_interp <- paste0(
+        sprintf("The genotypic coefficient of variation (GCV = %.2f%%) is substantially lower than the phenotypic coefficient of variation (PCV = %.2f%%). ", gp$GCV, gp$PCV),
+        "Environmental factors strongly affect trait expression, and environmental standardization or management may improve selection response."
       )
     }
     
@@ -211,34 +186,25 @@ interpret_single_environment_strict <- function(result, warnings_vc) {
   
   # === STEP 6: Breeding implication ===
   text_parts$breeding <- "\n"
-  if (!isTRUE(result$heritability$h2_is_valid) || is.na(h2)) {
-    text_parts$breeding <- paste0(
-      text_parts$breeding,
-      "Breeding Implication:\n" %+%
-      "Heritability could not be reliably estimated from the present data. Redesign or expand the experiment to improve precision.\n"
-    )
+  breed_body_single <- if (!isTRUE(result$heritability$h2_is_valid) || is.na(h2)) {
+    "Heritability could not be reliably estimated from the present data. Redesign or expand the experiment to improve precision."
   } else if (h2_class == "high") {
-    text_parts$breeding <- paste0(
-      text_parts$breeding,
-      "Breeding Implication:\n" %+%
-      "Strong genetic basis for the trait. Direct phenotypic selection for this trait should be effective in this environment. " %+%
-      "Prioritize identification and advancement of high-value individuals for next-generation breeding.\n"
+    paste0(
+      "Strong genetic basis for the trait. Direct phenotypic selection for this trait should be effective in this environment. ",
+      "Prioritize identification and advancement of high-value individuals for next-generation breeding."
     )
   } else if (h2_class == "moderate") {
-    text_parts$breeding <- paste0(
-      text_parts$breeding,
-      "Breeding Implication:\n" %+%
-      "Moderate genetic basis. Direct selection is possible but should be combined with attention to environmental standardization. " %+%
-      "Consider multi-environment evaluation to assess stability of selected genotypes.\n"
+    paste0(
+      "Moderate genetic basis. Direct selection is possible but should be combined with attention to environmental standardization. ",
+      "Consider multi-environment evaluation to assess stability of selected genotypes."
     )
   } else {
-    text_parts$breeding <- paste0(
-      text_parts$breeding,
-      "Breeding Implication:\n" %+%
-      "Weak genetic basis under present conditions. Direct selection will be unreliable. " %+%
-      "Prioritize improvement of growing conditions, management practices, and measurement precision before intensifying selection.\n"
+    paste0(
+      "Weak genetic basis under present conditions. Direct selection will be unreliable. ",
+      "Prioritize improvement of growing conditions, management practices, and measurement precision before intensifying selection."
     )
   }
+  text_parts$breeding <- paste0(text_parts$breeding, "Breeding Implication:\n", breed_body_single, "\n")
   
   # === Warnings ===
   if (length(warnings_vc$warnings) > 0) {
