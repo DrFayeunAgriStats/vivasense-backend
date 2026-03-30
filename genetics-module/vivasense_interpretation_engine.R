@@ -3,6 +3,9 @@
 # Implements strict interpretation rules from quantitative genetics literature
 # ============================================================================
 
+# String concatenation operator (not built into base R)
+`%+%` <- paste0
+
 # Classification thresholds (plant breeding standard)
 classify_heritability <- function(h2) {
   if (is.na(h2)) return("not_computed")
