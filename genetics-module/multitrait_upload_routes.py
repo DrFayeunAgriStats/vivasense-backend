@@ -506,9 +506,20 @@ async def analyze_upload(request: UploadAnalysisRequest):
                 random_environment=request.random_environment,
             )
 
+            # R returns status="ERROR" when computation fails (e.g. insufficient
+            # replication, singular model).  Treat that as a trait failure with a
+            # human-readable message rather than a Pydantic crash.
+            if result_dict.get("status") == "ERROR":
+                r_errors = result_dict.get("errors") or {}
+                r_msg = (
+                    result_dict.get("interpretation")
+                    or next(iter(r_errors.values()), None)
+                    or str(r_errors)
+                    or "R analysis returned ERROR"
+                )
+                raise RuntimeError(f"R ERROR: {r_msg}")
+
             # Validate the dict against the real GeneticsResponse schema.
-            # This surfaces any schema drift early rather than silently
-            # passing malformed data through trait_results.
             validated = GeneticsResponse(**result_dict)
 
             trait_results[trait] = TraitResult(
