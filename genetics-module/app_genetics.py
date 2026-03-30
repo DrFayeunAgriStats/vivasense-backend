@@ -272,7 +272,9 @@ cat(json_output)
             raise RuntimeError("Analysis timeout: R execution exceeded 60 seconds")
         
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse R JSON output: {e}")
+            preview = json_output[:500] if json_output else "(empty)"
+            logger.error("Failed to parse R JSON output: %s\nstdout preview: %s\nstderr: %s",
+                         e, preview, result.stderr[:500] if result.stderr else "(empty)")
             raise RuntimeError(f"Invalid JSON from R: {str(e)}")
         
         except Exception as e:

@@ -3,10 +3,12 @@
 # Supports single-environment and multi-environment analysis
 # Returns structured JSON + interpretation text
 
-library(jsonlite)
-library(agricolae)
-library(dplyr)
-library(tidyr)
+suppressPackageStartupMessages({
+  library(jsonlite)
+  library(agricolae)
+  library(dplyr)
+  library(tidyr)
+})
 
 # Load the strict interpretation engine
 source("vivasense_interpretation_engine.R")
@@ -131,17 +133,17 @@ compute_multi_environment <- function(data, trait_name = "Trait",
   data$rep         <- factor(data$rep)
 
   # ── Debug: log factor levels so failures are diagnosable in Render logs ──
-  cat(sprintf("[DEBUG] Trait: %s\n", trait_name))
-  cat(sprintf("[DEBUG] Levels Genotype (%d): %s\n",
+  message(sprintf("[DEBUG] Trait: %s", trait_name))
+  message(sprintf("[DEBUG] Levels Genotype (%d): %s",
               nlevels(data$genotype),
               paste(levels(data$genotype), collapse = ", ")))
-  cat(sprintf("[DEBUG] Levels Environment (%d): %s\n",
+  message(sprintf("[DEBUG] Levels Environment (%d): %s",
               nlevels(data$environment),
               paste(levels(data$environment), collapse = ", ")))
-  cat(sprintf("[DEBUG] Levels Rep/Block (%d): %s\n",
+  message(sprintf("[DEBUG] Levels Rep/Block (%d): %s",
               nlevels(data$rep),
               paste(levels(data$rep), collapse = ", ")))
-  cat(sprintf("[DEBUG] Rows: %d\n", nrow(data)))
+  message(sprintf("[DEBUG] Rows: %d", nrow(data)))
 
   n_genotypes <- nlevels(data$genotype)
   n_envs      <- nlevels(data$environment)
@@ -167,7 +169,7 @@ compute_multi_environment <- function(data, trait_name = "Trait",
     list(ok = TRUE, anova_table = anova_table)
 
   }, error = function(e) {
-    cat(sprintf("[ERROR] Trait %s — model failed: %s\n", trait_name, conditionMessage(e)))
+    message(sprintf("[ERROR] Trait %s — model failed: %s", trait_name, conditionMessage(e)))
     list(ok = FALSE, message = conditionMessage(e))
   })
 
@@ -493,7 +495,7 @@ genetics_analysis <- function(data,
     result <- tryCatch(
       compute_single_environment(data, trait_name = trait_name),
       error = function(e) {
-        cat(sprintf("[ERROR] single-env computation failed for %s: %s\n", trait_name, conditionMessage(e)))
+        message(sprintf("[ERROR] single-env computation failed for %s: %s", trait_name, conditionMessage(e)))
         return(list(.__error__ = conditionMessage(e)))
       }
     )
@@ -502,7 +504,7 @@ genetics_analysis <- function(data,
       compute_multi_environment(data, trait_name = trait_name,
                                 random_environment = random_environment),
       error = function(e) {
-        cat(sprintf("[ERROR] multi-env computation failed for %s: %s\n", trait_name, conditionMessage(e)))
+        message(sprintf("[ERROR] multi-env computation failed for %s: %s", trait_name, conditionMessage(e)))
         return(list(.__error__ = conditionMessage(e)))
       }
     )
