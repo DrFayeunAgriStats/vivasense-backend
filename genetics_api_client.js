@@ -12,7 +12,7 @@
  *   // Column names must match CSV header EXACTLY (case-sensitive)
  */
 
-const GENETICS_BASE = "https://vivasense-backend.onrender.com";
+const GENETICS_BASE = "https://vivasense-genetics-docker.onrender.com";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TRAIT NAME MAPPING — display labels → CSV column names

@@ -11,7 +11,7 @@
  */
 
 // ── API base — hardcoded so env-var misconfiguration cannot break requests ──
-const GENETICS_BASE = "https://vivasense-backend.onrender.com";
+const GENETICS_BASE = "https://vivasense-genetics-docker.onrender.com";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TRAIT NAME MAPPING — display labels → CSV column names
