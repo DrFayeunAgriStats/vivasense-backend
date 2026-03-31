@@ -12,10 +12,7 @@
  *   // Column names must match CSV header EXACTLY (case-sensitive)
  */
 
-const GENETICS_BASE =
-  (typeof import.meta !== "undefined" && (import.meta.env?.VITE_GENETICS_ENGINE_BASE || import.meta.env?.VITE_GENETICS_API_BASE)) ||
-  (typeof process !== "undefined" && (process.env?.VITE_GENETICS_ENGINE_BASE || process.env?.VITE_GENETICS_API_BASE)) ||
-  "https://vivasense-genetics.onrender.com";
+const GENETICS_BASE = "https://vivasense-backend.onrender.com";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TRAIT NAME MAPPING — display labels → CSV column names

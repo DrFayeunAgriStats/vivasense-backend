@@ -7,4 +7,4 @@
  * fallback and send requests to the wrong server.
  */
 
-export const API_BASE = "https://vivasense-genetics-docker.onrender.com";
+export const API_BASE = "https://vivasense-backend.onrender.com";
