@@ -75,7 +75,9 @@ class TraitRelationshipsEngine:
         method    — "pearson" or "spearman"
         """
         data_json = json.dumps(records)
-        trait_cols_r = json.dumps(trait_cols)  # serialises to ["t1","t2",…]
+        # json.dumps gives ["t1","t2"] which is invalid R syntax.
+        # Build R c("t1","t2",...) instead.
+        trait_cols_r = "c(" + ", ".join(json.dumps(t) for t in trait_cols) + ")"
 
         r_code = f"""
 source("{self.r_script_path}")
