@@ -320,8 +320,16 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
           </p>
         </div>
 
-        {/* Heatmap */}
-        <CorrelationHeatmap data={results} />
+        {/* Heatmap — below stats notes, above interpretation */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <h4 className="text-sm font-semibold text-gray-700">Correlation Heatmap</h4>
+            <span className="text-xs text-gray-400 font-normal">
+              Red = negative · White = zero · Blue = positive
+            </span>
+          </div>
+          <CorrelationHeatmap data={results} />
+        </div>
 
         {/* Interpretation */}
         <div className="rounded-lg bg-emerald-50 border border-emerald-100 p-4">

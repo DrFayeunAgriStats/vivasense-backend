@@ -10,12 +10,21 @@ Lovable project at fieldtoinsightacademy.com.ng/vivasense/genetics.
 
 ```
 src/services/geneticsUploadApi.ts                ← API client + all TypeScript types
+src/services/traitRelationshipsApi.ts            ← Correlation API client + types
 src/components/vivasense-genetics/
   FileUpload.tsx                                  ← drag-drop file input
   ColumnMappingConfirm.tsx                        ← column dropdowns + trait checkboxes
   ResultsDisplay.tsx                              ← summary table + expandable details
   MultiTraitUpload.tsx                            ← state-machine orchestrator
   DataSourceTabs.tsx                              ← "Manual Input | Upload File" tabs
+  TraitRelationships.tsx                          ← correlation setup + results view
+  CorrelationHeatmap.tsx                          ← Red→White→Blue SVG heatmap + export
+```
+
+After copying, install the recharts peer dependency in your Lovable project:
+
+```bash
+npm install recharts
 ```
 
 Do not copy `INTEGRATION.md` or `test_upload_integration.py`.

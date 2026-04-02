@@ -204,8 +204,7 @@ class RGeneticsEngine:
             with tempfile.NamedTemporaryFile(
                 mode='w',
                 suffix='.R',
-                delete=False,
-                dir='/tmp'
+                delete=False
             ) as tmp_r:
                 
                 # Serialize input data as R code
@@ -214,6 +213,7 @@ class RGeneticsEngine:
                 
                 r_code = f'''
 # VivaSense Genetics Analysis Execution
+.libPaths(c("C:/Users/user/.gemini/antigravity/scratch/R_libs", .libPaths()))
 source("{self.r_script_path}")
 
 # Load data from JSON
@@ -249,7 +249,7 @@ cat(json_output)
             logger.info(f"Executing R analysis (mode={mode}, n_obs={len(data)})")
             
             result = subprocess.run(
-                ["Rscript", tmp_r_path],
+                [r"C:\Program Files\R\R-4.5.3\bin\x64\Rscript.exe", tmp_r_path],
                 capture_output=True,
                 text=True,
                 timeout=60
@@ -379,8 +379,7 @@ async def validate_data(request: GeneticsRequest):
         with tempfile.NamedTemporaryFile(
             mode='w',
             suffix='.R',
-            delete=False,
-            dir='/tmp'
+            delete=False
         ) as tmp_r:
             
             data_json = json.dumps(request.data)
@@ -405,7 +404,7 @@ cat(jsonlite::toJSON(validation, pretty = TRUE))
         
         # Execute
         result = subprocess.run(
-            ["Rscript", tmp_r_path],
+            [r"C:\Program Files\R\R-4.5.3\bin\x64\Rscript.exe", tmp_r_path],
             capture_output=True,
             text=True,
             timeout=30

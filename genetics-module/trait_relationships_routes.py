@@ -75,9 +75,13 @@ class TraitRelationshipsEngine:
         method    — "pearson" or "spearman"
         """
         data_json = json.dumps(records)
-        trait_cols_r = json.dumps(trait_cols)  # serialises to ["t1","t2",…]
+        # Convert Python list to R character vector: c('yield', 'height')
+        # We must escape single quotes in column names if they exist
+        escaped_traits = [f"'{col.replace('\'', '\\\'')}'" for col in trait_cols]
+        trait_cols_r = f"c({', '.join(escaped_traits)})"
 
         r_code = f"""
+.libPaths(c("C:/Users/user/.gemini/antigravity/scratch/R_libs", .libPaths()))
 source("{self.r_script_path}")
 
 data_list <- jsonlite::fromJSON('{data_json}')
@@ -100,13 +104,13 @@ cat(jsonlite::toJSON(result, auto_unbox = TRUE, na = "null"))
         tmp_path: Optional[str] = None
         try:
             with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".R", delete=False, dir="/tmp"
+                mode="w", suffix=".R", delete=False
             ) as tmp:
                 tmp.write(r_code)
                 tmp_path = tmp.name
 
             proc = subprocess.run(
-                ["Rscript", tmp_path],
+                [r"C:\Program Files\R\R-4.5.3\bin\x64\Rscript.exe", tmp_path],
                 capture_output=True,
                 text=True,
                 timeout=120,
