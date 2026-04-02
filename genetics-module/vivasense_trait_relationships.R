@@ -195,6 +195,6 @@ run_correlation_analysis <- function(data, trait_cols, method = "pearson") {
     r_matrix       = unname(r_mat),
     p_matrix       = unname(p_mat),
     interpretation = interp,
-    warnings       = as.list(warnings_vec)
+    warnings       = warnings_vec   # character vector — always serialised as JSON array by jsonlite
   )
 }
