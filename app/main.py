@@ -86,6 +86,29 @@ try:
 except Exception as _e:
     print(f"WARN: multitrait-upload router not loaded — {_e}", flush=True)
 
+# Step 3 — genetics analyze/validate routes from app_genetics
+_ag_ok = False
+try:
+    from app_genetics import (  # noqa: E402
+        GeneticsRequest,
+        GeneticsResponse,
+        ValidationResponse,
+        analyze_genetics,
+        validate_data,
+    )
+    from fastapi import HTTPException  # noqa: E402 (may already be imported)
+    from fastapi.routing import APIRouter as _APIRouter  # noqa: E402
+
+    _ag_router = _APIRouter(tags=["Genetics"])
+    _ag_router.add_api_route("/genetics/analyze",    analyze_genetics, methods=["POST"], response_model=GeneticsResponse,   summary="Run genetic analysis")
+    _ag_router.add_api_route("/genetics/validate",   validate_data,    methods=["POST"], response_model=ValidationResponse, summary="Validate data before analysis")
+    _ag_router.add_api_route("/analysis/anova",      analyze_genetics, methods=["POST"], response_model=GeneticsResponse,   summary="Run genetic analysis (legacy alias)", tags=["Legacy"])
+    app.include_router(_ag_router)
+    _ag_ok = True
+    print("Router registered: genetics-analyze (/genetics/analyze, /genetics/validate, /analysis/anova)", flush=True)
+except Exception as _e:
+    print(f"WARN: genetics-analyze router not loaded — {_e}", flush=True)
+
 
 # ── Startup diagnostics + engine initialisation ───────────────────────────────
 
@@ -96,6 +119,7 @@ async def startup_event() -> None:
     logger.info("genetics-module path: %s", _genetics_dir)
     logger.info("trait-relationships router loaded: %s", _tr_ok)
     logger.info("multitrait-upload router loaded: %s", _mt_ok)
+    logger.info("genetics-analyze router loaded: %s", _ag_ok)
 
     rscript = shutil.which("Rscript")
     if rscript:
