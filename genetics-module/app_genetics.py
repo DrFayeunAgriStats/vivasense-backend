@@ -333,6 +333,13 @@ async def startup_event():
     summary="Run genetic analysis",
     tags=["Genetics"]
 )
+@app.post(
+    "/analysis/anova",
+    response_model=GeneticsResponse,
+    summary="Run genetic analysis (legacy path — use /genetics/analyze)",
+    tags=["Legacy"],
+    include_in_schema=True,
+)
 async def analyze_genetics(request: GeneticsRequest):
     """
     Execute genetics analysis on provided data
