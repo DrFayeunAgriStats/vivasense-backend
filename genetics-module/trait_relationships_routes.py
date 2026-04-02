@@ -291,4 +291,12 @@ async def compute_correlation(request: CorrelationRequest):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     result["statistical_note"] = _STATISTICAL_NOTE
+    import json as _json
+    logger.info("[correlation] response keys: %s", list(result.keys()))
+    logger.info("[correlation] trait_names: %s", result.get("trait_names"))
+    logger.info("[correlation] n_observations: %s", result.get("n_observations"))
+    logger.info("[correlation] r_matrix shape: %s×%s",
+                len(result.get("r_matrix", [])),
+                len(result["r_matrix"][0]) if result.get("r_matrix") else 0)
+    logger.info("[correlation] warnings: %s", result.get("warnings"))
     return CorrelationResponse(**result)
