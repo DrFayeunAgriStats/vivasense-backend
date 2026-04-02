@@ -159,6 +159,10 @@ app.include_router(multitrait_router)
 from trait_relationships_routes import router as tr_router
 app.include_router(tr_router)
 
+# Word export endpoint
+from genetics_export import router as export_router
+app.include_router(export_router)
+
 
 # ============================================================================
 # R ENGINE ORCHESTRATION

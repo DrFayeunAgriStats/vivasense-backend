@@ -10,6 +10,56 @@ suppressPackageStartupMessages({
   library(tidyr)
 })
 
+# ============================================================================
+# MEAN SEPARATION HELPER
+# ============================================================================
+
+#' Compute Tukey HSD mean separation for genotypes.
+#'
+#' @param model   aov or lm model fitted to the data
+#' @param trait_name  character, used only for warning messages
+#' @param df_error    integer, residual df (optional; extracted from model if NULL)
+#' @param ms_error    numeric, residual MS (optional; extracted from model if NULL)
+#' @return list(genotype, mean, se, group, test, alpha) or NULL on failure
+#'
+compute_mean_separation <- function(model, trait_name = "Trait",
+                                    df_error = NULL, ms_error = NULL) {
+  tukey <- tryCatch({
+    if (!is.null(df_error) && !is.null(ms_error)) {
+      HSD.test(model, "genotype",
+               DFerror = df_error, MSerror = ms_error,
+               group = TRUE, console = FALSE)
+    } else {
+      HSD.test(model, "genotype", group = TRUE, console = FALSE)
+    }
+  }, error = function(e) {
+    message(sprintf("[WARN] Tukey HSD failed for %s: %s", trait_name, conditionMessage(e)))
+    NULL
+  })
+
+  if (is.null(tukey)) return(NULL)
+
+  groups_df  <- tukey$groups    # sorted by mean desc: col1=mean, col "groups"=letters
+  means_df   <- tukey$means     # alphabetical: col1=mean, se, std, ...
+  geno_order <- rownames(groups_df)
+
+  se_vals <- if ("se" %in% names(means_df)) {
+    as.numeric(means_df[geno_order, "se"])
+  } else {
+    rep(NA_real_, length(geno_order))
+  }
+
+  # Return atomic vectors so jsonlite never unboxes them with auto_unbox=TRUE
+  list(
+    genotype = geno_order,
+    mean     = as.numeric(groups_df[[1]]),
+    se       = se_vals,
+    group    = as.character(groups_df$groups),
+    test     = "Tukey HSD",
+    alpha    = 0.05
+  )
+}
+
 # Load the strict interpretation engine
 source("vivasense_interpretation_engine.R")
 
@@ -83,6 +133,8 @@ compute_single_environment <- function(data, trait_name = "Trait") {
     gam_percent <- (gam / grand_mean) * 100
   }
   
+  mean_sep <- compute_mean_separation(model, trait_name)
+
   list(
     environment_mode = "single_environment",
     n_genotypes = n_genotypes,
@@ -111,6 +163,7 @@ compute_single_environment <- function(data, trait_name = "Trait") {
       mean_valid = mean_is_valid
     ),
     anova_table = as.data.frame(anova_table),
+    mean_separation = mean_sep,
     ms_genotype = ms_genotype,
     ms_error = ms_error
   )
@@ -262,6 +315,10 @@ compute_multi_environment <- function(data, trait_name = "Trait",
     gam_percent <- (gam / grand_mean) * 100
   }
   
+  df_err   <- anova_table["Residuals", "Df"]
+  mean_sep <- compute_mean_separation(model, trait_name,
+                                      df_error = df_err, ms_error = ms_error)
+
   list(
     environment_mode = "multi_environment",
     n_genotypes = n_genotypes,
@@ -273,8 +330,8 @@ compute_multi_environment <- function(data, trait_name = "Trait",
       sigma2_ge = sigma2_ge,
       sigma2_error = sigma2_error,
       sigma2_phenotypic = sigma2_phenotypic,
-      heritability_basis = ifelse(random_environment, 
-                                   "random_environment_model", 
+      heritability_basis = ifelse(random_environment,
+                                   "random_environment_model",
                                    "fixed_environment_model")
     ),
     heritability = list(
@@ -302,6 +359,7 @@ compute_multi_environment <- function(data, trait_name = "Trait",
       mean_valid = mean_is_valid
     ),
     anova_table = as.data.frame(anova_table),
+    mean_separation = mean_sep,
     ms_genotype = ms_genotype,
     ms_ge = ms_ge,
     ms_error = ms_error
@@ -568,19 +626,27 @@ genetics_analysis <- function(data,
 
 #' Convert result to JSON-serializable list
 export_to_json <- function(analysis_result) {
-  
-  # Remove problematic objects (data frames, model objects, etc.)
+
   clean_result <- analysis_result
-  
-  # Simplify ANOVA table
+
+  # Serialize ANOVA table as named column-arrays (source, df, ss, ms, f_value, p_value).
+  # Atomic vectors are never auto_unboxed by jsonlite, so each array stays as an array
+  # even for single-row tables.
   if (!is.null(analysis_result$result$anova_table)) {
-    clean_result$result$anova_table <- as.list(as.data.frame(
-      analysis_result$result$anova_table,
-      check.names = FALSE
-    ))
+    at_df <- analysis_result$result$anova_table
+    clean_result$result$anova_table <- list(
+      source  = rownames(at_df),
+      df      = as.integer(at_df[["Df"]]),
+      ss      = at_df[["Sum Sq"]],
+      ms      = at_df[["Mean Sq"]],
+      f_value = at_df[["F value"]],
+      p_value = at_df[["Pr(>F)"]]
+    )
   }
-  
-  # Convert to JSON
+
+  # mean_separation is already a plain list of atomic vectors (or NULL).
+  # NULL fields are dropped by toJSON; Optional[MeanSeparation] defaults to None in Python.
+
   json_str <- toJSON(clean_result, pretty = TRUE, auto_unbox = TRUE, na = "null", digits = 10)
   return(json_str)
 }

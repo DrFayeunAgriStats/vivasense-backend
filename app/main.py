@@ -86,7 +86,17 @@ try:
 except Exception as _e:
     print(f"WARN: multitrait-upload router not loaded — {_e}", flush=True)
 
-# Step 3 — genetics analyze/validate routes from app_genetics
+# Step 3 — Word export router (pure Python, no R dependency)
+_ex_ok = False
+try:
+    from genetics_export import router as export_router  # noqa: E402
+    app.include_router(export_router)
+    _ex_ok = True
+    print("Router registered: genetics-export (/genetics/export-word)", flush=True)
+except Exception as _e:
+    print(f"WARN: genetics-export router not loaded — {_e}", flush=True)
+
+# Step 4 — genetics analyze/validate routes from app_genetics
 _ag_ok = False
 try:
     from app_genetics import (  # noqa: E402
@@ -119,6 +129,7 @@ async def startup_event() -> None:
     logger.info("genetics-module path: %s", _genetics_dir)
     logger.info("trait-relationships router loaded: %s", _tr_ok)
     logger.info("multitrait-upload router loaded: %s", _mt_ok)
+    logger.info("genetics-export router loaded: %s", _ex_ok)
     logger.info("genetics-analyze router loaded: %s", _ag_ok)
 
     rscript = shutil.which("Rscript")

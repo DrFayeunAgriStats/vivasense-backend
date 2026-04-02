@@ -72,6 +72,24 @@ export interface DatasetSummary {
 
 // ── Nested types that mirror GeneticsResult / GeneticsResponse in app_genetics.py ──
 
+export interface AnovaTable {
+  source: string[];
+  df: number[];
+  ss: (number | null)[];
+  ms: (number | null)[];
+  f_value: (number | null)[];
+  p_value: (number | null)[];
+}
+
+export interface MeanSeparation {
+  genotype: string[];
+  mean: number[];
+  se: (number | null)[];
+  group: string[];
+  test: string;
+  alpha: number;
+}
+
 export interface GeneticsResult {
   environment_mode: string;
   n_genotypes: number;
@@ -91,6 +109,8 @@ export interface GeneticsResult {
     GAM_percent?: number;
     selection_intensity: number;
   };
+  anova_table?: AnovaTable;
+  mean_separation?: MeanSeparation;
 }
 
 export interface GeneticsResponse {
@@ -201,6 +221,47 @@ export async function analyzeUpload(
   // Temporary debug log — remove after multi-env failure is resolved.
   console.log("[analyzeUpload] full response:", JSON.stringify(data, null, 2));
   return data;
+}
+
+/**
+ * Generate and download a Word (.docx) report from completed analysis results.
+ * Endpoint: POST /genetics/export-word
+ *
+ * The function triggers a browser file download directly — no return value.
+ */
+export async function exportWordReport(
+  data: UploadAnalysisResponse,
+  filename = "vivasense_genetics_report.docx"
+): Promise<void> {
+  const exportUrl = `${ENGINE_BASE}/genetics/export-word`;
+  console.log("[geneticsUploadApi] POST", exportUrl);
+
+  let response: Response;
+  try {
+    response = await fetch(exportUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Network error during Word export: ${msg}`);
+  }
+
+  if (!response.ok) {
+    const detail = await extractErrorDetail(response);
+    throw new Error(`Word export failed — ${detail}`);
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

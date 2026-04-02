@@ -11,6 +11,44 @@ from pydantic import BaseModel, field_validator
 from typing import Any, Dict, List, Optional, Union
 
 
+class AnovaTable(BaseModel):
+    """
+    ANOVA table serialised as parallel column-arrays.
+
+    source   — row labels (e.g. "rep", "genotype", "Residuals")
+    df       — degrees of freedom
+    ss       — sum of squares
+    ms       — mean squares
+    f_value  — F statistic (null for the Residuals row)
+    p_value  — p-value     (null for the Residuals row)
+    """
+    source: List[str]
+    df: List[int]
+    ss: List[Optional[float]]
+    ms: List[Optional[float]]
+    f_value: List[Optional[float]]
+    p_value: List[Optional[float]]
+
+
+class MeanSeparation(BaseModel):
+    """
+    Tukey HSD (or LSD) mean separation result for genotypes.
+
+    genotype — genotype labels, sorted by mean descending
+    mean     — observed means (same order as genotype)
+    se       — standard errors  (null when not computable)
+    group    — Tukey grouping letters ("a", "ab", "b", …)
+    test     — name of the test used
+    alpha    — significance level
+    """
+    genotype: List[str]
+    mean: List[float]
+    se: List[Optional[float]]
+    group: List[str]
+    test: str = "Tukey HSD"
+    alpha: float = 0.05
+
+
 class GeneticsResult(BaseModel):
     """Core analysis result"""
     environment_mode: str
@@ -21,6 +59,8 @@ class GeneticsResult(BaseModel):
     variance_components: Dict[str, Any]
     heritability: Dict[str, Any]
     genetic_parameters: Dict[str, Any]
+    anova_table: Optional[AnovaTable] = None
+    mean_separation: Optional[MeanSeparation] = None
 
 
 class GeneticsResponse(BaseModel):
