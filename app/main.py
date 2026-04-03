@@ -92,7 +92,7 @@ try:
     from genetics_export import router as export_router  # noqa: E402
     app.include_router(export_router)
     _ex_ok = True
-    print("Router registered: genetics-export (/genetics/export-word)", flush=True)
+    print("Router registered: genetics-export (/genetics/download-results, /genetics/export-word)", flush=True)
 except Exception as _e:
     print(f"WARN: genetics-export router not loaded — {_e}", flush=True)
 
