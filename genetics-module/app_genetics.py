@@ -266,27 +266,32 @@ cat(json_output)
             logger.info(f"Executing R analysis (mode={mode}, n_obs={len(data)})")
             
             result = subprocess.run(
-                [r"C:\Program Files\R\R-4.5.3\bin\x64\Rscript.exe", tmp_r_path],
+                ["Rscript", tmp_r_path],
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=120
             )
-            
+
             if result.returncode != 0:
-                logger.error(f"R execution failed: {result.stderr}")
-                raise RuntimeError(f"R error: {result.stderr}")
-            
+                stderr_preview = result.stderr[:800] if result.stderr else "(empty)"
+                logger.error("R execution failed (rc=%d):\n%s", result.returncode, stderr_preview)
+                raise RuntimeError(f"R error: {stderr_preview}")
+
             # Parse JSON output
             json_output = result.stdout.strip()
+            if not json_output:
+                logger.error("R produced no output. stderr: %s", result.stderr[:400])
+                raise RuntimeError("R produced no JSON output. stderr: " + result.stderr[:400])
+
             analysis_result = json.loads(json_output)
-            
-            logger.info(f"Analysis completed successfully (status={analysis_result.get('status')})")
-            
+
+            logger.info("Analysis completed (status=%s, mode=%s)", analysis_result.get("status"), mode)
+
             return analysis_result
-            
+
         except subprocess.TimeoutExpired:
-            logger.error("R analysis timeout (60s exceeded)")
-            raise RuntimeError("Analysis timeout: R execution exceeded 60 seconds")
+            logger.error("R analysis timeout (120s exceeded)")
+            raise RuntimeError("Analysis timeout: R execution exceeded 120 seconds")
         
         except json.JSONDecodeError as e:
             preview = json_output[:500] if json_output else "(empty)"
@@ -370,29 +375,29 @@ async def analyze_genetics(request: GeneticsRequest):
     - Publication-ready interpretation text
     """
     
+    if r_engine is None:
+        raise HTTPException(status_code=503, detail="R engine not ready — check Render startup logs")
+
     try:
-        # Call R engine
         result = r_engine.run_analysis(
             data=request.data,
             mode=request.mode,
             trait_name=request.trait_name,
-            random_environment=request.random_environment
+            random_environment=request.random_environment,
         )
-        
-        # Return as Pydantic model (validates schema)
         return GeneticsResponse(**result)
-    
+
     except ValueError as e:
-        logger.warning(f"Validation error: {e}")
+        logger.warning("Validation error in /genetics/analyze: %s", e)
         raise HTTPException(status_code=400, detail=str(e))
-    
+
     except RuntimeError as e:
-        logger.error(f"R execution error: {e}")
+        logger.error("R execution error in /genetics/analyze: %s", e)
         raise HTTPException(status_code=422, detail=str(e))
-    
+
     except Exception as e:
-        logger.error(f"Unexpected error in /analyze endpoint: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.error("Unexpected error in /genetics/analyze: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post(
