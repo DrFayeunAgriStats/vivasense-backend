@@ -65,13 +65,13 @@ export function DataSourceTabs({
   const tabs: TabDef[] = [
     {
       id: "manual",
-      label: "Manual Input",
+      label: "Single Trait",
       icon: "✏️",
-      description: "Enter ANOVA values directly",
+      description: "Enter data for one trait",
     },
     {
       id: "upload",
-      label: "Upload File",
+      label: "Multi-Trait File",
       icon: "📂",
       description: "CSV / Excel — analyze all traits at once",
     },

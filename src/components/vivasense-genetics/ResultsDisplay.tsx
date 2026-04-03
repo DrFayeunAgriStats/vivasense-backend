@@ -84,6 +84,16 @@ export function ResultsDisplay({ results, onReset }: ResultsDisplayProps) {
         </div>
       </div>
 
+      {/* Workflow info banner */}
+      <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-xs text-blue-700 leading-relaxed">
+        <span className="font-semibold">How this works: </span>
+        VivaSense Genetics uses ANOVA internally to partition phenotypic variance into genetic,
+        environmental, and error components. Heritability (H²) and genetic advance (GAM) are
+        derived from those variance components. Mean separation (Tukey HSD) identifies which
+        genotypes perform significantly differently — expand any trait row below to see the full
+        statistical output.
+      </div>
+
       {/* Download error */}
       {downloadError && (
         <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
@@ -102,46 +112,49 @@ export function ResultsDisplay({ results, onReset }: ResultsDisplayProps) {
         </div>
       )}
 
-      {/* Summary table */}
-      <div className="overflow-x-auto rounded-xl border border-gray-200">
-        <table className="min-w-full text-sm">
-          <thead className="bg-gray-50 border-b border-gray-200">
-            <tr>
-              <Th>Trait</Th>
-              <Th>Mean</Th>
-              <Th>H² (Heritability)</Th>
-              <Th>GCV %</Th>
-              <Th>PCV %</Th>
-              <Th>GAM %</Th>
-              <Th>Class</Th>
-              <Th>Details</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {summary_table.map((row, i) => (
-              <SummaryRow
-                key={row.trait}
-                row={row}
-                isEven={i % 2 === 0}
-                traitResult={results.trait_results[row.trait]}
-              />
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {/* ── SECTION: Trait Summary ─────────────────────────────────────────── */}
+      <div>
+        <SectionLabel>Trait Summary</SectionLabel>
+        <div className="overflow-x-auto rounded-xl border border-gray-200">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 border-b border-gray-200">
+              <tr>
+                <Th>Trait</Th>
+                <Th>Mean</Th>
+                <Th>H²</Th>
+                <Th>GCV %</Th>
+                <Th>PCV %</Th>
+                <Th>GAM %</Th>
+                <Th>Class</Th>
+                <Th>Details</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary_table.map((row, i) => (
+                <SummaryRow
+                  key={row.trait}
+                  row={row}
+                  isEven={i % 2 === 0}
+                  traitResult={results.trait_results[row.trait]}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
 
-      {/* Legend */}
-      <div className="flex flex-wrap gap-3 text-xs text-gray-500">
-        <span className="font-medium text-gray-600">Heritability class:</span>
-        <span className="flex items-center gap-1">
-          <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" /> High ≥ 0.60
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="inline-block h-2.5 w-2.5 rounded-full bg-yellow-400" /> Moderate 0.30–0.59
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="inline-block h-2.5 w-2.5 rounded-full bg-red-400" /> Low &lt; 0.30
-        </span>
+        {/* Legend */}
+        <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-500">
+          <span className="font-medium text-gray-600">H² class:</span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" /> High ≥ 0.60
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block h-2.5 w-2.5 rounded-full bg-yellow-400" /> Moderate 0.30–0.59
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block h-2.5 w-2.5 rounded-full bg-red-400" /> Low &lt; 0.30
+          </span>
+        </div>
       </div>
     </div>
   );
@@ -216,17 +229,19 @@ function SummaryRow({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Expanded trait detail
+// Expanded trait detail — three named sections
 // ─────────────────────────────────────────────────────────────────────────────
 
 function TraitDetails({ traitResult }: { traitResult: TraitResult }) {
+  const [showAnovaDetails, setShowAnovaDetails] = useState(false);
+
   const ar = traitResult.analysis_result;
   const result = ar?.result;
   const warnings = traitResult.data_warnings;
 
   return (
-    <div className="mt-2 space-y-4 text-sm">
-      {/* Balance / structure warnings */}
+    <div className="mt-3 space-y-5 text-sm">
+      {/* Data warnings */}
       {warnings.length > 0 && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 space-y-0.5">
           <p className="text-xs font-semibold text-amber-700">Data warnings</p>
@@ -238,20 +253,36 @@ function TraitDetails({ traitResult }: { traitResult: TraitResult }) {
         </div>
       )}
 
-      {/* ANOVA Table */}
-      {result?.anova_table && (
-        <AnovaTableSection at={result.anova_table} />
-      )}
+      {/* ── SECTION: Statistical Analysis ──────────────────────────────────── */}
+      <div className="space-y-3">
+        <SubSectionLabel>Statistical Analysis</SubSectionLabel>
 
-      {/* Mean Separation */}
-      {result?.mean_separation && (
-        <MeanSeparationSection ms={result.mean_separation} />
-      )}
+        {/* Mean Separation — primary output, always visible */}
+        {result?.mean_separation && (
+          <MeanSeparationSection ms={result.mean_separation} />
+        )}
 
-      {/* Variance components grid */}
+        {/* ANOVA Table — secondary/technical, collapsed by default */}
+        {result?.anova_table && (
+          <div>
+            <button
+              type="button"
+              onClick={() => setShowAnovaDetails((p) => !p)}
+              className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 mb-1"
+            >
+              <span className={`transition-transform ${showAnovaDetails ? "rotate-90" : ""}`}>▶</span>
+              {showAnovaDetails ? "Hide" : "Show"} ANOVA table
+              <span className="text-gray-400">(statistical details)</span>
+            </button>
+            {showAnovaDetails && <AnovaTableSection at={result.anova_table} />}
+          </div>
+        )}
+      </div>
+
+      {/* ── SECTION: Genetic Parameters ────────────────────────────────────── */}
       {result?.variance_components && (
-        <div>
-          <p className="text-xs font-semibold text-gray-600 mb-1.5">Variance Components</p>
+        <div className="space-y-2">
+          <SubSectionLabel>Genetic Parameters</SubSectionLabel>
           <div className="grid gap-2 sm:grid-cols-3">
             {Object.entries(result.variance_components)
               .filter(([, v]) => typeof v === "number" && v !== null)
@@ -265,11 +296,13 @@ function TraitDetails({ traitResult }: { traitResult: TraitResult }) {
         </div>
       )}
 
-      {/* Interpretation */}
+      {/* ── SECTION: Interpretation ────────────────────────────────────────── */}
       {ar?.interpretation && (
-        <div className="rounded-lg bg-emerald-50 border border-emerald-100 p-3">
-          <p className="text-xs font-semibold text-emerald-700 mb-1">Interpretation</p>
-          <p className="text-gray-700 leading-relaxed whitespace-pre-line">{ar.interpretation}</p>
+        <div>
+          <SubSectionLabel>Interpretation</SubSectionLabel>
+          <div className="rounded-lg bg-emerald-50 border border-emerald-100 p-3">
+            <p className="text-gray-700 leading-relaxed whitespace-pre-line">{ar.interpretation}</p>
+          </div>
         </div>
       )}
     </div>
@@ -277,13 +310,12 @@ function TraitDetails({ traitResult }: { traitResult: TraitResult }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ANOVA Table section
+// ANOVA Table section (shown only when expanded)
 // ─────────────────────────────────────────────────────────────────────────────
 
 function AnovaTableSection({ at }: { at: AnovaTable }) {
   return (
     <div>
-      <p className="text-xs font-semibold text-gray-600 mb-1.5">ANOVA Table</p>
       <div className="overflow-x-auto rounded-lg border border-gray-200">
         <table className="min-w-full text-xs">
           <thead className="bg-gray-50 border-b border-gray-200">
@@ -338,11 +370,11 @@ function AnovaTableSection({ at }: { at: AnovaTable }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function MeanSeparationSection({ ms }: { ms: MeanSeparation }) {
+  // Identify the top group letter for selection guidance
+  const topGroup = ms.group[0] ?? "a";
+
   return (
-    <div>
-      <p className="text-xs font-semibold text-gray-600 mb-1.5">
-        Mean Separation — {ms.test} (α = {ms.alpha})
-      </p>
+    <div className="space-y-2">
       <div className="overflow-x-auto rounded-lg border border-gray-200">
         <table className="min-w-full text-xs">
           <thead className="bg-gray-50 border-b border-gray-200">
@@ -355,27 +387,42 @@ function MeanSeparationSection({ ms }: { ms: MeanSeparation }) {
             </tr>
           </thead>
           <tbody>
-            {ms.genotype.map((geno, i) => (
-              <tr key={geno} className={i % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
-                <td className="px-3 py-1.5 text-gray-400">{i + 1}</td>
-                <td className="px-3 py-1.5 font-medium text-gray-800">{geno}</td>
-                <td className="px-3 py-1.5 text-gray-700">{ms.mean[i].toFixed(2)}</td>
-                <td className="px-3 py-1.5 text-gray-600">
-                  {ms.se[i] != null ? ms.se[i]!.toFixed(2) : "—"}
-                </td>
-                <td className="px-3 py-1.5">
-                  <span className="inline-block rounded bg-emerald-100 px-1.5 py-0.5 font-mono text-emerald-800 font-semibold">
-                    {ms.group[i]}
-                  </span>
-                </td>
-              </tr>
-            ))}
+            {ms.genotype.map((geno, i) => {
+              const isTop = ms.group[i] === topGroup;
+              return (
+                <tr key={geno} className={i % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
+                  <td className="px-3 py-1.5 text-gray-400">{i + 1}</td>
+                  <td className={`px-3 py-1.5 font-medium ${isTop ? "text-emerald-800" : "text-gray-700"}`}>
+                    {geno}
+                  </td>
+                  <td className="px-3 py-1.5 text-gray-700">{ms.mean[i].toFixed(2)}</td>
+                  <td className="px-3 py-1.5 text-gray-600">
+                    {ms.se[i] != null ? ms.se[i]!.toFixed(2) : "—"}
+                  </td>
+                  <td className="px-3 py-1.5">
+                    <span
+                      className={`inline-block rounded px-1.5 py-0.5 font-mono font-semibold ${
+                        isTop
+                          ? "bg-emerald-100 text-emerald-800"
+                          : "bg-gray-100 text-gray-600"
+                      }`}
+                    >
+                      {ms.group[i]}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
-      <p className="mt-1 text-xs text-gray-400">
-        Means sharing the same letter are not significantly different (Tukey HSD).
-      </p>
+      {/* Selection guidance */}
+      <div className="rounded-md bg-emerald-50 border border-emerald-100 px-3 py-2 text-xs text-emerald-800">
+        <span className="font-semibold">{ms.test} (α = {ms.alpha}) — </span>
+        Genotypes sharing the same letter are <em>not</em> significantly different.
+        {" "}Genotypes in group <strong className="font-mono">&apos;{topGroup}&apos;</strong> are
+        the top performers — select from this group for direct selection or crossing.
+      </div>
     </div>
   );
 }
@@ -383,6 +430,20 @@ function MeanSeparationSection({ ms }: { ms: MeanSeparation }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Small helpers
 // ─────────────────────────────────────────────────────────────────────────────
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <h4 className="text-sm font-semibold text-gray-700 border-b border-gray-200 pb-1 mb-3">
+      {children}
+    </h4>
+  );
+}
+
+function SubSectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{children}</p>
+  );
+}
 
 function Th({ children }: { children: React.ReactNode }) {
   return (

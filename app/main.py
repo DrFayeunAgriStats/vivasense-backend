@@ -110,12 +110,11 @@ try:
     from fastapi.routing import APIRouter as _APIRouter  # noqa: E402
 
     _ag_router = _APIRouter(tags=["Genetics"])
-    _ag_router.add_api_route("/genetics/analyze",    analyze_genetics, methods=["POST"], response_model=GeneticsResponse,   summary="Run genetic analysis")
-    _ag_router.add_api_route("/genetics/validate",   validate_data,    methods=["POST"], response_model=ValidationResponse, summary="Validate data before analysis")
-    _ag_router.add_api_route("/analysis/anova",      analyze_genetics, methods=["POST"], response_model=GeneticsResponse,   summary="Run genetic analysis (legacy alias)", tags=["Legacy"])
+    _ag_router.add_api_route("/genetics/analyze",  analyze_genetics, methods=["POST"], response_model=GeneticsResponse,   summary="Run genetic analysis")
+    _ag_router.add_api_route("/genetics/validate", validate_data,    methods=["POST"], response_model=ValidationResponse, summary="Validate data before analysis")
     app.include_router(_ag_router)
     _ag_ok = True
-    print("Router registered: genetics-analyze (/genetics/analyze, /genetics/validate, /analysis/anova)", flush=True)
+    print("Router registered: genetics-analyze (/genetics/analyze, /genetics/validate)", flush=True)
 except Exception as _e:
     print(f"WARN: genetics-analyze router not loaded — {_e}", flush=True)
 

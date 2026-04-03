@@ -337,27 +337,24 @@ async def startup_event():
     summary="Run genetic analysis",
     tags=["Genetics"]
 )
-@app.post(
-    "/analysis/anova",
-    response_model=GeneticsResponse,
-    summary="Run genetic analysis (legacy path — use /genetics/analyze)",
-    tags=["Legacy"],
-    include_in_schema=True,
-)
 async def analyze_genetics(request: GeneticsRequest):
     """
-    Execute genetics analysis on provided data
-    
+    Execute genetics analysis on provided data.
+
+    Uses ANOVA internally to partition variance and estimate heritability.
+    ANOVA is the statistical foundation — not a separate tool.
+
     Supports:
-    - Single-environment ANOVA with heritability
+    - Single-environment analysis (RCBD / CRD)
     - Multi-environment analysis with G×E variance partitioning
-    
+
     Returns:
-    - Variance components
+    - ANOVA table (source, df, SS, MS, F-value, p-value)
+    - Mean separation (Tukey HSD grouping letters)
+    - Variance components (σ²g, σ²e, σ²ge)
     - Heritability (broad-sense, entry-mean basis)
     - Genetic parameters (GCV, PCV, GAM)
     - Publication-ready interpretation text
-    - Warnings for edge cases
     """
     
     try:
