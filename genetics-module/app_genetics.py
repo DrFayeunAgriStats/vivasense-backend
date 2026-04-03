@@ -140,13 +140,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://fieldtoinsightacademy.com.ng",
-        "https://www.fieldtoinsightacademy.com.ng",
-        "http://localhost:3000",
-        "http://localhost:5173",
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],   # No credentials used — open to all origins (Lovable previews, production)
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -473,11 +468,13 @@ async def root():
         "version": "1.0.0",
         "description": "R-based genetics analysis with single and multi-environment support",
         "endpoints": {
-            "POST /genetics/analyze": "Run genetic analysis (manual input)",
+            "POST /genetics/analyze": "Run genetic analysis (ANOVA + heritability + Tukey HSD)",
             "POST /genetics/validate": "Validate data before analysis",
             "POST /genetics/upload-preview": "Preview uploaded file + detect columns",
             "POST /genetics/analyze-upload": "Analyze all traits in uploaded CSV/Excel",
             "POST /genetics/correlation": "Phenotypic correlation between trait pairs",
+            "POST /genetics/download-results": "Download Word report (.docx)",
+            "POST /genetics/export-word": "Download Word report (.docx) — alias",
             "GET /health": "Health check",
             "GET /docs": "Interactive API documentation (Swagger UI)"
         },

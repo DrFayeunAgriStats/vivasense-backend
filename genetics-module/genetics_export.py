@@ -50,12 +50,20 @@ _ANOVA_LABELS = {
     summary="Download genetics analysis report as Word document",
     tags=["Export"],
 )
+@router.post(
+    "/genetics/download-results",
+    summary="Download genetics analysis report as Word document (alias)",
+    tags=["Export"],
+    include_in_schema=True,
+)
 async def export_word_report(data: UploadAnalysisResponse) -> Response:
     """
     Generate a Word (.docx) report from a completed genetics analysis.
 
     The request body is the JSON object returned by POST /genetics/analyze-upload.
     The frontend passes that object directly — no second analysis is run.
+
+    Both /genetics/export-word and /genetics/download-results resolve here.
     """
     doc = _build_document(data)
     buf = io.BytesIO()

@@ -218,14 +218,25 @@ export async function analyzeUpload(
   }
 
   const data = (await response.json()) as UploadAnalysisResponse;
-  // Temporary debug log — remove after multi-env failure is resolved.
-  console.log("[analyzeUpload] full response:", JSON.stringify(data, null, 2));
+
+  // Debug: log anova_table + mean_separation presence for each trait
+  for (const [trait, tr] of Object.entries(data.trait_results ?? {})) {
+    const result = tr.analysis_result?.result;
+    console.log(`[analyzeUpload] trait="${trait}" status=${tr.status}`, {
+      has_anova_table: result?.anova_table != null,
+      anova_sources: result?.anova_table?.source,
+      has_mean_separation: result?.mean_separation != null,
+      mean_sep_genotypes: result?.mean_separation?.genotype,
+      mean_sep_groups: result?.mean_separation?.group,
+    });
+  }
+
   return data;
 }
 
 /**
  * Generate and download a Word (.docx) report from completed analysis results.
- * Endpoint: POST /genetics/export-word
+ * Endpoint: POST /genetics/download-results  (alias: /genetics/export-word)
  *
  * The function triggers a browser file download directly — no return value.
  */
@@ -233,7 +244,7 @@ export async function exportWordReport(
   data: UploadAnalysisResponse,
   filename = "vivasense_genetics_report.docx"
 ): Promise<void> {
-  const exportUrl = `${ENGINE_BASE}/genetics/export-word`;
+  const exportUrl = `${ENGINE_BASE}/genetics/download-results`;
   console.log("[geneticsUploadApi] POST", exportUrl);
 
   let response: Response;
