@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: vivasense-backend-r
+    env: docker
+    dockerfilePath: genetics-module/Dockerfile
+    dockerContext: genetics-module
+    envVars:
+      - key: PORT
+        value: "8000"

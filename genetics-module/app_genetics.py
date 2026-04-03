@@ -140,13 +140,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://fieldtoinsightacademy.com.ng",
-        "https://www.fieldtoinsightacademy.com.ng",
-        "http://localhost:3000",
-        "http://localhost:5173",
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],   # No credentials used — open to all origins (Lovable previews, production)
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -158,6 +153,10 @@ app.include_router(multitrait_router)
 # Trait relationships endpoints (Phase 2)
 from trait_relationships_routes import router as tr_router
 app.include_router(tr_router)
+
+# Word export endpoint
+from genetics_export import router as export_router
+app.include_router(export_router)
 
 
 # ============================================================================
@@ -272,7 +271,9 @@ cat(json_output)
             raise RuntimeError("Analysis timeout: R execution exceeded 60 seconds")
         
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse R JSON output: {e}")
+            preview = json_output[:500] if json_output else "(empty)"
+            logger.error("Failed to parse R JSON output: %s\nstdout preview: %s\nstderr: %s",
+                         e, preview, result.stderr[:500] if result.stderr else "(empty)")
             raise RuntimeError(f"Invalid JSON from R: {str(e)}")
         
         except Exception as e:
@@ -294,6 +295,21 @@ r_engine = None
 @app.on_event("startup")
 async def startup_event():
     global r_engine
+
+    # Run R package installer to ensure all dependencies are present.
+    # Runs at startup so missing packages are installed even after a hot restart.
+    installer = Path(__file__).parent / "install_packages.R"
+    if installer.exists():
+        logger.info("Running install_packages.R …")
+        result = subprocess.run(
+            ["Rscript", str(installer)],
+            capture_output=True, text=True
+        )
+        if result.stdout:
+            logger.info("install_packages.R stdout: %s", result.stdout.strip())
+        if result.returncode != 0:
+            logger.warning("install_packages.R exited %d: %s", result.returncode, result.stderr.strip())
+
     try:
         r_engine = RGeneticsEngine("vivasense_genetics.R")
         logger.info("VivaSense R genetics engine ready")
@@ -318,18 +334,22 @@ async def startup_event():
 )
 async def analyze_genetics(request: GeneticsRequest):
     """
-    Execute genetics analysis on provided data
-    
+    Execute genetics analysis on provided data.
+
+    Uses ANOVA internally to partition variance and estimate heritability.
+    ANOVA is the statistical foundation — not a separate tool.
+
     Supports:
-    - Single-environment ANOVA with heritability
+    - Single-environment analysis (RCBD / CRD)
     - Multi-environment analysis with G×E variance partitioning
-    
+
     Returns:
-    - Variance components
+    - ANOVA table (source, df, SS, MS, F-value, p-value)
+    - Mean separation (Tukey HSD grouping letters)
+    - Variance components (σ²g, σ²e, σ²ge)
     - Heritability (broad-sense, entry-mean basis)
     - Genetic parameters (GCV, PCV, GAM)
     - Publication-ready interpretation text
-    - Warnings for edge cases
     """
     
     try:
@@ -447,11 +467,13 @@ async def root():
         "version": "1.0.0",
         "description": "R-based genetics analysis with single and multi-environment support",
         "endpoints": {
-            "POST /genetics/analyze": "Run genetic analysis (manual input)",
+            "POST /genetics/analyze": "Run genetic analysis (ANOVA + heritability + Tukey HSD)",
             "POST /genetics/validate": "Validate data before analysis",
             "POST /genetics/upload-preview": "Preview uploaded file + detect columns",
             "POST /genetics/analyze-upload": "Analyze all traits in uploaded CSV/Excel",
             "POST /genetics/correlation": "Phenotypic correlation between trait pairs",
+            "POST /genetics/download-results": "Download Word report (.docx)",
+            "POST /genetics/export-word": "Download Word report (.docx) — alias",
             "GET /health": "Health check",
             "GET /docs": "Interactive API documentation (Swagger UI)"
         },

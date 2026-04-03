@@ -3,10 +3,62 @@
 # Supports single-environment and multi-environment analysis
 # Returns structured JSON + interpretation text
 
-library(jsonlite)
-library(agricolae)
-library(dplyr)
-library(tidyr)
+suppressPackageStartupMessages({
+  library(jsonlite)
+  library(agricolae)
+  library(dplyr)
+  library(tidyr)
+})
+
+# ============================================================================
+# MEAN SEPARATION HELPER
+# ============================================================================
+
+#' Compute Tukey HSD mean separation for genotypes.
+#'
+#' @param model   aov or lm model fitted to the data
+#' @param trait_name  character, used only for warning messages
+#' @param df_error    integer, residual df (optional; extracted from model if NULL)
+#' @param ms_error    numeric, residual MS (optional; extracted from model if NULL)
+#' @return list(genotype, mean, se, group, test, alpha) or NULL on failure
+#'
+compute_mean_separation <- function(model, trait_name = "Trait",
+                                    df_error = NULL, ms_error = NULL) {
+  tukey <- tryCatch({
+    if (!is.null(df_error) && !is.null(ms_error)) {
+      HSD.test(model, "genotype",
+               DFerror = df_error, MSerror = ms_error,
+               group = TRUE, console = FALSE)
+    } else {
+      HSD.test(model, "genotype", group = TRUE, console = FALSE)
+    }
+  }, error = function(e) {
+    message(sprintf("[WARN] Tukey HSD failed for %s: %s", trait_name, conditionMessage(e)))
+    NULL
+  })
+
+  if (is.null(tukey)) return(NULL)
+
+  groups_df  <- tukey$groups    # sorted by mean desc: col1=mean, col "groups"=letters
+  means_df   <- tukey$means     # alphabetical: col1=mean, se, std, ...
+  geno_order <- rownames(groups_df)
+
+  se_vals <- if ("se" %in% names(means_df)) {
+    as.numeric(means_df[geno_order, "se"])
+  } else {
+    rep(NA_real_, length(geno_order))
+  }
+
+  # Return atomic vectors so jsonlite never unboxes them with auto_unbox=TRUE
+  list(
+    genotype = geno_order,
+    mean     = as.numeric(groups_df[[1]]),
+    se       = se_vals,
+    group    = as.character(groups_df$groups),
+    test     = "Tukey HSD",
+    alpha    = 0.05
+  )
+}
 
 # Load the strict interpretation engine
 source("vivasense_interpretation_engine.R")
@@ -81,6 +133,8 @@ compute_single_environment <- function(data, trait_name = "Trait") {
     gam_percent <- (gam / grand_mean) * 100
   }
   
+  mean_sep <- compute_mean_separation(model, trait_name)
+
   list(
     environment_mode = "single_environment",
     n_genotypes = n_genotypes,
@@ -109,6 +163,7 @@ compute_single_environment <- function(data, trait_name = "Trait") {
       mean_valid = mean_is_valid
     ),
     anova_table = as.data.frame(anova_table),
+    mean_separation = mean_sep,
     ms_genotype = ms_genotype,
     ms_error = ms_error
   )
@@ -122,28 +177,76 @@ compute_single_environment <- function(data, trait_name = "Trait") {
 #' @param random_environment logical, if TRUE, include E in denominator of h2
 #' @return list with variance components for combined analysis
 #'
-compute_multi_environment <- function(data, trait_name = "Trait", 
+compute_multi_environment <- function(data, trait_name = "Trait",
                                        random_environment = FALSE) {
-  
-  # Ensure factors
-  data$genotype <- factor(data$genotype)
+
+  # Ensure factors — handles both lowercase (from Python) and Title Case
+  data$genotype    <- factor(data$genotype)
   data$environment <- factor(data$environment)
-  data$rep <- factor(data$rep)
-  
+  data$rep         <- factor(data$rep)
+
+  # ── Debug: log factor levels so failures are diagnosable in Render logs ──
+  message(sprintf("[DEBUG] Trait: %s", trait_name))
+  message(sprintf("[DEBUG] Levels Genotype (%d): %s",
+              nlevels(data$genotype),
+              paste(levels(data$genotype), collapse = ", ")))
+  message(sprintf("[DEBUG] Levels Environment (%d): %s",
+              nlevels(data$environment),
+              paste(levels(data$environment), collapse = ", ")))
+  message(sprintf("[DEBUG] Levels Rep/Block (%d): %s",
+              nlevels(data$rep),
+              paste(levels(data$rep), collapse = ", ")))
+  message(sprintf("[DEBUG] Rows: %d", nrow(data)))
+
   n_genotypes <- nlevels(data$genotype)
-  n_envs <- nlevels(data$environment)
-  n_reps <- nlevels(data$rep)
-  
-  # ANOVA: Main effects + G×E interaction
-  # Assumes: rep nested in environment
-  model <- aov(trait_value ~ environment + rep %in% environment + genotype + 
-                 genotype:environment, data = data)
-  anova_table <- anova(model)
-  
+  n_envs      <- nlevels(data$environment)
+  n_reps      <- nlevels(data$rep)
+
+  # Guard: catch model errors and return them as structured failures
+  model_result <- tryCatch({
+
+    # ANOVA: Main effects + G×E interaction
+    # Use lm() with explicit environment:rep (= rep nested in environment) so
+    # that the anova table term names are fully predictable.  aov() with %in%
+    # can silently alias or drop the genotype:environment term on some R builds.
+    model <- lm(trait_value ~ environment + environment:rep + genotype +
+                  genotype:environment, data = data)
+    anova_table <- anova(model)
+
+    message(sprintf("[DEBUG] anova rownames: %s", paste(rownames(anova_table), collapse = " | ")))
+
+    # Locate the G×E term flexibly — R may order as "genotype:environment"
+    # or "environment:genotype" depending on formula parsing.
+    ge_term <- rownames(anova_table)[
+      grepl("genotype", rownames(anova_table), fixed = TRUE) &
+      grepl("environment", rownames(anova_table), fixed = TRUE)
+    ]
+    if (length(ge_term) == 0) {
+      stop(paste(
+        "ANOVA table missing G\u00d7E term. Available terms:",
+        paste(rownames(anova_table), collapse = ", ")
+      ))
+    }
+    ge_term <- ge_term[1]   # use first match
+
+    list(ok = TRUE, anova_table = anova_table, ge_term = ge_term)
+
+  }, error = function(e) {
+    message(sprintf("[ERROR] Trait %s — model failed: %s", trait_name, conditionMessage(e)))
+    list(ok = FALSE, message = conditionMessage(e))
+  })
+
+  if (!model_result$ok) {
+    stop(model_result$message)   # propagates to genetics_analysis tryCatch
+  }
+
+  anova_table <- model_result$anova_table
+  ge_term     <- model_result$ge_term
+
   # Extract mean squares
   ms_genotype <- anova_table["genotype", "Mean Sq"]
-  ms_ge <- anova_table["genotype:environment", "Mean Sq"]
-  ms_error <- anova_table["Residuals", "Mean Sq"]
+  ms_ge       <- anova_table[ge_term,    "Mean Sq"]
+  ms_error    <- anova_table["Residuals","Mean Sq"]
   
   # Variance components (fixed genotype, fixed environment, fixed reps)
   sigma2_error <- ms_error
@@ -212,6 +315,10 @@ compute_multi_environment <- function(data, trait_name = "Trait",
     gam_percent <- (gam / grand_mean) * 100
   }
   
+  df_err   <- anova_table["Residuals", "Df"]
+  mean_sep <- compute_mean_separation(model, trait_name,
+                                      df_error = df_err, ms_error = ms_error)
+
   list(
     environment_mode = "multi_environment",
     n_genotypes = n_genotypes,
@@ -223,8 +330,8 @@ compute_multi_environment <- function(data, trait_name = "Trait",
       sigma2_ge = sigma2_ge,
       sigma2_error = sigma2_error,
       sigma2_phenotypic = sigma2_phenotypic,
-      heritability_basis = ifelse(random_environment, 
-                                   "random_environment_model", 
+      heritability_basis = ifelse(random_environment,
+                                   "random_environment_model",
                                    "fixed_environment_model")
     ),
     heritability = list(
@@ -252,6 +359,7 @@ compute_multi_environment <- function(data, trait_name = "Trait",
       mean_valid = mean_is_valid
     ),
     anova_table = as.data.frame(anova_table),
+    mean_separation = mean_sep,
     ms_genotype = ms_genotype,
     ms_ge = ms_ge,
     ms_error = ms_error
@@ -453,10 +561,22 @@ genetics_analysis <- function(data,
   
   # Run computation
   if (mode == "single") {
-    result <- compute_single_environment(data, trait_name = trait_name)
+    result <- tryCatch(
+      compute_single_environment(data, trait_name = trait_name),
+      error = function(e) {
+        message(sprintf("[ERROR] single-env computation failed for %s: %s", trait_name, conditionMessage(e)))
+        return(list(.__error__ = conditionMessage(e)))
+      }
+    )
   } else if (mode == "multi") {
-    result <- compute_multi_environment(data, trait_name = trait_name, 
-                                        random_environment = random_environment)
+    result <- tryCatch(
+      compute_multi_environment(data, trait_name = trait_name,
+                                random_environment = random_environment),
+      error = function(e) {
+        message(sprintf("[ERROR] multi-env computation failed for %s: %s", trait_name, conditionMessage(e)))
+        return(list(.__error__ = conditionMessage(e)))
+      }
+    )
   } else {
     return(list(
       status = "ERROR",
@@ -467,6 +587,17 @@ genetics_analysis <- function(data,
     ))
   }
   
+  # Propagate computation errors as structured responses
+  if (!is.null(result$`.__error__`)) {
+    return(list(
+      status = "ERROR",
+      mode = mode,
+      errors = list(computation_error = result$`.__error__`),
+      result = NULL,
+      interpretation = paste("Analysis failed:", result$`.__error__`)
+    ))
+  }
+
   # Validate variance components
   warnings_vc <- validate_variance_components(result)
   
@@ -495,19 +626,27 @@ genetics_analysis <- function(data,
 
 #' Convert result to JSON-serializable list
 export_to_json <- function(analysis_result) {
-  
-  # Remove problematic objects (data frames, model objects, etc.)
+
   clean_result <- analysis_result
-  
-  # Simplify ANOVA table
+
+  # Serialize ANOVA table as named column-arrays (source, df, ss, ms, f_value, p_value).
+  # Atomic vectors are never auto_unboxed by jsonlite, so each array stays as an array
+  # even for single-row tables.
   if (!is.null(analysis_result$result$anova_table)) {
-    clean_result$result$anova_table <- as.list(as.data.frame(
-      analysis_result$result$anova_table,
-      check.names = FALSE
-    ))
+    at_df <- analysis_result$result$anova_table
+    clean_result$result$anova_table <- list(
+      source  = rownames(at_df),
+      df      = as.integer(at_df[["Df"]]),
+      ss      = at_df[["Sum Sq"]],
+      ms      = at_df[["Mean Sq"]],
+      f_value = at_df[["F value"]],
+      p_value = at_df[["Pr(>F)"]]
+    )
   }
-  
-  # Convert to JSON
+
+  # mean_separation is already a plain list of atomic vectors (or NULL).
+  # NULL fields are dropped by toJSON; Optional[MeanSeparation] defaults to None in Python.
+
   json_str <- toJSON(clean_result, pretty = TRUE, auto_unbox = TRUE, na = "null", digits = 10)
   return(json_str)
 }

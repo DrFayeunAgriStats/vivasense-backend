@@ -4,6 +4,9 @@
 # Publication-Ready Output for Thesis & Journal Manuscripts
 # ============================================================================
 
+# String concatenation operator (not built into base R)
+`%+%` <- paste0
+
 library(jsonlite)
 
 # ============================================================================
