@@ -24,7 +24,10 @@ WORKDIR /app
 COPY . .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# python-docx is listed in requirements.txt; this explicit install ensures it
+# is present even if Docker layer cache serves a stale requirements install.
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir "python-docx==1.1.2"
 
 # Expose port
 EXPOSE 8000

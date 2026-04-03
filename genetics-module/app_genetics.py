@@ -154,9 +154,27 @@ app.include_router(multitrait_router)
 from trait_relationships_routes import router as tr_router
 app.include_router(tr_router)
 
-# Word export endpoint
-from genetics_export import router as export_router
-app.include_router(export_router)
+# Word export endpoint — wrapped in try/except so app starts even if
+# python-docx is not yet installed (e.g. first Docker cold-start).
+try:
+    from genetics_export import router as export_router
+    app.include_router(export_router)
+    logger.info("genetics_export router loaded (/genetics/download-results, /genetics/export-word)")
+except Exception as _export_err:
+    logger.warning("genetics_export not loaded (%s) — /genetics/download-results will return 503", _export_err)
+
+    # Fallback: register stub endpoints that return 503 so frontend gets a
+    # meaningful error instead of a 404 / connection reset.
+    from fastapi import Request as _Request
+    from fastapi.responses import JSONResponse as _JSONResponse
+
+    @app.post("/genetics/download-results", tags=["Export"], include_in_schema=True)
+    @app.post("/genetics/export-word", tags=["Export"], include_in_schema=True)
+    async def _export_unavailable(_request: _Request):
+        return _JSONResponse(
+            status_code=503,
+            content={"detail": f"Word export unavailable: {_export_err}"},
+        )
 
 
 # ============================================================================
