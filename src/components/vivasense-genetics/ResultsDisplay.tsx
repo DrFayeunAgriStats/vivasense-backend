@@ -233,7 +233,7 @@ function SummaryRow({
 // ─────────────────────────────────────────────────────────────────────────────
 
 function TraitDetails({ traitResult }: { traitResult: TraitResult }) {
-  const [showAnovaDetails, setShowAnovaDetails] = useState(false);
+  const [showAnovaDetails, setShowAnovaDetails] = useState(true);
 
   const ar = traitResult.analysis_result;
   const result = ar?.result;
@@ -257,13 +257,8 @@ function TraitDetails({ traitResult }: { traitResult: TraitResult }) {
       <div className="space-y-3">
         <SubSectionLabel>Statistical Analysis</SubSectionLabel>
 
-        {/* Mean Separation — primary output, always visible */}
-        {result?.mean_separation && (
-          <MeanSeparationSection ms={result.mean_separation} />
-        )}
-
-        {/* ANOVA Table — secondary/technical, collapsed by default */}
-        {result?.anova_table && (
+        {/* ANOVA Table — shown expanded by default */}
+        {result?.anova_table ? (
           <div>
             <button
               type="button"
@@ -276,6 +271,17 @@ function TraitDetails({ traitResult }: { traitResult: TraitResult }) {
             </button>
             {showAnovaDetails && <AnovaTableSection at={result.anova_table} />}
           </div>
+        ) : (
+          <p className="text-xs text-gray-400 italic">ANOVA table not available for this trait.</p>
+        )}
+
+        {/* Mean Separation — primary output */}
+        {result?.mean_separation ? (
+          <MeanSeparationSection ms={result.mean_separation} />
+        ) : (
+          <p className="text-xs text-gray-400 italic">
+            Mean separation (Tukey HSD) not available — insufficient degrees of freedom or singular model.
+          </p>
         )}
       </div>
 

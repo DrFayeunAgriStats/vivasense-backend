@@ -33,11 +33,34 @@ compute_mean_separation <- function(model, trait_name = "Trait",
       HSD.test(model, "genotype", group = TRUE, console = FALSE)
     }
   }, error = function(e) {
-    message(sprintf("[WARN] Tukey HSD failed for %s: %s", trait_name, conditionMessage(e)))
+    message(sprintf("[WARN] Tukey HSD failed for %s: %s — trying LSD.test fallback", trait_name, conditionMessage(e)))
     NULL
   })
 
+  # Fallback: LSD.test when Tukey HSD fails (e.g. lm models, singular residuals)
+  if (is.null(tukey)) {
+    tukey <- tryCatch({
+      if (!is.null(df_error) && !is.null(ms_error)) {
+        LSD.test(model, "genotype",
+                 DFerror = df_error, MSerror = ms_error,
+                 group = TRUE, console = FALSE)
+      } else {
+        LSD.test(model, "genotype", group = TRUE, console = FALSE)
+      }
+    }, error = function(e) {
+      message(sprintf("[WARN] LSD.test fallback also failed for %s: %s", trait_name, conditionMessage(e)))
+      NULL
+    })
+    if (!is.null(tukey)) {
+      message(sprintf("[INFO] Using LSD.test (Fisher's LSD) for mean separation of %s", trait_name))
+      # Override test name below
+      attr(tukey, ".test_name") <- "Fisher LSD"
+    }
+  }
+
   if (is.null(tukey)) return(NULL)
+
+  test_name <- if (!is.null(attr(tukey, ".test_name"))) attr(tukey, ".test_name") else "Tukey HSD"
 
   groups_df  <- tukey$groups    # sorted by mean desc: col1=mean, col "groups"=letters
   means_df   <- tukey$means     # alphabetical: col1=mean, se, std, ...
@@ -55,7 +78,7 @@ compute_mean_separation <- function(model, trait_name = "Trait",
     mean     = as.numeric(groups_df[[1]]),
     se       = se_vals,
     group    = as.character(groups_df$groups),
-    test     = "Tukey HSD",
+    test     = test_name,
     alpha    = 0.05
   )
 }

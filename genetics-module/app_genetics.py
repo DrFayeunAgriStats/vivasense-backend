@@ -9,7 +9,8 @@ Handles:
 - Error handling and response formatting
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
@@ -145,6 +146,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Log 422 validation errors with full detail so Render logs show the exact failing field."""
+    import json as _json
+    logger.error(
+        "422 RequestValidationError on %s %s\nErrors: %s",
+        request.method,
+        request.url.path,
+        _json.dumps(exc.errors(), default=str, indent=2),
+    )
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()},
+    )
+
 
 # Multi-trait upload endpoints
 from multitrait_upload_routes import router as multitrait_router

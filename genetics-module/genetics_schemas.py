@@ -29,6 +29,14 @@ class AnovaTable(BaseModel):
     f_value: List[Optional[float]]
     p_value: List[Optional[float]]
 
+    @field_validator("df", mode="before")
+    @classmethod
+    def coerce_df_to_int(cls, v: Any) -> List[int]:
+        """Coerce df values to int — JSON round-tripping via JS can produce floats."""
+        if isinstance(v, list):
+            return [int(x) if x is not None else 0 for x in v]
+        return v
+
 
 class MeanSeparation(BaseModel):
     """

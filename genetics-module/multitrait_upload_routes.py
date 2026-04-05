@@ -519,6 +519,17 @@ async def analyze_upload(request: UploadAnalysisRequest):
                 )
                 raise RuntimeError(f"R ERROR: {r_msg}")
 
+            # Log R result structure before Pydantic validation (debug aid)
+            r_result = result_dict.get("result") or {}
+            logger.info(
+                "Trait '%s' R result keys: %s | anova_table present: %s | "
+                "mean_separation present: %s",
+                trait,
+                list(r_result.keys()),
+                r_result.get("anova_table") is not None,
+                r_result.get("mean_separation") is not None,
+            )
+
             # Validate the dict against the real GeneticsResponse schema.
             validated = GeneticsResponse(**result_dict)
 
