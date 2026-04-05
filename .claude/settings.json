@@ -11,7 +11,15 @@
       "Bash(pip install:*)",
       "Bash(python -c \"import openpyxl; print\\(''openpyxl'', openpyxl.__version__\\)\")",
       "Bash(python test_upload_integration.py)",
-      "Bash(python -X utf8 test_upload_integration.py)"
+      "Bash(python -X utf8 test_upload_integration.py)",
+      "Bash(python generate_sample.py)",
+      "Bash(python smoke_test.py ../sample/sample_manuscript.docx)",
+      "Bash(python -c \"import sys; sys.stdout.buffer.write\\(sys.stdin.buffer.read\\(\\)\\)\")",
+      "Bash(iconv -f utf-8 -t utf-8//IGNORE)",
+      "Bash(npm install:*)",
+      "Bash(npm cache:*)",
+      "Bash(rm -rf node_modules)",
+      "Bash(xargs grep:*)"
     ]
   }
 }
