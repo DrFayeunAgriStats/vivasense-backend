@@ -784,18 +784,13 @@ def _add_trait_section(
     doc.add_page_break()
     _add_heading(doc, f"Trait: {trait_name}", level=1)
 
-    # Check for failed / missing analysis
-    status = getattr(tr, "status", None) or (
-        "success" if tr.analysis_result is not None else "failed"
-    )
-    if status == "failed" or tr.analysis_result is None:
-        error_msg = (
-            (row.error if row and row.error else None)
-            or tr.error
-            or "No analysis result available"
-        )
+    # Gate only on analysis_result — do NOT trust status field, which can be
+    # inferred as "failed" in Pydantic v1 when status is absent in the payload
+    # and the validator runs before analysis_result is populated.
+    if tr.analysis_result is None:
+        error_msg = tr.error or (row.error if row else None) or "No analysis result available"
         _add_body(doc, f"Analysis failed: {error_msg}")
-        logger.warning("Trait '%s' skipped — status=%s error=%s", trait_name, status, error_msg)
+        logger.warning("Trait '%s' skipped — analysis_result is None, error=%s", trait_name, error_msg)
         return
 
     ar = tr.analysis_result
@@ -1014,18 +1009,17 @@ async def export_word_report(data: DownloadReportRequest) -> Response:
             trait_result_keys,
         )
 
-    # Log first trait's analysis_result structure
+    # Log each trait's analysis_result presence to aid debugging
     for trait, tr in (data.trait_results or {}).items():
         has_ar  = tr.analysis_result is not None
         has_res = has_ar and tr.analysis_result.result is not None
         logger.info(
-            "  trait='%s' status='%s' has_analysis_result=%s has_result=%s",
+            "  trait='%s' has_analysis_result=%s has_result=%s error='%s'",
             trait,
-            getattr(tr, "status", "?"),
             has_ar,
             has_res,
+            tr.error,
         )
-        break   # only log first trait — enough to diagnose
 
     try:
         doc = _build_document(data)
