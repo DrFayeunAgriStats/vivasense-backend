@@ -22,7 +22,7 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Inches, Pt
 from fastapi import APIRouter
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 
 from genetics_schemas import AnovaTable, MeanSeparation, GeneticsResult
 from multitrait_upload_schemas import UploadAnalysisResponse
@@ -54,23 +54,37 @@ async def export_word_report(data: UploadAnalysisResponse) -> Response:
 
     Registered at both /genetics/download-results and /genetics/export-word.
     """
-    doc = _build_document(data)
-    buf = io.BytesIO()
-    doc.save(buf)
-    buf.seek(0)
-
-    return Response(
-        content=buf.read(),
-        media_type=(
-            "application/vnd.openxmlformats-officedocument"
-            ".wordprocessingml.document"
-        ),
-        headers={
-            "Content-Disposition": (
-                "attachment; filename=vivasense_genetics_report.docx"
-            )
-        },
+    logger.info(
+        "Received payload: traits=%s, failed=%s, dataset=%s",
+        [r.trait for r in data.summary_table],
+        data.failed_traits,
+        data.dataset_summary.dict() if data.dataset_summary else None,
     )
+
+    try:
+        doc = _build_document(data)
+        buf = io.BytesIO()
+        doc.save(buf)
+        buf.seek(0)
+
+        return Response(
+            content=buf.read(),
+            media_type=(
+                "application/vnd.openxmlformats-officedocument"
+                ".wordprocessingml.document"
+            ),
+            headers={
+                "Content-Disposition": (
+                    "attachment; filename=vivasense_genetics_report.docx"
+                )
+            },
+        )
+    except Exception as exc:
+        logger.error("Validation error: %s", exc, exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Report generation failed: {exc}"},
+        )
 
 
 # Register both URL paths explicitly — more reliable than stacked decorators.
