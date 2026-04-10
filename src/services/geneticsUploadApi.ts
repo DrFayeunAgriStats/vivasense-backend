@@ -279,7 +279,9 @@ export async function exportWordReport(
 
   if (!response.ok) {
     const detail = await extractErrorDetail(response);
-    throw new Error(`Word export failed — ${detail}`);
+    const msg = typeof detail === "string" ? detail : JSON.stringify(detail);
+    console.error("[exportWordReport] Server error", response.status, msg);
+    throw new Error(`Word export failed (${response.status}) — ${msg}`);
   }
 
   const blob = await response.blob();

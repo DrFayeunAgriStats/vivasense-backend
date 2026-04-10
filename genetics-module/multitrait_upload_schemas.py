@@ -2,7 +2,7 @@
 VivaSense Genetics - Multi-Trait Upload Response Schemas
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from typing import Any, Dict, List, Optional
 
 from genetics_schemas import GeneticsResponse
@@ -91,13 +91,20 @@ class TraitResult(BaseModel):
 
     When status == 'failed': analysis_result is None and error describes why.
     """
-    status: str  # "success" | "failed"
+    status: Optional[str] = None  # "success" | "failed" — inferred when absent
     analysis_result: Optional[GeneticsResponse] = None
     error: Optional[str] = None
     data_warnings: List[str] = Field(
         default_factory=list,
         description="Balance or structure warnings (unequal reps, incomplete G×E, etc.)"
     )
+
+    @validator("status", always=True, pre=False)
+    def infer_status(cls, v, values):
+        if v is not None:
+            return v
+        # Infer from analysis_result when the field is missing from the payload
+        return "success" if values.get("analysis_result") is not None else "failed"
 
 
 class SummaryTableRow(BaseModel):
