@@ -244,6 +244,24 @@ export async function exportWordReport(
   data: UploadAnalysisResponse,
   filename = "vivasense_genetics_report.docx"
 ): Promise<void> {
+  // Normalise trait_results so every entry has the required "status" field.
+  // Guards against state where status was dropped during result construction.
+  const normalizedTraitResults: Record<string, TraitResult> = {};
+  for (const [trait, tr] of Object.entries(data.trait_results)) {
+    normalizedTraitResults[trait] = {
+      status: tr.status ?? (tr.analysis_result != null ? "success" : "failed"),
+      analysis_result: tr.analysis_result,
+      error: tr.error,
+      data_warnings: tr.data_warnings ?? [],
+    };
+  }
+  const payload: UploadAnalysisResponse = {
+    ...data,
+    trait_results: normalizedTraitResults,
+  };
+
+  console.log("[exportWordReport] Download payload:", JSON.stringify(payload, null, 2));
+
   const exportUrl = `${ENGINE_BASE}/genetics/download-results`;
   console.log("[geneticsUploadApi] POST", exportUrl);
 
@@ -252,7 +270,7 @@ export async function exportWordReport(
     response = await fetch(exportUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data),
+      body: JSON.stringify(payload),
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
