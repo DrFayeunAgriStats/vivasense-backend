@@ -26,6 +26,7 @@ import math
 import datetime
 from typing import Any, Dict, List, Optional
 
+import pandas as pd
 import matplotlib
 matplotlib.use("Agg")                        # headless – no display needed
 import matplotlib.pyplot as plt
@@ -848,6 +849,231 @@ def _add_trait_section(
 
 
 # ============================================================================
+# GENERIC TABLE HELPER  (DataFrame or list-of-dicts → Word table)
+# ============================================================================
+
+def _add_table_to_doc(doc: Document, data: Any) -> None:
+    """
+    Dynamically build a Word table from a Pandas DataFrame, a list of dicts,
+    or a pre-built list of header + row pairs.
+
+    Applies the same grey-header / bordered styling as _add_stat_table so
+    the two helpers produce visually consistent output.
+    """
+    if isinstance(data, pd.DataFrame):
+        headers = data.columns.tolist()
+        rows = [[str(v) for v in row] for row in data.values.tolist()]
+    elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
+        headers = list(data[0].keys())
+        rows = [[str(row.get(h, "")) for h in headers] for row in data]
+    else:
+        # Fallback: unsupported format — render as plain text
+        doc.add_paragraph(str(data))
+        return
+
+    table = doc.add_table(rows=1, cols=len(headers))
+    table.style = "Table Grid"
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+    # Header row
+    hdr_cells = table.rows[0].cells
+    for i, h in enumerate(headers):
+        hdr_cells[i].text = str(h)
+    _bold_row(table.rows[0], size_pt=12, bg=_HEADER_BG)
+
+    # Data rows
+    for row_vals in rows:
+        r = table.add_row()
+        for i, val in enumerate(row_vals):
+            r.cells[i].text = val
+        _style_data_row(r)
+
+
+# ============================================================================
+# PYDANTIC MODEL → list-of-dicts CONVERTERS
+# ============================================================================
+
+def _anova_to_records(at: AnovaTable) -> List[Dict[str, str]]:
+    """Convert AnovaTable (parallel arrays) to a list of dicts for _add_table_to_doc."""
+    records = []
+    for i, src in enumerate(at.source):
+        df_val = at.df[i] if i < len(at.df) else None
+        ss_val = at.ss[i] if i < len(at.ss) else None
+        ms_val = at.ms[i] if i < len(at.ms) else None
+        f_val  = at.f_value[i] if i < len(at.f_value) else None
+        p_val  = at.p_value[i] if i < len(at.p_value) else None
+        records.append({
+            "Source":  _ANOVA_LABELS.get(src, src),
+            "DF":      str(int(df_val)) if df_val is not None else "—",
+            "SS":      _fmt(ss_val),
+            "MS":      _fmt(ms_val),
+            "F-value": _fmt(f_val, 3) if f_val is not None else "—",
+            "p-value": _fmt_p(p_val),
+        })
+    return records
+
+
+def _mean_sep_to_records(ms: MeanSeparation) -> List[Dict[str, str]]:
+    """Convert MeanSeparation (parallel arrays) to a list of dicts for _add_table_to_doc."""
+    records = []
+    for i, geno in enumerate(ms.genotype):
+        mean_v = ms.mean[i] if i < len(ms.mean) else None
+        se_v   = ms.se[i]   if i < len(ms.se)   else None
+        grp    = ms.group[i] if i < len(ms.group) else "—"
+        records.append({
+            "Rank":     str(i + 1),
+            "Genotype": geno,
+            "Mean":     _fmt(mean_v),
+            "SE":       _fmt(se_v),
+            "Group":    grp,
+        })
+    return records
+
+
+# ============================================================================
+# EXPORT TRAITS TO WORD  (public entry point for per-trait sections)
+# ============================================================================
+
+def export_traits_to_word(
+    results: DownloadReportRequest,
+    doc: Document,
+) -> Document:
+    """
+    Iterate through trait_results and append a complete per-trait section to doc.
+
+    Builds a `trait_details` dict from the Pydantic models so the rendering
+    logic works identically whether data comes from the API or a direct call.
+
+    Per-trait section order:
+      1. Descriptive Statistics
+      2. ANOVA Table
+      3. Mean Separation (table + bar chart)
+      4. Genetic Parameters
+      5. Interpretation & Breeding Recommendations
+    """
+    trait_results = results.trait_results or {}
+    row_by_trait  = {r.trait: r for r in results.summary_table}
+
+    # Build trait_details: maps trait name → dict with normalised sub-dicts
+    trait_details: Dict[str, Optional[Dict[str, Any]]] = {}
+    for trait, tr in trait_results.items():
+        if tr.analysis_result is None or tr.analysis_result.result is None:
+            trait_details[trait] = None
+            continue
+        result = tr.analysis_result.result
+        trait_details[trait] = {
+            "anova_table":      _anova_to_records(result.anova_table)
+                                if result.anova_table else None,
+            "mean_separation":  _mean_sep_to_records(result.mean_separation)
+                                if result.mean_separation else None,
+            "trait_result":     tr,          # full Pydantic object for rich sections
+            "summary_row":      row_by_trait.get(trait),
+        }
+
+    if not trait_details:
+        doc.add_paragraph("No trait data found in the results.")
+        return doc
+
+    for trait, details in trait_details.items():
+        doc.add_page_break()
+        doc.add_heading(f"Trait: {trait}", level=1)
+
+        # Safe access — skip if details is None or not a dict
+        if not details or not isinstance(details, dict):
+            doc.add_paragraph("Analysis failed or data missing for this trait.")
+            logger.warning("export_traits_to_word: no details for trait '%s'", trait)
+            continue
+
+        tr  = details["trait_result"]
+        row = details["summary_row"]
+
+        try:
+            # ── 1. Descriptive Statistics ────────────────────────────────────
+            _add_descriptive_stats(doc, tr.analysis_result.result)
+            doc.add_paragraph()
+
+            # ── 2. ANOVA Table ───────────────────────────────────────────────
+            anova_data = details.get("anova_table")
+            if anova_data is not None:
+                doc.add_heading("ANOVA Table", level=2)
+                _add_table_to_doc(doc, anova_data)
+                doc.add_paragraph()
+                # Narrative sentence for genotype effect
+                result = tr.analysis_result.result
+                if result.anova_table:
+                    try:
+                        geno_i = result.anova_table.source.index("genotype")
+                        f_v = result.anova_table.f_value[geno_i]
+                        p_v = result.anova_table.p_value[geno_i]
+                        sig = _sig_label(p_v)
+                        sig_word = (
+                            "highly significant" if sig in ("***", "**")
+                            else "significant" if sig == "*"
+                            else "not significant"
+                        )
+                        _add_body(
+                            doc,
+                            f"Genotype effect was {sig_word} "
+                            f"(F = {_fmt(f_v, 3)}, {_fmt_p(p_v)}).",
+                        )
+                    except (ValueError, IndexError):
+                        pass
+            else:
+                doc.add_paragraph("ANOVA data not available for this trait.")
+                logger.info("export_traits_to_word: no anova_table for '%s'", trait)
+
+            doc.add_paragraph()
+
+            # ── 3. Mean Separation ───────────────────────────────────────────
+            mean_sep_data = details.get("mean_separation")
+            if mean_sep_data is not None:
+                doc.add_heading("Mean Separation (Genotype Grouping)", level=2)
+                _add_table_to_doc(doc, mean_sep_data)
+                doc.add_paragraph()
+                _add_body(
+                    doc,
+                    "Means followed by the same letter are not significantly different "
+                    f"(Tukey HSD, α = 0.05).",
+                    italic=True,
+                )
+                # Bar chart
+                ms = tr.analysis_result.result.mean_separation
+                chart_bytes = _generate_mean_separation_chart(
+                    trait_name=trait,
+                    genotypes=ms.genotype,
+                    means=ms.mean,
+                    ses=ms.se,
+                    groups=ms.group,
+                )
+                if chart_bytes:
+                    doc.add_picture(io.BytesIO(chart_bytes), width=Inches(6.0))
+                    doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            else:
+                doc.add_paragraph("Mean separation data not available for this trait.")
+                logger.info("export_traits_to_word: no mean_separation for '%s'", trait)
+
+            doc.add_paragraph()
+
+            # ── 4. Genetic Parameters ────────────────────────────────────────
+            _add_genetic_parameters_section(doc, tr.analysis_result.result)
+            doc.add_paragraph()
+
+            # ── 5. Interpretation & Recommendations ──────────────────────────
+            _add_interpretation_section(doc, tr.analysis_result, tr.analysis_result.result)
+
+        except Exception as exc:
+            logger.error(
+                "export_traits_to_word: error in section for trait '%s': %s",
+                trait, exc, exc_info=True,
+            )
+            doc.add_paragraph(
+                f"Section rendering error: {type(exc).__name__}: {exc}"
+            )
+
+    return doc
+
+
+# ============================================================================
 # FOOTER
 # ============================================================================
 
@@ -924,52 +1150,12 @@ def _build_document(data: DownloadReportRequest) -> Document:
         _add_correlation_section(doc, data.correlation)
 
     # ── Per-trait sections ────────────────────────────────────────────────────
-    row_by_trait = {r.trait: r for r in data.summary_table}
-    trait_results = data.trait_results or {}
-
     logger.info(
-        "Building per-trait sections. summary_table traits=%s | trait_results keys=%s",
+        "Building per-trait sections. summary_table=%s | trait_results keys=%s",
         [r.trait for r in data.summary_table],
-        list(trait_results.keys()),
+        list((data.trait_results or {}).keys()),
     )
-
-    for row in data.summary_table:
-        trait = row.trait
-        tr = trait_results.get(trait)
-
-        if tr is None:
-            # Key mismatch — log and write a placeholder
-            logger.warning(
-                "Trait '%s' in summary_table but NOT in trait_results. "
-                "Available keys: %s",
-                trait,
-                list(trait_results.keys()),
-            )
-            doc.add_page_break()
-            _add_heading(doc, f"Trait: {trait}", level=1)
-            _add_body(
-                doc,
-                f"No result data found for '{trait}'. "
-                "Check that the trait name in summary_table matches the key in trait_results.",
-                italic=True,
-            )
-            continue
-
-        try:
-            _add_trait_section(doc, trait, tr, row_by_trait.get(trait))
-        except Exception as exc:
-            logger.error(
-                "Error rendering section for trait '%s': %s",
-                trait, exc, exc_info=True,
-            )
-            # Write a diagnostic placeholder so other traits continue
-            doc.add_page_break()
-            _add_heading(doc, f"Trait: {trait}", level=1)
-            _add_body(
-                doc,
-                f"Section rendering error: {type(exc).__name__}: {exc}",
-                italic=True,
-            )
+    export_traits_to_word(data, doc)
 
     _add_footer(doc)
     return doc
