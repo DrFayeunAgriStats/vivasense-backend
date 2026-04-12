@@ -1208,34 +1208,45 @@ def _build_document(data: DownloadReportRequest) -> Document:
 
 def _recover_from_cache(data: DownloadReportRequest) -> DownloadReportRequest:
     """
-    If the request contains an export_token, look up the server-side cache and
-    replace any TraitResult whose analysis_result is None with the cached version.
+    Recover analysis_result objects that the frontend did not include in the
+    export POST body.
 
-    This is necessary because the frontend typically does NOT re-send the full
-    GeneticsResponse blob when calling the export endpoint — it only sends the
-    summary fields it needs for display.  The token is the bridge that lets the
-    backend recover the full analysis data without requiring a second R run.
+    Strategy (in order):
+      1. If export_token is present → look up by exact token.
+      2. Otherwise → find the most-recently-cached response whose trait_results
+         keys are a superset of the requested trait names.
+
+    This makes recovery token-independent: even if the frontend never echoes
+    the token back (the common case), the cache lookup still succeeds because
+    the trait names act as a natural key.
 
     Returns the (possibly patched) DownloadReportRequest.
     """
-    token = data.export_token
-    if not token:
-        logger.warning(
-            "_recover_from_cache: no export_token in request — "
-            "export will only render traits whose analysis_result was sent"
-        )
-        return data
+    trait_names = list((data.trait_results or {}).keys())
 
-    cached = result_cache.get(token)
+    # ── Step 1: token lookup ─────────────────────────────────────────────────
+    cached = None
+    if data.export_token:
+        cached = result_cache.get(data.export_token)
+        if cached is None:
+            logger.warning(
+                "_recover_from_cache: token %s not in cache (server restart?), "
+                "falling back to trait-name lookup",
+                data.export_token,
+            )
+
+    # ── Step 2: trait-name fallback ──────────────────────────────────────────
+    if cached is None and trait_names:
+        cached = result_cache.get_matching_traits(trait_names)
+
     if cached is None:
         logger.warning(
-            "_recover_from_cache: cache miss for token %s — "
-            "server may have restarted; ask user to re-run analysis",
-            token,
+            "_recover_from_cache: no cached entry found — "
+            "per-trait sections will be empty; ask user to re-run analysis"
         )
         return data
 
-    # Patch in any missing analysis_result objects from the cached response
+    # ── Patch missing analysis_result objects ────────────────────────────────
     patched_trait_results = dict(data.trait_results or {})
     patched_count = 0
     for trait, cached_tr in (cached.trait_results or {}).items():
@@ -1252,16 +1263,14 @@ def _recover_from_cache(data: DownloadReportRequest) -> DownloadReportRequest:
     if patched_count:
         logger.info(
             "_recover_from_cache: patched analysis_result for %d trait(s) "
-            "from cache (token=%s)",
+            "from cache",
             patched_count,
-            token,
         )
         data = data.model_copy(update={"trait_results": patched_trait_results})
     else:
         logger.info(
-            "_recover_from_cache: no patching needed (all analysis_results present "
-            "or cache had nothing new) token=%s",
-            token,
+            "_recover_from_cache: all analysis_results already present — "
+            "no patching needed"
         )
 
     return data
@@ -1294,10 +1303,10 @@ async def export_word_report(data: DownloadReportRequest) -> Response:
     )
 
     # ── Recover analysis_result objects from server-side cache ────────────────
-    # The frontend often sends analysis_result=null (it stores display state,
-    # not the full GeneticsResponse blob).  When an export_token is present
-    # we look up the cached UploadAnalysisResponse that was stored when the
-    # analysis ran and patch in any missing analysis_result objects.
+    # The frontend sends analysis_result=null for each trait (it stores only
+    # display state, not the full GeneticsResponse blob).  _recover_from_cache
+    # looks up the server-side cache by trait-name match (no token required)
+    # and patches in the missing analysis_result objects before building the doc.
     data = _recover_from_cache(data)
 
     # Diagnose key-mismatch upfront
