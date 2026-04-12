@@ -16,9 +16,9 @@ classify_heritability <- function(h2) {
 
 classify_gam <- function(gam_percent) {
   if (is.na(gam_percent)) return("not_computed")
-  if (gam_percent < 10) return("low")
-  if (gam_percent < 20) return("moderate")
-  return("high")
+  if (gam_percent < 5)  return("low")      # < 5%  : low genetic advance
+  if (gam_percent < 10) return("moderate") # 5–10% : moderate genetic advance
+  return("high")                           # > 10% : high genetic advance
 }
 
 classify_cv <- function(cv) {
@@ -121,8 +121,8 @@ interpret_single_environment_strict <- function(result, warnings_vc) {
     } else if (h2_class == "high" && gam_class == "moderate") {
       interp <- paste0(
         sprintf("The estimated broad-sense heritability (h\u00b2 = %.3f) indicates HIGH genetic control within this environment. ", h2),
-        sprintf("However, the genetic advance as percent of mean (GAM = %.2f%%) is only MODERATE, suggesting that while the trait is heritable, ", gp$GAM_percent),
-        "expected gains from selection are more modest. This pattern may reflect non-additive gene action, restricted allele frequency, or both."
+        sprintf("The genetic advance as percent of mean (GAM = %.2f%%) is MODERATE, indicating a meaningful selection response. ", gp$GAM_percent),
+        "Direct phenotypic selection should yield steady genetic progress. Both additive and non-additive gene effects likely contribute to trait variation."
       )
     } else if (h2_class == "high" && gam_class == "low") {
       interp <- paste0(
@@ -304,7 +304,8 @@ interpret_multi_environment_strict <- function(result, warnings_vc) {
       )
     } else if (h2_class == "high" && gam_class == "moderate") {
       interp <- paste0(interp,
-        "High h\u00b2 with moderate GAM suggests heritable control but limited immediate gains. Consider non-additive effects or linkage phase concerns."
+        "High h\u00b2 with moderate GAM indicates heritable control with a meaningful selection response across environments. ",
+        "Steady genetic progress is expected from direct selection; non-additive effects may limit the rate of improvement."
       )
     } else if (h2_class == "moderate" && gam_class == "high") {
       interp <- paste0(interp,

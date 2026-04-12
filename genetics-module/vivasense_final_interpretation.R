@@ -22,9 +22,9 @@ classify_heritability <- function(h2) {
 
 classify_gam <- function(gam_percent) {
   if (is.na(gam_percent)) return(NA_character_)
-  if (gam_percent < 10) return("low")
-  if (gam_percent >= 10 && gam_percent < 20) return("moderate")
-  if (gam_percent >= 20) return("high")
+  if (gam_percent < 5)  return("low")      # < 5%  : low genetic advance
+  if (gam_percent < 10) return("moderate") # 5–10% : moderate genetic advance
+  return("high")                           # > 10% : high genetic advance
 }
 
 classify_cv <- function(cv) {
