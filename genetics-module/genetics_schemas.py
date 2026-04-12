@@ -69,6 +69,11 @@ class GeneticsResult(BaseModel):
     genetic_parameters: Dict[str, Any]
     anova_table: Optional[AnovaTable] = None
     mean_separation: Optional[MeanSeparation] = None
+    # Optional fields returned by the R engine — preserved here so the export
+    # can render them without schema changes each time the engine adds new fields.
+    descriptive_stats: Optional[Dict[str, Any]] = None
+    assumption_tests: Optional[Dict[str, Any]] = None
+    breeding_implication: Optional[str] = None
 
 
 class GeneticsResponse(BaseModel):

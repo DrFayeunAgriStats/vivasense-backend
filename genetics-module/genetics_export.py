@@ -513,21 +513,23 @@ def _add_executive_summary(
 def _add_descriptive_stats(doc: Document, result: GeneticsResult) -> None:
     _add_heading(doc, "Descriptive Statistics", level=2)
 
-    grand_mean = result.grand_mean
-    vc = result.variance_components if isinstance(result.variance_components, dict) else {}
-    sigma2_p = vc.get("sigma2_phenotypic")
-    sd = math.sqrt(sigma2_p) if sigma2_p and sigma2_p > 0 else None
-    cv = (sd / grand_mean * 100) if (sd and grand_mean) else None
-
-    rows = [
-        ("Grand Mean", _fmt(grand_mean)),
-        ("Phenotypic SD (σp)", _fmt(sd)),
-        ("Coefficient of Variation (CV%)", _fmt(cv, 2)),
+    # Use only real, directly-available fields — do not fabricate derived stats
+    rows: List[tuple] = [
+        ("Grand Mean", _fmt(result.grand_mean)),
         ("No. Genotypes", str(result.n_genotypes)),
         ("No. Replications", str(result.n_reps)),
     ]
     if result.n_environments:
         rows.append(("No. Environments", str(result.n_environments)))
+
+    # Append extra fields from descriptive_stats dict if the R engine provided it
+    if result.descriptive_stats and isinstance(result.descriptive_stats, dict):
+        for key, val in result.descriptive_stats.items():
+            label = key.replace("_", " ").title()
+            if isinstance(val, float):
+                rows.append((label, _fmt(val)))
+            elif val is not None:
+                rows.append((label, str(val)))
 
     _add_stat_table(doc, ["Parameter", "Value"], rows, numeric_cols={1})
 
@@ -768,8 +770,60 @@ def _add_interpretation_section(
         _add_body(doc, ar.interpretation)
         doc.add_paragraph()
 
+    # Breeding implication from the R engine (if present in payload)
+    if result.breeding_implication:
+        _add_heading(doc, "Breeding Implication", level=3)
+        _add_body(doc, result.breeding_implication)
+        doc.add_paragraph()
+
     _add_heading(doc, "Breeding Recommendation", level=3)
     _add_body(doc, _breeding_recommendation(h2, gam_pct))
+
+
+# ============================================================================
+# SECTION: ASSUMPTION TESTS (per trait, optional)
+# ============================================================================
+
+def _add_assumption_tests_section(doc: Document, assumption_tests: Dict[str, Any]) -> None:
+    """Render assumption test results (Shapiro-Wilk, Levene, etc.) if available."""
+    _add_heading(doc, "Assumption Tests", level=2)
+
+    rows_data: List[List[str]] = []
+    for test_name, test_result in assumption_tests.items():
+        label = test_name.replace("_", " ").title()
+        if isinstance(test_result, dict):
+            # Flexible key lookup — R may use p_value or p.value
+            p_val = (
+                test_result.get("p_value")
+                or test_result.get("p.value")
+                or test_result.get("p")
+            )
+            stat = (
+                test_result.get("statistic")
+                or test_result.get("test_stat")
+                or test_result.get("W")
+            )
+            conclusion = test_result.get("conclusion") or test_result.get("verdict")
+            if conclusion is None and p_val is not None:
+                conclusion = "Passed (p ≥ 0.05)" if p_val >= 0.05 else "Failed (p < 0.05)"
+            rows_data.append([
+                label,
+                _fmt(stat, 3, thousands=False) if stat is not None else "—",
+                _fmt_p(p_val) if p_val is not None else "—",
+                conclusion or "—",
+            ])
+        else:
+            rows_data.append([label, "—", "—", str(test_result)])
+
+    if rows_data:
+        _add_stat_table(
+            doc,
+            ["Test", "Statistic", "p-value", "Result"],
+            rows_data,
+            numeric_cols={1},
+        )
+    else:
+        _add_body(doc, "Assumption test data present but could not be parsed.", italic=True)
 
 
 # ============================================================================
@@ -941,125 +995,111 @@ def export_traits_to_word(
     """
     Iterate through trait_results and append a complete per-trait section to doc.
 
-    Builds a `trait_details` dict from the Pydantic models so the rendering
-    logic works identically whether data comes from the API or a direct call.
+    Uses trait_results[trait].status as the primary gate:
+      • status == "success" AND analysis_result is not None → full export
+      • otherwise → error section with reason
 
     Per-trait section order:
-      1. Descriptive Statistics
-      2. ANOVA Table
-      3. Mean Separation (table + bar chart)
-      4. Genetic Parameters
-      5. Interpretation & Breeding Recommendations
+      1. Executive Summary (grand mean, H², GCV, PCV, GAM)
+      2. Descriptive Statistics (real fields only — no fabrication)
+      3. ANOVA Table (if anova_table present in result)
+      4. Mean Separation table + bar chart (if mean_separation present)
+      5. Assumption Tests (if assumption_tests present in result)
+      6. Genetic Parameters (variance components, formulas, GA estimates)
+      7. Interpretation, Breeding Implication, Breeding Recommendation
     """
     trait_results = results.trait_results or {}
-    row_by_trait  = {r.trait: r for r in results.summary_table}
 
-    # Build trait_details: maps trait name → dict with normalised sub-dicts
-    trait_details: Dict[str, Optional[Dict[str, Any]]] = {}
-    for trait, tr in trait_results.items():
-        if tr.analysis_result is None or tr.analysis_result.result is None:
-            trait_details[trait] = None
-            continue
-        result = tr.analysis_result.result
-        trait_details[trait] = {
-            "anova_table":      _anova_to_records(result.anova_table)
-                                if result.anova_table else None,
-            "mean_separation":  _mean_sep_to_records(result.mean_separation)
-                                if result.mean_separation else None,
-            "trait_result":     tr,          # full Pydantic object for rich sections
-            "summary_row":      row_by_trait.get(trait),
-        }
-
-    if not trait_details:
+    if not trait_results:
         doc.add_paragraph("No trait data found in the results.")
         return doc
 
-    for trait, details in trait_details.items():
+    for trait, tr in trait_results.items():
         doc.add_page_break()
-        doc.add_heading(f"Trait: {trait}", level=1)
+        _add_heading(doc, f"Trait: {trait}", level=1)
 
-        # Safe access — skip if details is None or not a dict
-        if not details or not isinstance(details, dict):
-            doc.add_paragraph("Analysis failed or data missing for this trait.")
-            logger.warning("export_traits_to_word: no details for trait '%s'", trait)
+        # ── Primary gate: status field (inferred from analysis_result when absent)
+        if tr.status != "success" or tr.analysis_result is None:
+            _add_kv(doc, "Status", "Failed")
+            error_msg = tr.error or "No analysis result available."
+            _add_kv(doc, "Reason", error_msg)
+            logger.warning(
+                "export_traits_to_word: trait '%s' failed — status=%s error=%s",
+                trait, tr.status, tr.error,
+            )
             continue
 
-        tr  = details["trait_result"]
-        row = details["summary_row"]
+        ar     = tr.analysis_result          # GeneticsResponse
+        result = ar.result                   # GeneticsResult
+
+        if result is None:
+            # analysis_result parsed but result sub-object is absent — log and skip
+            _add_body(doc, "Analysis result structure is incomplete (result object missing).")
+            logger.warning(
+                "export_traits_to_word: trait '%s' — analysis_result.result is None "
+                "despite success status",
+                trait,
+            )
+            continue
+
+        logger.info(
+            "export_traits_to_word: rendering '%s' | "
+            "anova=%s | mean_sep=%s | assumption_tests=%s | h2=%s",
+            trait,
+            result.anova_table is not None,
+            result.mean_separation is not None,
+            result.assumption_tests is not None,
+            (result.heritability or {}).get("h2_broad_sense"),
+        )
+
+        # ── Data warnings (non-fatal structural notes from the engine) ───────
+        if tr.data_warnings:
+            _add_heading(doc, "Data Warnings", level=3)
+            for w in tr.data_warnings:
+                doc.add_paragraph(f"• {w}", style="List Bullet")
+            doc.add_paragraph()
 
         try:
-            # ── 1. Descriptive Statistics ────────────────────────────────────
-            _add_descriptive_stats(doc, tr.analysis_result.result)
+            # ── 1. Executive Summary ─────────────────────────────────────────
+            _add_executive_summary(doc, trait, result)
             doc.add_paragraph()
 
-            # ── 2. ANOVA Table ───────────────────────────────────────────────
-            anova_data = details.get("anova_table")
-            if anova_data is not None:
-                doc.add_heading("ANOVA Table", level=2)
-                _add_table_to_doc(doc, anova_data)
-                doc.add_paragraph()
-                # Narrative sentence for genotype effect
-                result = tr.analysis_result.result
-                if result.anova_table:
-                    try:
-                        geno_i = result.anova_table.source.index("genotype")
-                        f_v = result.anova_table.f_value[geno_i]
-                        p_v = result.anova_table.p_value[geno_i]
-                        sig = _sig_label(p_v)
-                        sig_word = (
-                            "highly significant" if sig in ("***", "**")
-                            else "significant" if sig == "*"
-                            else "not significant"
-                        )
-                        _add_body(
-                            doc,
-                            f"Genotype effect was {sig_word} "
-                            f"(F = {_fmt(f_v, 3)}, {_fmt_p(p_v)}).",
-                        )
-                    except (ValueError, IndexError):
-                        pass
+            # ── 2. Descriptive Statistics ────────────────────────────────────
+            _add_descriptive_stats(doc, result)
+            doc.add_paragraph()
+
+            # ── 3. ANOVA ─────────────────────────────────────────────────────
+            if result.anova_table:
+                _add_anova_section(doc, result.anova_table)
             else:
-                doc.add_paragraph("ANOVA data not available for this trait.")
-                logger.info("export_traits_to_word: no anova_table for '%s'", trait)
-
+                _add_heading(doc, "Analysis of Variance (ANOVA)", level=2)
+                _add_body(doc, "ANOVA table not available for this trait.", italic=True)
             doc.add_paragraph()
 
-            # ── 3. Mean Separation ───────────────────────────────────────────
-            mean_sep_data = details.get("mean_separation")
-            if mean_sep_data is not None:
-                doc.add_heading("Mean Separation (Genotype Grouping)", level=2)
-                _add_table_to_doc(doc, mean_sep_data)
-                doc.add_paragraph()
+            # ── 4. Mean Separation (table + bar chart) ────────────────────────
+            if result.mean_separation:
+                _add_mean_separation_section(doc, trait, result.mean_separation)
+            else:
+                _add_heading(doc, "Mean Separation", level=2)
                 _add_body(
                     doc,
-                    "Means followed by the same letter are not significantly different "
-                    f"(Tukey HSD, α = 0.05).",
+                    "Mean separation not available — insufficient degrees of "
+                    "freedom or singular model.",
                     italic=True,
                 )
-                # Bar chart
-                ms = tr.analysis_result.result.mean_separation
-                chart_bytes = _generate_mean_separation_chart(
-                    trait_name=trait,
-                    genotypes=ms.genotype,
-                    means=ms.mean,
-                    ses=ms.se,
-                    groups=ms.group,
-                )
-                if chart_bytes:
-                    doc.add_picture(io.BytesIO(chart_bytes), width=Inches(6.0))
-                    doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
-            else:
-                doc.add_paragraph("Mean separation data not available for this trait.")
-                logger.info("export_traits_to_word: no mean_separation for '%s'", trait)
-
             doc.add_paragraph()
 
-            # ── 4. Genetic Parameters ────────────────────────────────────────
-            _add_genetic_parameters_section(doc, tr.analysis_result.result)
+            # ── 5. Assumption Tests (optional) ────────────────────────────────
+            if result.assumption_tests:
+                _add_assumption_tests_section(doc, result.assumption_tests)
+                doc.add_paragraph()
+
+            # ── 6. Genetic Parameters ─────────────────────────────────────────
+            _add_genetic_parameters_section(doc, result)
             doc.add_paragraph()
 
-            # ── 5. Interpretation & Recommendations ──────────────────────────
-            _add_interpretation_section(doc, tr.analysis_result, tr.analysis_result.result)
+            # ── 7. Interpretation & Breeding Recommendations ──────────────────
+            _add_interpretation_section(doc, ar, result)
 
         except Exception as exc:
             logger.error(
