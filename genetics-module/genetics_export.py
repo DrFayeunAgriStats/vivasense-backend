@@ -46,6 +46,7 @@ from pydantic import BaseModel, Field
 from genetics_schemas import AnovaTable, MeanSeparation, GeneticsResult, GeneticsResponse
 from multitrait_upload_schemas import UploadAnalysisResponse, SummaryTableRow, TraitResult
 from trait_relationships_schemas import CorrelationResponse
+import result_cache
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Export"])
@@ -1202,6 +1203,71 @@ def _build_document(data: DownloadReportRequest) -> Document:
 
 
 # ============================================================================
+# CACHE RECOVERY
+# ============================================================================
+
+def _recover_from_cache(data: DownloadReportRequest) -> DownloadReportRequest:
+    """
+    If the request contains an export_token, look up the server-side cache and
+    replace any TraitResult whose analysis_result is None with the cached version.
+
+    This is necessary because the frontend typically does NOT re-send the full
+    GeneticsResponse blob when calling the export endpoint — it only sends the
+    summary fields it needs for display.  The token is the bridge that lets the
+    backend recover the full analysis data without requiring a second R run.
+
+    Returns the (possibly patched) DownloadReportRequest.
+    """
+    token = data.export_token
+    if not token:
+        logger.warning(
+            "_recover_from_cache: no export_token in request — "
+            "export will only render traits whose analysis_result was sent"
+        )
+        return data
+
+    cached = result_cache.get(token)
+    if cached is None:
+        logger.warning(
+            "_recover_from_cache: cache miss for token %s — "
+            "server may have restarted; ask user to re-run analysis",
+            token,
+        )
+        return data
+
+    # Patch in any missing analysis_result objects from the cached response
+    patched_trait_results = dict(data.trait_results or {})
+    patched_count = 0
+    for trait, cached_tr in (cached.trait_results or {}).items():
+        current_tr = patched_trait_results.get(trait)
+        needs_patch = (
+            current_tr is None
+            or current_tr.analysis_result is None
+        ) and cached_tr.analysis_result is not None
+
+        if needs_patch:
+            patched_trait_results[trait] = cached_tr
+            patched_count += 1
+
+    if patched_count:
+        logger.info(
+            "_recover_from_cache: patched analysis_result for %d trait(s) "
+            "from cache (token=%s)",
+            patched_count,
+            token,
+        )
+        data = data.model_copy(update={"trait_results": patched_trait_results})
+    else:
+        logger.info(
+            "_recover_from_cache: no patching needed (all analysis_results present "
+            "or cache had nothing new) token=%s",
+            token,
+        )
+
+    return data
+
+
+# ============================================================================
 # ENDPOINT
 # ============================================================================
 
@@ -1219,12 +1285,20 @@ async def export_word_report(data: DownloadReportRequest) -> Response:
 
     logger.info(
         "Download request | summary_traits=%s | trait_result_keys=%s | "
-        "failed=%s | has_correlation=%s",
+        "failed=%s | has_correlation=%s | export_token=%s",
         summary_traits,
         trait_result_keys,
         data.failed_traits,
         data.correlation is not None,
+        data.export_token,
     )
+
+    # ── Recover analysis_result objects from server-side cache ────────────────
+    # The frontend often sends analysis_result=null (it stores display state,
+    # not the full GeneticsResponse blob).  When an export_token is present
+    # we look up the cached UploadAnalysisResponse that was stored when the
+    # analysis ran and patch in any missing analysis_result objects.
+    data = _recover_from_cache(data)
 
     # Diagnose key-mismatch upfront
     missing_keys = [t for t in summary_traits if t not in trait_result_keys]
@@ -1235,7 +1309,7 @@ async def export_word_report(data: DownloadReportRequest) -> Response:
             trait_result_keys,
         )
 
-    # Log each trait's analysis_result presence to aid debugging
+    # Log each trait's analysis_result presence after cache recovery
     for trait, tr in (data.trait_results or {}).items():
         has_ar  = tr.analysis_result is not None
         has_res = has_ar and tr.analysis_result.result is not None

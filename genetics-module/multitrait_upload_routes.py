@@ -36,6 +36,7 @@ from multitrait_upload_schemas import (
     UploadPreviewResponse,
 )
 from genetics_schemas import GeneticsResponse
+import result_cache
 
 logger = logging.getLogger(__name__)
 
@@ -556,9 +557,18 @@ async def analyze_upload(request: UploadAnalysisRequest):
                 SummaryTableRow(trait=trait, status="failed", error=str(exc))
             )
 
-    return UploadAnalysisResponse(
+    # Build the full response first (without token so the object is complete)
+    response = UploadAnalysisResponse(
         summary_table=summary_table,
         trait_results=trait_results,
         dataset_summary=dataset_summary,
         failed_traits=failed_traits,
     )
+
+    # Cache the complete response and attach the token.
+    # The frontend echoes the token back when it calls /download-results,
+    # allowing the export endpoint to recover analysis_result objects that
+    # the frontend did not include in its POST body.
+    token = result_cache.create_token()
+    result_cache.put(token, response)
+    return response.model_copy(update={"export_token": token})

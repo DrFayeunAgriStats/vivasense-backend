@@ -136,8 +136,17 @@ class UploadAnalysisResponse(BaseModel):
     Outer contract (summary_table, dataset_summary, failed_traits) is stable.
     trait_results values are typed as TraitResult — each wraps a full
     GeneticsResponse (analysis_result) or is None when the trait failed.
+
+    export_token: opaque UUID the backend stores alongside the full analysis
+    result in result_cache.  The frontend must echo this field back verbatim
+    when calling POST /genetics/download-results so the export endpoint can
+    recover analysis_result objects that the frontend did not serialise.
     """
     summary_table: List[SummaryTableRow]
     trait_results: Dict[str, TraitResult]
     dataset_summary: DatasetSummary
     failed_traits: List[str] = Field(default_factory=list)
+    export_token: Optional[str] = Field(
+        default=None,
+        description="Cache token — pass back to /download-results for full export",
+    )
