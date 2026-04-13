@@ -549,10 +549,22 @@ def _format_gp_prompt(trait: str, result: Dict[str, Any]) -> str:
             lines.append(f"  {k}: {_fmt(v, 4) if isinstance(v, float) else v}")
 
     lines.append("\nGENETIC PARAMETERS:")
+    # Flat keys from new AnovaTraitResult / GeneticParametersTraitResult
     gcv = result.get("gcv")
     pcv = result.get("pcv")
     ga  = result.get("ga")
     gam = result.get("gam")
+    # Nested dict from old GeneticsResponse.result.genetic_parameters
+    gp_nested = result.get("genetic_parameters") or {}
+    if gcv is None:
+        gcv = gp_nested.get("GCV")
+    if pcv is None:
+        pcv = gp_nested.get("PCV")
+    if ga is None:
+        # ga (absolute) stored as GAM in old engine
+        ga = gp_nested.get("GAM")
+    if gam is None:
+        gam = gp_nested.get("GAM_percent")
     if gcv is not None:
         lines.append(f"  GCV (%): {gcv:.2f}")
     if pcv is not None:
