@@ -119,6 +119,67 @@ except Exception as _e:
     print(f"WARN: genetics-analyze router not loaded — {_e}", flush=True)
 
 
+# Step 5 — shared upload router (/upload/preview, /upload/dataset)
+_up_ok = False
+try:
+    from upload_routes import router as upload_router  # noqa: E402
+    app.include_router(upload_router)
+    _up_ok = True
+    print("Router registered: upload (/upload/preview, /upload/dataset)", flush=True)
+except Exception as _e:
+    print(f"WARN: upload router not loaded — {_e}", flush=True)
+
+# Step 6 — ANOVA analysis module (/analysis/anova)
+_an_anova_ok = False
+try:
+    from analysis_anova_routes import router as anova_router  # noqa: E402
+    app.include_router(anova_router)
+    _an_anova_ok = True
+    print("Router registered: analysis-anova (/analysis/anova)", flush=True)
+except Exception as _e:
+    print(f"WARN: analysis-anova router not loaded — {_e}", flush=True)
+
+# Step 7 — Genetic Parameters analysis module (/analysis/genetic-parameters)
+_an_gp_ok = False
+try:
+    from analysis_genetic_parameters_routes import router as gp_router  # noqa: E402
+    app.include_router(gp_router)
+    _an_gp_ok = True
+    print("Router registered: analysis-genetic-parameters (/analysis/genetic-parameters)", flush=True)
+except Exception as _e:
+    print(f"WARN: analysis-genetic-parameters router not loaded — {_e}", flush=True)
+
+# Step 8 — Correlation analysis module (/analysis/correlation)
+_an_corr_ok = False
+try:
+    from analysis_correlation_routes import router as corr_router  # noqa: E402
+    app.include_router(corr_router)
+    _an_corr_ok = True
+    print("Router registered: analysis-correlation (/analysis/correlation)", flush=True)
+except Exception as _e:
+    print(f"WARN: analysis-correlation router not loaded — {_e}", flush=True)
+
+# Step 9 — Heatmap analysis module (/analysis/heatmap)
+_an_hm_ok = False
+try:
+    from analysis_heatmap_routes import router as heatmap_router  # noqa: E402
+    app.include_router(heatmap_router)
+    _an_hm_ok = True
+    print("Router registered: analysis-heatmap (/analysis/heatmap)", flush=True)
+except Exception as _e:
+    print(f"WARN: analysis-heatmap router not loaded — {_e}", flush=True)
+
+# Step 10 — Module-specific export endpoints (/export/*)
+_ex_mod_ok = False
+try:
+    from export_module_routes import router as export_mod_router  # noqa: E402
+    app.include_router(export_mod_router)
+    _ex_mod_ok = True
+    print("Router registered: export-modules (/export/anova-word, /export/genetic-parameters-word, /export/correlation-word, /export/heatmap-report)", flush=True)
+except Exception as _e:
+    print(f"WARN: export-modules router not loaded — {_e}", flush=True)
+
+
 # ── Startup diagnostics + engine initialisation ───────────────────────────────
 
 @app.on_event("startup")
@@ -130,6 +191,12 @@ async def startup_event() -> None:
     logger.info("multitrait-upload router loaded: %s", _mt_ok)
     logger.info("genetics-export router loaded: %s", _ex_ok)
     logger.info("genetics-analyze router loaded: %s", _ag_ok)
+    logger.info("upload router loaded: %s", _up_ok)
+    logger.info("analysis-anova router loaded: %s", _an_anova_ok)
+    logger.info("analysis-genetic-parameters router loaded: %s", _an_gp_ok)
+    logger.info("analysis-correlation router loaded: %s", _an_corr_ok)
+    logger.info("analysis-heatmap router loaded: %s", _an_hm_ok)
+    logger.info("export-modules router loaded: %s", _ex_mod_ok)
 
     rscript = shutil.which("Rscript")
     if rscript:
