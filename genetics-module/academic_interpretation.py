@@ -1019,7 +1019,17 @@ async def interpret_module(
     if ANTHROPIC_API_KEY:
         try:
             ai_text = await _call_anthropic(system_prompt, user_message)
-            validation = AcademicValidator.validate(ai_text, module_type)
+            # Validate only sections 1–5 (substantive content).
+            # Sections 6+ (GUIDED WRITING SUPPORT, SCOPE STATEMENT, CLOSING)
+            # contain deliberate mentions of forbidden phrases as "do NOT use"
+            # examples — these must not trigger the validator.
+            _GUIDED_SECTION_PATTERN = re.compile(
+                r'(?:──|--|—)\s*\d+\.\s*GUIDED WRITING',
+                re.IGNORECASE,
+            )
+            _split = _GUIDED_SECTION_PATTERN.split(ai_text, maxsplit=1)
+            text_for_validation = _split[0]
+            validation = AcademicValidator.validate(text_for_validation, module_type)
 
             if validation.blocked:
                 logger.warning(

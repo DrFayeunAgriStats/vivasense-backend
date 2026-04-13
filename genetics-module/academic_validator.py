@@ -60,7 +60,7 @@ _FORBIDDEN_WORDS: List[Tuple[str, str, str]] = [
     (r"\boverwhelming(ly)?\b",    "FW_OVERWHELM",   "Remove 'overwhelmingly' — state the actual values"),
     (r"\bexceptional(ly)?\b",     "FW_EXCEPT",      "Remove 'exceptional' — describe specific values instead"),
     (r"\bgenetic superiority\b",  "FW_GEN_SUP",     "Remove 'genetic superiority' — describe h² and GAM values instead"),
-    (r"\bp\s*=\s*0\b",            "FW_P_ZERO",      "Replace 'p = 0' — the smallest reportable value is p < 0.001"),
+    (r"\bp\s*=\s*0(?!\.[0-9])",   "FW_P_ZERO",      "Replace 'p = 0' — the smallest reportable value is p < 0.001"),
 ]
 
 # ── Speculation / mechanistic language — any module ───────────────────────────
