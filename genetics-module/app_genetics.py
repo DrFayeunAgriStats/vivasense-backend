@@ -194,6 +194,64 @@ except Exception as _export_err:
             content={"detail": f"Word export unavailable: {_export_err}"},
         )
 
+# ── Module-based pipeline (Steps 5–11) ───────────────────────────────────────
+
+# Step 5 — shared upload router (/upload/preview, /upload/dataset)
+try:
+    from upload_routes import router as upload_router
+    app.include_router(upload_router)
+    logger.info("upload router loaded (/upload/preview, /upload/dataset)")
+except Exception as _e:
+    logger.warning("upload router not loaded — %s", _e)
+
+# Step 6 — ANOVA analysis module (/analysis/anova)
+try:
+    from analysis_anova_routes import router as anova_router
+    app.include_router(anova_router)
+    logger.info("analysis-anova router loaded (/analysis/anova)")
+except Exception as _e:
+    logger.warning("analysis-anova router not loaded — %s", _e)
+
+# Step 7 — Genetic Parameters analysis module (/analysis/genetic-parameters)
+try:
+    from analysis_genetic_parameters_routes import router as gp_router
+    app.include_router(gp_router)
+    logger.info("analysis-genetic-parameters router loaded (/analysis/genetic-parameters)")
+except Exception as _e:
+    logger.warning("analysis-genetic-parameters router not loaded — %s", _e)
+
+# Step 8 — Correlation analysis module (/analysis/correlation)
+try:
+    from analysis_correlation_routes import router as corr_router
+    app.include_router(corr_router)
+    logger.info("analysis-correlation router loaded (/analysis/correlation)")
+except Exception as _e:
+    logger.warning("analysis-correlation router not loaded — %s", _e)
+
+# Step 9 — Heatmap analysis module (/analysis/heatmap)
+try:
+    from analysis_heatmap_routes import router as heatmap_router
+    app.include_router(heatmap_router)
+    logger.info("analysis-heatmap router loaded (/analysis/heatmap)")
+except Exception as _e:
+    logger.warning("analysis-heatmap router not loaded — %s", _e)
+
+# Step 10 — Module-specific Word/report export (/export/*)
+try:
+    from export_module_routes import router as export_mod_router
+    app.include_router(export_mod_router)
+    logger.info("export-modules router loaded (/export/anova-word, /export/genetic-parameters-word, /export/correlation-word, /export/heatmap-report)")
+except Exception as _e:
+    logger.warning("export-modules router not loaded — %s", _e)
+
+# Step 11 — Academic Mentor (/academic/interpret)
+try:
+    from academic_routes import router as academic_router
+    app.include_router(academic_router)
+    logger.info("academic-mentor router loaded (/academic/interpret)")
+except Exception as _e:
+    logger.warning("academic-mentor router not loaded — %s", _e)
+
 
 # ============================================================================
 # R ENGINE ORCHESTRATION
