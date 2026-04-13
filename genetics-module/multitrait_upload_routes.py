@@ -523,12 +523,19 @@ async def analyze_upload(request: UploadAnalysisRequest):
             # Log R result structure before Pydantic validation (debug aid)
             r_result = result_dict.get("result") or {}
             logger.info(
-                "Trait '%s' R result keys: %s | anova_table present: %s | "
-                "mean_separation present: %s",
+                "Trait '%s' R result keys: %s\n"
+                "  - descriptive_stats: %s\n"
+                "  - assumption_tests: %s\n"
+                "  - anova_table: %s\n"
+                "  - mean_separation: %s\n"
+                "  - breeding_implication: %s",
                 trait,
                 list(r_result.keys()),
+                r_result.get("descriptive_stats") is not None,
+                r_result.get("assumption_tests") is not None,
                 r_result.get("anova_table") is not None,
                 r_result.get("mean_separation") is not None,
+                r_result.get("breeding_implication") is not None,
             )
 
             # Validate the dict against the real GeneticsResponse schema.

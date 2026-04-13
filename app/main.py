@@ -180,6 +180,17 @@ except Exception as _e:
     print(f"WARN: export-modules router not loaded — {_e}", flush=True)
 
 
+# Step 11 — Academic Mentor (/academic/interpret)
+_ac_ok = False
+try:
+    from academic_routes import router as academic_router  # noqa: E402
+    app.include_router(academic_router)
+    _ac_ok = True
+    print("Router registered: academic-mentor (/academic/interpret)", flush=True)
+except Exception as _e:
+    print(f"WARN: academic-mentor router not loaded — {_e}", flush=True)
+
+
 # ── Startup diagnostics + engine initialisation ───────────────────────────────
 
 @app.on_event("startup")
@@ -197,6 +208,7 @@ async def startup_event() -> None:
     logger.info("analysis-correlation router loaded: %s", _an_corr_ok)
     logger.info("analysis-heatmap router loaded: %s", _an_hm_ok)
     logger.info("export-modules router loaded: %s", _ex_mod_ok)
+    logger.info("academic-mentor router loaded: %s", _ac_ok)
 
     rscript = shutil.which("Rscript")
     if rscript:

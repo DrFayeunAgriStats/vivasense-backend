@@ -217,6 +217,7 @@ def _generate_mean_separation_chart(
     ses: List[Optional[float]],
     groups: List[str],
 ) -> bytes:
+    logger.info("Chart generation started for trait: '%s'. Received %d means, %d groups.", trait_name, len(means), len(groups))
     try:
         for style in ("seaborn-v0_8", "ggplot", "default"):
             try:
@@ -284,10 +285,12 @@ def _generate_mean_separation_chart(
         fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
         plt.close(fig)
         buf.seek(0)
-        return buf.read()
+        chart_bytes = buf.read()
+        logger.info("Chart generation successful for trait: '%s'. Image bytes length: %d", trait_name, len(chart_bytes))
+        return chart_bytes
 
     except Exception as exc:
-        logger.error("Chart generation failed for '%s': %s", trait_name, exc, exc_info=True)
+        logger.error("Chart generation failed for '%s': %s (Exception type: %s)", trait_name, exc, type(exc).__name__, exc_info=True)
         plt.close("all")
         return b""
 
@@ -1044,13 +1047,17 @@ def export_traits_to_word(
             continue
 
         logger.info(
-            "export_traits_to_word: rendering '%s' | "
-            "anova=%s | mean_sep=%s | assumption_tests=%s | h2=%s",
-            trait,
+            "export_traits_to_word: rendering trait='%s' | status='%s'\n"
+            "  - analysis_result exists: True\n"
+            "  - descriptive_stats exists: %s\n"
+            "  - assumption_tests exists: %s\n"
+            "  - anova_table exists: %s\n"
+            "  - mean_separation exists: %s",
+            trait, tr.status,
+            result.descriptive_stats is not None,
+            result.assumption_tests is not None,
             result.anova_table is not None,
             result.mean_separation is not None,
-            result.assumption_tests is not None,
-            (result.heritability or {}).get("h2_broad_sense"),
         )
 
         # ── Data warnings (non-fatal structural notes from the engine) ───────
