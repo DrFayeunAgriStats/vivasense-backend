@@ -7,6 +7,7 @@ import {
   TraitResult,
   exportWordReport,
 } from "@/services/geneticsUploadApi";
+import { AcademicInterpretationPanel } from "./AcademicInterpretationPanel";
 
 interface ResultsDisplayProps {
   results: UploadAnalysisResponse;
@@ -220,7 +221,7 @@ function SummaryRow({
       {expanded && traitResult && (
         <tr className={bg}>
           <td colSpan={8} className="px-6 pb-5 pt-1">
-            <TraitDetails traitResult={traitResult} />
+            <TraitDetails traitResult={traitResult} traitName={row.trait} />
           </td>
         </tr>
       )}
@@ -232,8 +233,15 @@ function SummaryRow({
 // Expanded trait detail — three named sections
 // ─────────────────────────────────────────────────────────────────────────────
 
-function TraitDetails({ traitResult }: { traitResult: TraitResult }) {
+function TraitDetails({
+  traitResult,
+  traitName,
+}: {
+  traitResult: TraitResult;
+  traitName: string;
+}) {
   const [showAnovaDetails, setShowAnovaDetails] = useState(true);
+  const [showAcademic, setShowAcademic] = useState(false);
 
   const ar = traitResult.analysis_result;
   const result = ar?.result;
@@ -309,6 +317,29 @@ function TraitDetails({ traitResult }: { traitResult: TraitResult }) {
           <div className="rounded-lg bg-emerald-50 border border-emerald-100 p-3">
             <p className="text-gray-700 leading-relaxed whitespace-pre-line">{ar.interpretation}</p>
           </div>
+        </div>
+      )}
+
+      {/* ── SECTION: Academic Interpretation (Option A — on demand) ────────── */}
+      {ar != null && (
+        <div>
+          {!showAcademic ? (
+            <button
+              type="button"
+              onClick={() => setShowAcademic(true)}
+              className="mt-1 inline-flex items-center gap-2 rounded-lg border border-violet-300 bg-white px-3 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-50 transition-colors"
+            >
+              <span>🎓</span>
+              Get Academic Interpretation
+            </button>
+          ) : (
+            <AcademicInterpretationPanel
+              traitName={traitName}
+              moduleType="anova"
+              analysisResult={ar as unknown as Record<string, unknown>}
+              onClose={() => setShowAcademic(false)}
+            />
+          )}
         </div>
       )}
     </div>
