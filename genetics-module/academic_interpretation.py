@@ -716,9 +716,22 @@ def _parse_sections(text: str) -> Dict[str, str]:
     """
     Split AI output on ── N. SECTION NAME ── markers.
     Returns {normalised_section_name: content}.
+
+    Accepts multiple dash/line variants so the parser is not brittle to
+    Claude rendering box chars (──) vs hyphens (--) vs em-dashes (—):
+      ──  U+2500 pairs  (intended format, from system prompt)
+      --  ASCII hyphens
+      —   single em-dash on each side
+      **SECTION NAME**  bold markdown fallback
     """
-    pattern = r'──\s*\d+\.\s*([A-Z][A-Z\s/²]+?)\s*──'
+    # Primary: ── or -- or — delimiters, number + section name
+    pattern = r'(?:──|--|—)\s*\d+\.\s*([A-Z][A-Z0-9\s/²&]+?)\s*(?:──|--|—)'
     parts = re.split(pattern, text)
+
+    # Fallback: **NUMBER. SECTION NAME** bold markdown
+    if len(parts) <= 1:
+        pattern = r'\*\*\d+\.\s+([A-Z][A-Z0-9\s/²&]+?)\*\*'
+        parts = re.split(pattern, text)
     sections: Dict[str, str] = {}
 
     # parts[0] = preamble (ignore)
