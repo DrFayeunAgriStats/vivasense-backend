@@ -393,35 +393,61 @@ def _extract_trait_result(
     """
     Extract the single-trait sub-dict from a full module response.
 
-    If analysis_result already looks like a single-trait result
-    (has 'anova_table' or 'heritability' key), return it as-is.
-    Otherwise look inside trait_results[trait].
+    Handles three shapes:
+
+    Shape 1 — New AnovaTraitResult / GeneticParametersTraitResult (flat):
+        {trait, status, grand_mean, anova_table, mean_separation, ...}
+
+    Shape 2 — Old GeneticsResponse wrapper from /genetics/analyze-upload:
+        {status, mode, result: {grand_mean, anova_table, variance_components, ...}}
+
+    Shape 3 — Full module response with trait_results dict:
+        {dataset_token, trait_results: {trait_name: <shape 1>}}
     """
-    # Already a flat single-trait dict?
+    # ── Shape 2: GeneticsResponse wrapper ────────────────────────────────────
+    # result key holds the actual data dict; status/mode are metadata wrappers
+    inner = analysis_result.get("result")
+    if isinstance(inner, dict) and inner:
+        data_markers = ("anova_table", "variance_components", "grand_mean",
+                        "mean_separation", "heritability")
+        if any(k in inner for k in data_markers):
+            return inner
+
+    # ── Shape 1: Already a flat single-trait dict ─────────────────────────────
     single_trait_keys = {
-        "anova": "anova_table",
+        "anova":              "anova_table",
         "genetic_parameters": "variance_components",
-        "correlation": "r_matrix",
-        "heatmap": "matrix",
+        "correlation":        "r_matrix",
+        "heatmap":            "matrix",
     }
     marker = single_trait_keys.get(module_type, "")
     if marker and marker in analysis_result:
         return analysis_result
+    # grand_mean present at top level → also flat
+    if "grand_mean" in analysis_result:
+        return analysis_result
 
-    # Full module response with trait_results dict
+    # ── Shape 3: Full module response with trait_results dict ─────────────────
     trait_results = analysis_result.get("trait_results") or {}
     if trait and trait in trait_results:
         sub = trait_results[trait]
         # sub might be a TraitResult dict with analysis_result nested
         if "analysis_result" in sub and sub["analysis_result"]:
-            return sub["analysis_result"].get("result") or sub
+            ar = sub["analysis_result"]
+            # unwrap GeneticsResponse wrapper if present
+            if isinstance(ar.get("result"), dict):
+                return ar["result"]
+            return ar
         return sub
 
     # Pick the first available trait result
     if trait_results:
         first = next(iter(trait_results.values()))
         if "analysis_result" in first and first["analysis_result"]:
-            return first["analysis_result"].get("result") or first
+            ar = first["analysis_result"]
+            if isinstance(ar.get("result"), dict):
+                return ar["result"]
+            return ar
         return first
 
     # Correlation / heatmap — no trait key needed
