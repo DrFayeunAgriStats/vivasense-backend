@@ -1,21 +1,25 @@
 """
-VivaSense – Module-specific Word export endpoints
+VivaSense – Module-specific Word export endpoints (VivaSense standard v2)
+=========================================================================
 
 POST /export/anova-word              → ANOVA + mean separation per trait
 POST /export/genetic-parameters-word → Variance components + parameters per trait
-POST /export/correlation-word        → Correlation matrices + pairwise table
-POST /export/heatmap-report          → Heatmap matrix + interpretation
+POST /export/correlation-word        → Pairwise table + co-selection advice
+POST /export/heatmap-report          → Heatmap image + numeric matrix
 
-Each endpoint accepts the response from its matching /analysis/* endpoint
-and generates a focused, publication-ready .docx file.
-
-Document building reuses the section-builder helpers from genetics_export.py;
-no genetics logic or table-styling code is duplicated here.
+Design principles (VivaSense standard):
+  • Each report contains ONLY the content for its module — no cross-mixing.
+  • Per-trait sections end with an Academic Writing Support block (Layer C).
+  • Interpretation text is polished academic prose — no raw engine block text.
+  • Mean separation charts are truly embedded as 300 DPI PNG images.
+  • The legacy combined export (/genetics/download-results) is preserved
+    but is NOT the default export path.
 """
 
 import datetime
 import io
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 import matplotlib
@@ -29,26 +33,23 @@ from docx.shared import Inches, Pt, RGBColor
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
 
-# Section builders from the existing export module
 from genetics_export import (
     _add_anova_section,
     _add_assumption_tests_section,
     _add_body,
     _add_correlation_section,
-    _add_descriptive_stats,
     _add_footer,
-    _add_genetic_parameters_section,
     _add_heading,
-    _add_interpretation_section,
     _add_kv,
     _add_mean_separation_section,
     _add_stat_table,
+    _breeding_recommendation,
     _fmt,
     _fmt_p,
     _sig_label,
     _HEADER_BG,
 )
-from genetics_schemas import GeneticsResult, GeneticsResponse
+from genetics_schemas import GeneticsResult
 from trait_relationships_schemas import CorrelationResponse
 from module_schemas import (
     AnovaExportRequest,
@@ -58,6 +59,8 @@ from module_schemas import (
     GeneticParametersTraitResult,
     HeatmapExportRequest,
 )
+from guided_writing import build_guided_writing
+from academic_schemas import GuidedWritingBlock
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Export"])
@@ -66,13 +69,20 @@ _DOCX_MIME = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 )
 
+# ── Cautious scope reminder appended to every per-trait section ───────────────
+_SCOPE_NOTE = (
+    "Note: These results apply to this experiment and should be interpreted "
+    "within this context. Single-experiment results cannot support general "
+    "management or breeding recommendations."
+)
+
 
 # ============================================================================
 # DOCUMENT HELPERS
 # ============================================================================
 
 def _new_document(title: str, subtitle: str = "") -> Document:
-    """Create a new Document with standard margins and a centred title."""
+    """Create a new Document with standard VivaSense margins and centred title."""
     doc = Document()
     for sec in doc.sections:
         sec.top_margin    = Inches(1.0)
@@ -102,7 +112,6 @@ def _new_document(title: str, subtitle: str = "") -> Document:
 
 
 def _docx_response(doc: Document, filename: str) -> Response:
-    """Serialise a Document to bytes and return a download Response."""
     buf = io.BytesIO()
     doc.save(buf)
     buf.seek(0)
@@ -113,35 +122,325 @@ def _docx_response(doc: Document, filename: str) -> Response:
     )
 
 
-def _reconstruct_genetics_result(
-    tr: GeneticParametersTraitResult,
-    mode: str,
-) -> GeneticsResult:
-    """
-    Build a minimal GeneticsResult from a GeneticParametersTraitResult so
-    the existing _add_genetic_parameters_section helper can be reused without
-    modification.
-    """
-    gp_dict: Dict[str, Any] = {}
-    if tr.gcv is not None:
-        gp_dict["GCV"] = tr.gcv
-    if tr.pcv is not None:
-        gp_dict["PCV"] = tr.pcv
-    if tr.ga is not None:
-        gp_dict["GAM"] = tr.ga          # absolute GA stored in ga field
-    if tr.gam is not None:
-        gp_dict["GAM_percent"] = tr.gam
+def _scope_paragraph(doc: Document) -> None:
+    """Add the standard scope / limitation note."""
+    p = doc.add_paragraph(_SCOPE_NOTE)
+    p.paragraph_format.space_before = Pt(4)
+    p.paragraph_format.space_after  = Pt(4)
+    for run in p.runs:
+        run.italic = True
+        run.font.size = Pt(10)
+        run.font.color.rgb = RGBColor(0x44, 0x44, 0x44)
 
-    return GeneticsResult(
-        environment_mode=mode,
-        n_genotypes=0,
-        n_reps=0,
-        grand_mean=tr.grand_mean or 0.0,
-        variance_components=tr.variance_components or {},
-        heritability=tr.heritability or {},
-        genetic_parameters=gp_dict,
-        breeding_implication=tr.breeding_implication,
+
+# ============================================================================
+# INTERPRETATION TEXT CLEANER
+# ============================================================================
+
+def _clean_interpretation(raw: Optional[str], trait: str = "") -> str:
+    """
+    Convert raw R-engine block text into polished academic prose.
+
+    Strips:
+      • "Trait: (not specified)" / "Trait: Trait"
+      • Section headers like "ANOVA Result:", "Interpretation:"
+      • Duplicate blank lines
+      • Leading/trailing whitespace per line
+
+    Returns a clean paragraph-formatted string, or "" if input is None/empty.
+    """
+    if not raw or not raw.strip():
+        return ""
+
+    text = raw
+
+    # Remove "Trait: (not specified)" or "Trait: Trait" artifacts
+    text = re.sub(
+        r"^Trait:\s*(not\s+specified|Trait)[\s\n]*",
+        "", text, flags=re.IGNORECASE | re.MULTILINE,
     )
+
+    # Remove raw engine section labels (e.g. "ANOVA Result:", "Interpretation:")
+    text = re.sub(
+        r"^(ANOVA\s+Result|Interpretation|Genetic\s+Parameters?|Heritability"
+        r"|Breeding\s+Implication|Statistical\s+Output)\s*:?\s*\n",
+        "", text, flags=re.IGNORECASE | re.MULTILINE,
+    )
+
+    # Collapse 3+ blank lines to 2
+    text = re.sub(r"\n{3,}", "\n\n", text)
+
+    # Strip trailing whitespace from each line
+    lines = [ln.rstrip() for ln in text.splitlines()]
+    text = "\n".join(lines).strip()
+
+    # If after cleaning the text still starts with the trait name verbatim,
+    # leave it — it's now context, not a label.
+    return text
+
+
+# ============================================================================
+# ACADEMIC WRITING SUPPORT SECTION (Layer C)
+# ============================================================================
+
+def _add_writing_support_section(
+    doc: Document,
+    module_type: str,
+    trait: Optional[str],
+    result_dict: Dict[str, Any],
+) -> None:
+    """
+    Build and render the Layer-C guided writing block for one trait.
+
+    Adds to *doc*:
+      • Section heading "Academic Writing Support"
+      • Per-sentence-starter box: purpose label + template + fill hints
+      • Examiner checklist
+      • Scope and supervisor note
+    """
+    try:
+        gw: GuidedWritingBlock = build_guided_writing(module_type, trait, result_dict)
+    except Exception as exc:
+        logger.warning("build_guided_writing failed for %s/%s: %s", module_type, trait, exc)
+        return
+
+    _add_heading(doc, "Academic Writing Support", level=2)
+
+    # Caution note (e.g. low-rep warning)
+    if gw.caution_note:
+        p = doc.add_paragraph(f"⚠ {gw.caution_note}")
+        p.paragraph_format.space_before = Pt(2)
+        for run in p.runs:
+            run.bold = True
+            run.font.color.rgb = RGBColor(0xB8, 0x68, 0x00)
+        doc.add_paragraph()
+
+    # Sentence starters
+    if gw.sentence_starters:
+        intro = doc.add_paragraph(
+            "Complete the sentences below using values from your own analysis. "
+            "Every blank (___) must be filled by you — do not submit this text directly."
+        )
+        intro.paragraph_format.space_after = Pt(6)
+        for run in intro.runs:
+            run.italic = True
+            run.font.size = Pt(10)
+
+        for i, s in enumerate(gw.sentence_starters, 1):
+            # Purpose label
+            purpose_p = doc.add_paragraph()
+            run_label = purpose_p.add_run(f"Sentence {i} — {s.purpose}")
+            run_label.bold = True
+            run_label.font.size = Pt(11)
+            purpose_p.paragraph_format.space_before = Pt(6)
+            purpose_p.paragraph_format.space_after  = Pt(2)
+
+            # Template (monospace-style)
+            tpl_p = doc.add_paragraph(s.template)
+            tpl_p.paragraph_format.left_indent = Inches(0.3)
+            tpl_p.paragraph_format.space_before = Pt(1)
+            tpl_p.paragraph_format.space_after  = Pt(2)
+            for run in tpl_p.runs:
+                run.font.name = "Courier New"
+                run.font.size = Pt(10)
+
+            # Fill hints
+            if s.values_to_fill:
+                for j, fill_hint in enumerate(s.values_to_fill, 1):
+                    hint_p = doc.add_paragraph(f"  Fill {j}: {fill_hint}")
+                    hint_p.paragraph_format.left_indent = Inches(0.5)
+                    hint_p.paragraph_format.space_before = Pt(0)
+                    hint_p.paragraph_format.space_after  = Pt(1)
+                    for run in hint_p.runs:
+                        run.font.size = Pt(9)
+                        run.font.color.rgb = RGBColor(0x44, 0x44, 0x88)
+
+            if s.hint:
+                src_p = doc.add_paragraph(f"  Source: {s.hint}")
+                src_p.paragraph_format.left_indent = Inches(0.5)
+                src_p.paragraph_format.space_before = Pt(0)
+                src_p.paragraph_format.space_after  = Pt(3)
+                for run in src_p.runs:
+                    run.italic = True
+                    run.font.size = Pt(9)
+                    run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+
+        doc.add_paragraph()
+
+    # Examiner checklist
+    if gw.examiner_checkpoint:
+        ck_heading = doc.add_paragraph()
+        run_ck = ck_heading.add_run("Examiner Checklist — tick each item before submission:")
+        run_ck.bold = True
+        run_ck.font.size = Pt(11)
+        ck_heading.paragraph_format.space_before = Pt(6)
+
+        for item in gw.examiner_checkpoint:
+            item_p = doc.add_paragraph(f"☐  {item}")
+            item_p.paragraph_format.left_indent = Inches(0.3)
+            item_p.paragraph_format.space_before = Pt(1)
+            item_p.paragraph_format.space_after  = Pt(1)
+            for run in item_p.runs:
+                run.font.size = Pt(10)
+
+        doc.add_paragraph()
+
+    # Supervisor prompt
+    sup_p = doc.add_paragraph(gw.supervisor_prompt)
+    sup_p.paragraph_format.space_before = Pt(4)
+    for run in sup_p.runs:
+        run.italic = True
+        run.font.size = Pt(10)
+        run.font.color.rgb = RGBColor(0x33, 0x55, 0x33)
+
+
+# ============================================================================
+# GENETIC PARAMETERS — focused table builder (standalone, no GeneticsResult)
+# ============================================================================
+
+def _add_gp_tables(doc: Document, tr: GeneticParametersTraitResult) -> None:
+    """
+    Render variance components + heritability + GCV/PCV/GA/GAM tables
+    directly from a GeneticParametersTraitResult without the GeneticsResult
+    adapter.  This is the VivaSense standard layout for the GP report.
+    """
+    vc = tr.variance_components or {}
+    hp = tr.heritability or {}
+
+    h2 = hp.get("h2_broad_sense")
+    h2_class = (
+        "High"     if h2 is not None and h2 >= 0.60
+        else "Moderate" if h2 is not None and h2 >= 0.30
+        else "Low"      if h2 is not None
+        else "—"
+    )
+
+    # ── 1. Variance Components ────────────────────────────────────────────────
+    _add_heading(doc, "Variance Components", level=2)
+    vc_rows: List[List[str]] = []
+    _vc_keys = [
+        ("sigma2_genotype",  "Genotypic Variance",   "σ²g"),
+        ("sigma2_error",     "Error Variance",        "σ²e"),
+        ("sigma2_ge",        "G×E Variance",          "σ²ge"),
+        ("sigma2_phenotypic","Phenotypic Variance",   "σ²p"),
+    ]
+    for key, label, sym in _vc_keys:
+        val = vc.get(key)
+        if val is not None:
+            flag = " ⚠" if (isinstance(val, (int, float)) and val < 0) else ""
+            vc_rows.append([label, sym, _fmt(val, 6) + flag])
+    if vc_rows:
+        _add_stat_table(doc, ["Component", "Symbol", "Value"], vc_rows, numeric_cols={2})
+    else:
+        _add_body(doc, "Variance components not available.", italic=True)
+    doc.add_paragraph()
+
+    # ── 2. Heritability ───────────────────────────────────────────────────────
+    _add_heading(doc, "Heritability", level=2)
+    if h2 is not None:
+        h2_rows = [
+            ["Broad-sense Heritability (H²)", _fmt(h2, 4)],
+            ["Classification", h2_class],
+            ["Basis", hp.get("interpretation_basis", "—")],
+        ]
+        _add_stat_table(doc, ["Parameter", "Value"], h2_rows, numeric_cols={1})
+        doc.add_paragraph()
+
+        # Cautious narrative
+        if h2_class == "High":
+            _add_body(
+                doc,
+                f"Broad-sense heritability for this trait was estimated at "
+                f"H² = {_fmt(h2, 3)} (high) in this experiment, suggesting "
+                "that a substantial proportion of observed phenotypic variation "
+                "is attributable to genetic differences among genotypes under "
+                "these experimental conditions.",
+            )
+        elif h2_class == "Moderate":
+            _add_body(
+                doc,
+                f"Broad-sense heritability was H² = {_fmt(h2, 3)} (moderate) "
+                "in this experiment. Both genetic and environmental effects "
+                "contributed to phenotypic variation; multi-environment "
+                "evaluation is advisable before drawing selection conclusions.",
+            )
+        else:
+            _add_body(
+                doc,
+                f"Broad-sense heritability was H² = {_fmt(h2, 3)} (low) "
+                "in this experiment, indicating that environmental effects "
+                "accounted for a large share of observed phenotypic variation. "
+                "Phenotypic selection is unlikely to be efficient under these conditions.",
+            )
+    else:
+        _add_body(doc, "Heritability estimate not available.", italic=True)
+    doc.add_paragraph()
+
+    # ── 3. GCV and PCV ───────────────────────────────────────────────────────
+    _add_heading(doc, "Coefficients of Variation", level=2)
+    gcv, pcv = tr.gcv, tr.pcv
+    cv_rows: List[List[str]] = []
+    if gcv is not None:
+        cv_rows.append(["Genotypic Coefficient of Variation (GCV %)", _fmt(gcv, 2)])
+    if pcv is not None:
+        cv_rows.append(["Phenotypic Coefficient of Variation (PCV %)", _fmt(pcv, 2)])
+    if cv_rows:
+        _add_stat_table(doc, ["Parameter", "Value"], cv_rows, numeric_cols={1})
+        doc.add_paragraph()
+        if gcv is not None and pcv is not None:
+            diff = abs(gcv - pcv)
+            if diff < 1.0:
+                cv_comment = (
+                    f"GCV ({_fmt(gcv, 2)}%) ≈ PCV ({_fmt(pcv, 2)}%) — minimal "
+                    "environmental influence detected for this trait in this experiment."
+                )
+            elif gcv < pcv:
+                cv_comment = (
+                    f"GCV ({_fmt(gcv, 2)}%) < PCV ({_fmt(pcv, 2)}%) — "
+                    "environmental effects contributed to observed phenotypic variation "
+                    "in this experiment (PCV − GCV = "
+                    f"{_fmt(diff, 2)}%)."
+                )
+            else:
+                cv_comment = (
+                    f"GCV ({_fmt(gcv, 2)}%) > PCV ({_fmt(pcv, 2)}%) — "
+                    "verify variance component estimates; this relationship is unusual."
+                )
+            _add_body(doc, cv_comment)
+    else:
+        _add_body(doc, "GCV/PCV not available.", italic=True)
+    doc.add_paragraph()
+
+    # ── 4. Genetic Advance (GA / GAM) ─────────────────────────────────────────
+    _add_heading(doc, "Genetic Advance", level=2)
+    ga, gam = tr.ga, tr.gam
+    ga_rows: List[List[str]] = []
+    if ga is not None:
+        ga_rows.append(["Genetic Advance (GA, absolute)", _fmt(ga, 4)])
+    if gam is not None:
+        gam_class = (
+            "High"     if gam > 10
+            else "Moderate" if gam >= 5
+            else "Low"
+        )
+        ga_rows.append(["Genetic Advance as % of Mean (GAM %)", f"{_fmt(gam, 2)}  [{gam_class}]"])
+    if ga_rows:
+        _add_stat_table(doc, ["Parameter", "Value"], ga_rows, numeric_cols={1})
+        doc.add_paragraph()
+        # Formulas
+        _add_heading(doc, "Formulas Used", level=3)
+        for fml in [
+            "GA  = h² × i × σp",
+            "GAM (%) = (GA / Grand Mean) × 100",
+            "Where: i = selection intensity, σp = √σ²p (phenotypic SD)",
+        ]:
+            fml_p = doc.add_paragraph(fml, style="No Spacing")
+            if fml_p.runs:
+                fml_p.runs[0].font.name = "Courier New"
+                fml_p.runs[0].font.size = Pt(10)
+    else:
+        _add_body(doc, "Genetic advance estimates not available.", italic=True)
+    doc.add_paragraph()
 
 
 # ============================================================================
@@ -155,44 +454,56 @@ def _reconstruct_genetics_result(
 )
 async def export_anova_word(data: AnovaExportRequest):
     """
-    Generate a focused Word report containing:
-      • Per-trait: descriptive stats, ANOVA table, assumption tests, mean separation
-      • Data warnings for each trait
+    VivaSense ANOVA report — one section per trait:
+      1. Descriptive Statistics
+      2. ANOVA Table (with significance narrative)
+      3. Assumption Tests
+      4. Mean Separation (table + embedded bar chart)
+      5. Interpretation (cleaned academic prose)
+      6. Academic Writing Support (sentence starters + examiner checklist)
+      7. Scope note
     """
     try:
-        n_traits    = len(data.trait_results)
-        n_success   = sum(1 for tr in data.trait_results.values() if tr.status == "success")
-        mode_label  = "Multi-environment" if data.mode == "multi" else "Single-environment"
+        n_traits   = len(data.trait_results)
+        n_success  = sum(1 for tr in data.trait_results.values() if tr.status == "success")
+        mode_label = "Multi-environment" if data.mode == "multi" else "Single-environment"
 
         doc = _new_document(
-            "VivaSense ANOVA Report",
-            f"{mode_label}  ·  {n_traits} trait(s)  ·  {n_success} successful",
+            "VivaSense ANOVA Analysis Report",
+            f"{mode_label}  ·  {n_traits} trait(s)  ·  {n_success} analysed successfully",
         )
 
         if data.failed_traits:
             _add_body(
                 doc,
-                "Failed traits (excluded): " + ", ".join(data.failed_traits),
+                "Traits excluded due to analysis failure: " + ", ".join(data.failed_traits),
                 italic=True,
             )
+            doc.add_paragraph()
 
         for trait, tr in data.trait_results.items():
             doc.add_page_break()
-            _add_heading(doc, f"Trait: {trait}", level=1)
+            _add_heading(doc, trait, level=1)
 
             if tr.status != "success" or tr.anova_table is None:
-                _add_body(doc, f"Analysis failed: {tr.error or 'No ANOVA result available'}")
+                _add_body(
+                    doc,
+                    f"Analysis failed for this trait: {tr.error or 'No ANOVA result available.'}",
+                )
                 continue
 
+            # ── Data warnings ──────────────────────────────────────────────────
             if tr.data_warnings:
                 _add_heading(doc, "Data Warnings", level=3)
                 for w in tr.data_warnings:
                     doc.add_paragraph(f"• {w}", style="List Bullet")
                 doc.add_paragraph()
 
-            # Descriptive stats (scalar fields from the trait result)
+            # ── 1. Descriptive Statistics ──────────────────────────────────────
             _add_heading(doc, "Descriptive Statistics", level=2)
-            rows = [("Grand Mean", _fmt(tr.grand_mean))]
+            rows = []
+            if tr.grand_mean is not None:
+                rows.append(("Grand Mean", _fmt(tr.grand_mean)))
             if tr.n_genotypes:
                 rows.append(("No. Genotypes", str(tr.n_genotypes)))
             if tr.n_reps:
@@ -203,29 +514,50 @@ async def export_anova_word(data: AnovaExportRequest):
                 for k, v in tr.descriptive_stats.items():
                     label = k.replace("_", " ").title()
                     rows.append((label, _fmt(v) if isinstance(v, float) else str(v)))
-            _add_stat_table(doc, ["Parameter", "Value"], rows, numeric_cols={1})
+            if rows:
+                _add_stat_table(doc, ["Parameter", "Value"], rows, numeric_cols={1})
             doc.add_paragraph()
 
-            # ANOVA table
+            # ── 2. ANOVA Table ─────────────────────────────────────────────────
             _add_anova_section(doc, tr.anova_table)
             doc.add_paragraph()
 
-            # Assumption tests
+            # ── 3. Assumption Tests ────────────────────────────────────────────
             if tr.assumption_tests:
                 _add_assumption_tests_section(doc, tr.assumption_tests)
                 doc.add_paragraph()
 
-            # Mean separation
+            # ── 4. Mean Separation (table + embedded chart) ────────────────────
             if tr.mean_separation:
                 _add_mean_separation_section(doc, trait, tr.mean_separation)
             else:
                 _add_heading(doc, "Mean Separation", level=2)
-                _add_body(doc, "Mean separation not available for this trait.", italic=True)
+                _add_body(
+                    doc,
+                    "Mean separation (Tukey HSD) is not available for this trait — "
+                    "insufficient degrees of freedom or a singular model.",
+                    italic=True,
+                )
             doc.add_paragraph()
 
-            if tr.interpretation:
+            # ── 5. Interpretation ──────────────────────────────────────────────
+            cleaned = _clean_interpretation(tr.interpretation, trait)
+            if cleaned:
                 _add_heading(doc, "Interpretation", level=2)
-                _add_body(doc, tr.interpretation)
+                for para_text in cleaned.split("\n\n"):
+                    para_text = para_text.strip()
+                    if para_text:
+                        _add_body(doc, para_text)
+                doc.add_paragraph()
+
+            # ── 6. Academic Writing Support ────────────────────────────────────
+            _add_writing_support_section(
+                doc, "anova", trait, tr.model_dump()
+            )
+            doc.add_paragraph()
+
+            # ── 7. Scope note ──────────────────────────────────────────────────
+            _scope_paragraph(doc)
 
         _add_footer(doc)
         return _docx_response(doc, "vivasense_anova_report.docx")
@@ -249,8 +581,15 @@ async def export_anova_word(data: AnovaExportRequest):
 )
 async def export_genetic_parameters_word(data: GeneticParametersExportRequest):
     """
-    Generate a focused Word report containing:
-      • Per-trait: variance components, heritability, GCV/PCV, GA/GAM, breeding advice
+    VivaSense Genetic Parameters report — one section per trait:
+      1. Variance Components
+      2. Heritability (with cautious narrative)
+      3. GCV and PCV
+      4. Genetic Advance (GA / GAM)
+      5. Breeding Implication
+      6. Interpretation (cleaned prose)
+      7. Academic Writing Support
+      8. Scope note
     """
     try:
         n_traits   = len(data.trait_results)
@@ -259,45 +598,70 @@ async def export_genetic_parameters_word(data: GeneticParametersExportRequest):
 
         doc = _new_document(
             "VivaSense Genetic Parameters Report",
-            f"{mode_label}  ·  {n_traits} trait(s)  ·  {n_success} successful",
+            f"{mode_label}  ·  {n_traits} trait(s)  ·  {n_success} analysed successfully",
         )
 
         if data.failed_traits:
             _add_body(
                 doc,
-                "Failed traits (excluded): " + ", ".join(data.failed_traits),
+                "Traits excluded due to analysis failure: " + ", ".join(data.failed_traits),
                 italic=True,
             )
+            doc.add_paragraph()
 
         for trait, tr in data.trait_results.items():
             doc.add_page_break()
-            _add_heading(doc, f"Trait: {trait}", level=1)
+            _add_heading(doc, trait, level=1)
 
             if tr.status != "success":
                 _add_body(
-                    doc, f"Analysis failed: {tr.error or 'No genetic parameters available'}"
+                    doc,
+                    f"Analysis failed for this trait: {tr.error or 'No genetic parameters available.'}",
                 )
                 continue
 
+            # ── Data warnings ──────────────────────────────────────────────────
             if tr.data_warnings:
                 _add_heading(doc, "Data Warnings", level=3)
                 for w in tr.data_warnings:
                     doc.add_paragraph(f"• {w}", style="List Bullet")
                 doc.add_paragraph()
 
-            # Reconstruct GeneticsResult so existing helper can be reused
-            gr = _reconstruct_genetics_result(tr, data.mode)
-            _add_genetic_parameters_section(doc, gr)
+            # ── 1–4. Variance components, heritability, GCV/PCV, GA/GAM ───────
+            _add_gp_tables(doc, tr)
+
+            # ── 5. Breeding Implication ────────────────────────────────────────
+            h2  = (tr.heritability or {}).get("h2_broad_sense")
+            gam = tr.gam
+
+            _add_heading(doc, "Breeding Implication", level=2)
+            # Prefer the R-engine implication if present and clean
+            r_implication = _clean_interpretation(tr.breeding_implication, trait)
+            if r_implication:
+                _add_body(doc, r_implication)
+            else:
+                # Fallback to rule-based recommendation
+                _add_body(doc, _breeding_recommendation(h2, gam))
             doc.add_paragraph()
 
-            if tr.breeding_implication:
-                _add_heading(doc, "Breeding Implication", level=2)
-                _add_body(doc, tr.breeding_implication)
+            # ── 6. Interpretation ──────────────────────────────────────────────
+            cleaned = _clean_interpretation(tr.interpretation, trait)
+            if cleaned:
+                _add_heading(doc, "Statistical Interpretation", level=2)
+                for para_text in cleaned.split("\n\n"):
+                    para_text = para_text.strip()
+                    if para_text:
+                        _add_body(doc, para_text)
                 doc.add_paragraph()
 
-            if tr.interpretation:
-                _add_heading(doc, "Interpretation", level=2)
-                _add_body(doc, tr.interpretation)
+            # ── 7. Academic Writing Support ────────────────────────────────────
+            _add_writing_support_section(
+                doc, "genetic_parameters", trait, tr.model_dump()
+            )
+            doc.add_paragraph()
+
+            # ── 8. Scope note ──────────────────────────────────────────────────
+            _scope_paragraph(doc)
 
         _add_footer(doc)
         return _docx_response(doc, "vivasense_genetic_parameters_report.docx")
@@ -321,10 +685,11 @@ async def export_genetic_parameters_word(data: GeneticParametersExportRequest):
 )
 async def export_correlation_word(data: CorrelationExportRequest):
     """
-    Generate a focused Word report containing:
-      • Pairwise correlation table (r-value, p-value, significance)
-      • Correlation interpretation
-      • Breeding co-selection advice
+    VivaSense Correlation report:
+      1. Pairwise correlation table (r-value, p-value, significance)
+      2. Correlation interpretation (cautious, no causal language)
+      3. Co-selection advice (positive pairs only)
+      4. Scope note
     """
     try:
         n_traits = len(data.trait_names)
@@ -334,7 +699,6 @@ async def export_correlation_word(data: CorrelationExportRequest):
             f"{data.n_observations} genotype mean(s)",
         )
 
-        # Convert CorrelationModuleResponse → CorrelationResponse for the helper
         corr = CorrelationResponse(
             trait_names=data.trait_names,
             n_observations=data.n_observations,
@@ -348,6 +712,7 @@ async def export_correlation_word(data: CorrelationExportRequest):
 
         _add_correlation_section(doc, corr)
 
+        _scope_paragraph(doc)
         _add_footer(doc)
         return _docx_response(doc, "vivasense_correlation_report.docx")
 
@@ -367,8 +732,6 @@ def _generate_heatmap_image(
     matrix: List[List[Optional[float]]],
     labels: List[str],
     method: str,
-    min_val: float,
-    max_val: float,
 ) -> Optional[bytes]:
     """Render the correlation matrix as a colour heatmap PNG (300 DPI)."""
     try:
@@ -378,17 +741,15 @@ def _generate_heatmap_image(
             dtype=float,
         )
 
-        fig, ax = plt.subplots(figsize=(max(6, n * 0.7), max(5, n * 0.65)))
+        fig, ax = plt.subplots(figsize=(max(6, n * 0.75), max(5, n * 0.70)))
         cmap = plt.get_cmap("RdYlGn")
         im = ax.imshow(data, cmap=cmap, vmin=-1.0, vmax=1.0, aspect="auto")
 
-        # Axes labels
         ax.set_xticks(range(n))
         ax.set_yticks(range(n))
         ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
         ax.set_yticklabels(labels, fontsize=8)
 
-        # Annotate cells
         for i in range(n):
             for j in range(n):
                 val = data[i, j]
@@ -411,7 +772,11 @@ def _generate_heatmap_image(
         plt.savefig(buf, format="png", dpi=300, bbox_inches="tight")
         plt.close(fig)
         buf.seek(0)
-        return buf.read()
+        img_bytes = buf.read()
+        logger.info(
+            "Heatmap image generated: %d traits, %d bytes", n, len(img_bytes)
+        )
+        return img_bytes
     except Exception as exc:
         logger.warning("Heatmap image generation failed: %s", exc)
         return None
@@ -424,44 +789,52 @@ def _generate_heatmap_image(
 )
 async def export_heatmap_report(data: HeatmapExportRequest):
     """
-    Generate a focused Word report containing:
-      • Heatmap image (300 DPI PNG)
-      • r-value matrix as a Word table
-      • Interpretation
+    VivaSense Heatmap report:
+      1. Heatmap image (300 DPI PNG, truly embedded in document)
+      2. Numeric r-value matrix table
+      3. Cautious correlation note
+      4. Scope note
     """
     try:
         n_traits = len(data.labels)
         doc = _new_document(
-            "VivaSense Heatmap Report",
+            "VivaSense Correlation Heatmap Report",
             f"{data.method.capitalize()} correlation heatmap  ·  {n_traits} trait(s)",
         )
 
-        # ── Heatmap image ─────────────────────────────────────────────────────
         doc.add_page_break()
         _add_heading(doc, "Trait Correlation Heatmap", level=1)
 
-        img_bytes = _generate_heatmap_image(
-            data.matrix, data.labels, data.method, data.min_val, data.max_val
-        )
+        # ── Heatmap image (embedded) ───────────────────────────────────────────
+        img_bytes = _generate_heatmap_image(data.matrix, data.labels, data.method)
         if img_bytes:
             doc.add_picture(io.BytesIO(img_bytes), width=Inches(6.0))
             doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
+
             cap = doc.add_paragraph(
-                f"Figure: {data.method.capitalize()} correlation heatmap. "
-                "Colour scale: green = positive, red = negative.  "
-                "Values on diagonal = 1.0 (self-correlation)."
+                f"Figure 1. {data.method.capitalize()} correlation heatmap for "
+                f"{n_traits} traits. "
+                "Colour scale: green = positive correlation; red = negative correlation. "
+                "Values on the diagonal = 1.00 (self-correlation). "
+                "All r-values displayed are Pearson coefficients computed from "
+                "genotype-level means."
             )
             cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
             if cap.runs:
                 cap.runs[0].italic = True
                 cap.runs[0].font.size = Pt(9)
         else:
-            _add_body(doc, "(Heatmap image could not be generated.)", italic=True)
+            _add_body(
+                doc,
+                "Heatmap image could not be generated. "
+                "See the numeric matrix table below.",
+                italic=True,
+            )
 
         doc.add_paragraph()
 
-        # ── Numeric matrix table ──────────────────────────────────────────────
-        _add_heading(doc, "Correlation Matrix", level=2)
+        # ── Numeric r-value matrix table ───────────────────────────────────────
+        _add_heading(doc, "Correlation Matrix (r-values)", level=2)
         n = len(data.labels)
         if n > 0 and data.matrix:
             headers = ["Trait"] + data.labels
@@ -469,23 +842,39 @@ async def export_heatmap_report(data: HeatmapExportRequest):
             for i, label in enumerate(data.labels):
                 row_vals = [label]
                 for j in range(n):
-                    val = data.matrix[i][j] if i < len(data.matrix) and j < len(data.matrix[i]) else None
-                    row_vals.append(_fmt(val, 3, thousands=False) if val is not None else "—")
+                    val = (
+                        data.matrix[i][j]
+                        if i < len(data.matrix) and j < len(data.matrix[i])
+                        else None
+                    )
+                    row_vals.append(
+                        _fmt(val, 3, thousands=False) if val is not None else "—"
+                    )
                 rows_data.append(row_vals)
             numeric_cols = set(range(1, n + 1))
             _add_stat_table(doc, headers, rows_data, numeric_cols=numeric_cols)
         doc.add_paragraph()
 
-        # ── Interpretation ────────────────────────────────────────────────────
-        if data.interpretation:
-            _add_heading(doc, "Interpretation", level=2)
-            _add_body(doc, data.interpretation)
-
+        # ── Cautious correlation note ──────────────────────────────────────────
+        _add_heading(doc, "Interpretation Note", level=2)
+        _add_body(
+            doc,
+            "Correlation coefficients describe co-variation among genotype means "
+            "in this experiment. They do not establish causal relationships between "
+            "traits. Associations observed here may reflect shared genetic control, "
+            "environmental co-responses, or experimental artefacts. "
+            "Strong correlations (|r| ≥ 0.70, p < 0.05) may indicate co-selection "
+            "potential, but this should be evaluated across multiple environments "
+            "before being used to guide a breeding programme.",
+        )
         if data.warnings:
+            doc.add_paragraph()
             _add_heading(doc, "Warnings", level=3)
             for w in data.warnings:
                 doc.add_paragraph(f"• {w}", style="List Bullet")
 
+        doc.add_paragraph()
+        _scope_paragraph(doc)
         _add_footer(doc)
         return _docx_response(doc, "vivasense_heatmap_report.docx")
 
