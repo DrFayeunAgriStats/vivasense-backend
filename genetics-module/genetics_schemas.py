@@ -104,3 +104,13 @@ class GeneticsResponse(BaseModel):
         if isinstance(v, list):
             return {}
         return v
+
+    @field_validator("interpretation", mode="before")
+    @classmethod
+    def coerce_interpretation(cls, v: Any) -> Any:
+        # R serialises the interpretation field as a named list ({}) when it
+        # cannot generate text. Coerce any non-string to None so the field
+        # stays Optional[str] without a ValidationError.
+        if v is None or isinstance(v, (dict, list)):
+            return None
+        return v
