@@ -62,6 +62,7 @@ class DownloadReportRequest(UploadAnalysisResponse):
     The frontend can POST the raw UploadAnalysisResponse and correlation
     will default to None — fully backwards compatible.
     """
+    module: str = "genetic_parameters"
     correlation: Optional[CorrelationResponse] = None
 
 
@@ -337,21 +338,30 @@ def _add_kv(doc: Document, key: str, value: str) -> None:
 # ============================================================================
 
 def _add_summary_table(doc: Document, data: UploadAnalysisResponse) -> None:
-    headers = ["Trait", "Mean", "H²", "GCV %", "PCV %", "GAM %", "Class", "Status"]
+    is_anova = getattr(data, "module", "") == "anova"
+    if is_anova:
+        headers = ["Trait", "Mean", "Status"]
+    else:
+        headers = ["Trait", "Mean", "H²", "GCV %", "PCV %", "GAM %", "Class", "Status"]
+        
     rows_data = [
-        [
-            row.trait,
-            _fmt(row.grand_mean),
-            _fmt(row.h2, 3),
-            _fmt(row.gcv, 2),
-            _fmt(row.pcv, 2),
-            _fmt(row.gam_percent, 2),
-            row.heritability_class or "—",
-            row.status,
-        ]
+        ([
+             row.trait,
+             _fmt(row.grand_mean),
+             row.status,
+         ] if is_anova else [
+             row.trait,
+             _fmt(row.grand_mean),
+             _fmt(row.h2, 3),
+             _fmt(row.gcv, 2),
+             _fmt(row.pcv, 2),
+             _fmt(row.gam_percent, 2),
+             row.heritability_class or "—",
+             row.status,
+         ])
         for row in data.summary_table
     ]
-    _add_stat_table(doc, headers, rows_data, numeric_cols={1, 2, 3, 4, 5})
+    _add_stat_table(doc, headers, rows_data, numeric_cols={1} if is_anova else {1, 2, 3, 4, 5})
 
 
 # ============================================================================
@@ -731,7 +741,7 @@ def _add_genetic_parameters_section(doc: Document, result: GeneticsResult) -> No
 # ============================================================================
 
 def _add_interpretation_section(
-    doc: Document, ar: GeneticsResponse, result: GeneticsResult
+    doc: Document, ar: GeneticsResponse, result: GeneticsResult, is_anova: bool = False
 ) -> None:
     _add_heading(doc, "Interpretation & Breeding Recommendations", level=2)
 
@@ -746,7 +756,7 @@ def _add_interpretation_section(
         doc.add_paragraph()
 
     # Breeding implication from the R engine (if present in payload)
-    if result.breeding_implication:
+    if not is_anova and result.breeding_implication:
         _add_heading(doc, "Breeding Implication", level=3)
         _add_body(doc, result.breeding_implication)
         doc.add_paragraph()
@@ -988,6 +998,8 @@ def export_traits_to_word(
 
     for trait, tr in trait_results.items():
         doc.add_page_break()
+        
+        is_anova = getattr(results, "module", "") == "anova"
         _add_heading(doc, f"Trait: {trait}", level=1)
 
         # ── Primary gate: status field (inferred from analysis_result when absent)
@@ -1071,11 +1083,12 @@ def export_traits_to_word(
                 doc.add_paragraph()
 
             # ── 6. Genetic Parameters ─────────────────────────────────────────
+        if not is_anova:
             _add_genetic_parameters_section(doc, result)
             doc.add_paragraph()
 
             # ── 7. Interpretation & Breeding Recommendations ──────────────────
-            _add_interpretation_section(doc, ar, result)
+        _add_interpretation_section(doc, ar, result, is_anova=is_anova)
 
         except Exception as exc:
             logger.error(
@@ -1123,7 +1136,8 @@ def _build_document(data: DownloadReportRequest) -> Document:
         sec.right_margin  = Inches(1.25)
 
     # ── Title ─────────────────────────────────────────────────────────────────
-    title = doc.add_heading("VivaSense Genetics Analysis Report", level=0)
+    title_text = "VivaSense ANOVA Analysis Report" if getattr(data, "module", "") == "anova" else "VivaSense Genetics Analysis Report"
+    title = doc.add_heading(title_text, level=0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     ds = data.dataset_summary

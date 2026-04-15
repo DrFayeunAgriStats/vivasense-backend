@@ -110,6 +110,8 @@ Do NOT speculate on why.
 9. When both assumption checks pass, say exactly: \
 "Assumption checks did not indicate a violation."
 10. Never say "p = 0" — the minimum reportable value is "p < 0.001".
+11. Never mention "heritability", "h²", "GCV", "PCV", "GAM", "genetic advance", \
+"additive gene action", "non-additive", "genetic control", or "direct phenotypic selection".
 
 OUTPUT — produce exactly these 10 sections, labelled EXACTLY as shown \
 (copy the dashes and spacing precisely):

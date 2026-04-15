@@ -301,11 +301,15 @@ def check_balance(
 # SUMMARY HELPERS
 # ============================================================================
 
-def _build_summary_row(trait: str, result_dict: Dict[str, Any]) -> SummaryTableRow:
+def _build_summary_row(trait: str, result_dict: Dict[str, Any], actual_module: str = "genetic_parameters") -> SummaryTableRow:
     """Extract scalar metrics from a GeneticsResponse dict for the summary table."""
     res = result_dict.get("result") or {}
-    hp = res.get("heritability") or {}
-    gp = res.get("genetic_parameters") or {}
+    if actual_module == "anova":
+        hp = {}
+        gp = {}
+    else:
+        hp = res.get("heritability") or {}
+        gp = res.get("genetic_parameters") or {}
     h2 = hp.get("h2_broad_sense")
     h2_class = InterpretationEngine.classify_heritability(h2) if h2 is not None else None
     return SummaryTableRow(
@@ -399,7 +403,7 @@ async def upload_preview(file: UploadFile = File(...)):
     response_model=UploadAnalysisResponse,
     summary="Analyze all traits in an uploaded file",
 )
-async def analyze_upload(request: UploadAnalysisRequest):
+async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] = None):
     """
     For each requested trait column, reshape the uploaded data into flat
     observation records and call the existing R genetics engine
@@ -411,6 +415,8 @@ async def analyze_upload(request: UploadAnalysisRequest):
     The R engine (vivasense_genetics.R) performs all ANOVA computations.
     This endpoint contains no genetics computation logic.
     """
+    actual_module = module or getattr(request, "module", "genetic_parameters")
+
     # Lazy import: r_engine is None at module load time and is assigned by
     # the FastAPI startup event in app_genetics.py. Accessing it through the
     # module object always gives the current (post-startup) value.
@@ -519,6 +525,18 @@ async def analyze_upload(request: UploadAnalysisRequest):
 
                 r_result = result_dict.get("result") or {}
                 
+                # Enforce strict module isolation - strip out genetic params if ANOVA
+                if actual_module == "anova":
+                    if "result" in result_dict and isinstance(result_dict["result"], dict):
+                        result_dict["result"]["genetic_parameters"] = None
+                        result_dict["result"]["heritability"] = None
+                    result_dict["breeding_implication"] = None
+                    
+                    r_interp = result_dict.get("interpretation", "")
+                    if r_interp:
+                        cleaned_lines = [line for line in r_interp.split('\n') if not any(term in line.lower() for term in ["heritability", "h²", "gcv", "pcv", "gam", "genetic advance"])]
+                        result_dict["interpretation"] = "\n".join(cleaned_lines)
+                
                 logger.info(
                     "Trait '%s' R result keys: %s",
                     trait, list(r_result.keys())
@@ -548,7 +566,7 @@ async def analyze_upload(request: UploadAnalysisRequest):
                 analysis_result=validated,
                 data_warnings=balance_warnings,
             )
-            summary_table.append(_build_summary_row(trait, result_dict))
+                summary_table.append(_build_summary_row(trait, result_dict, actual_module))
         else:
             failed_traits.append(trait)
             trait_results[trait] = TraitResult(

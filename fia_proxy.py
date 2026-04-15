@@ -250,6 +250,17 @@ Results:
 
 Provide a complete interpretation following your structured format."""
 
+    # Enforce strict module-specific routing and guardrails
+    analysis_lower = body.analysis_type.lower()
+    if "anova" in analysis_lower:
+        user_message += "\n\nCRITICAL INSTRUCTION: This is an ANOVA interpretation. You MUST NOT mention heritability, H², GCV, PCV, GAM, genetic advance, additive gene action, non-additive, genetic control, or direct phenotypic selection. Limit your interpretation exclusively to the significance of the genotype and environment effects, and the mean separation results."
+    elif "genetic" in analysis_lower:
+        user_message += "\n\nCRITICAL INSTRUCTION: This is a Genetic Parameters interpretation. Focus strictly on H², GCV, PCV, and GAM. Do not masquerade as a basic ANOVA interpretation."
+    elif "correlation" in analysis_lower:
+        user_message += "\n\nCRITICAL INSTRUCTION: This is a Correlation interpretation. Focus on trait associations and co-selection. Do not mention ANOVA or genetic advance."
+    elif "regression" in analysis_lower:
+        user_message += "\n\nCRITICAL INSTRUCTION: This is a Regression interpretation. Focus on the regression model, R², and trait predictability."
+
     messages = [{"role": "user", "content": user_message}]
 
     # Use Sonnet for interpretation — higher quality for the key selling point
