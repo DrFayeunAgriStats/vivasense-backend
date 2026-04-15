@@ -43,7 +43,6 @@ from genetics_export import (
     _add_kv,
     _add_mean_separation_section,
     _add_stat_table,
-    _breeding_recommendation,
     _fmt,
     _fmt_p,
     _sig_label,
@@ -639,9 +638,6 @@ async def export_genetic_parameters_word(data: GeneticParametersExportRequest):
             r_implication = _clean_interpretation(tr.breeding_implication, trait)
             if r_implication:
                 _add_body(doc, r_implication)
-            else:
-                # Fallback to rule-based recommendation
-                _add_body(doc, _breeding_recommendation(h2, gam))
             doc.add_paragraph()
 
             # ── 6. Interpretation ──────────────────────────────────────────────

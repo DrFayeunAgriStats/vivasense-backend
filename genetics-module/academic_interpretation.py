@@ -130,9 +130,10 @@ Section content:
 1. DATA QUALITY NOTE — flag unusual patterns from input. \
 If none: "No data quality concerns detected."
 
-2. OVERALL FINDING — max 3 sentences. State whether genotype effect \
-was significant, cite F-value and p-value. Must include \
-"in this experiment" or "among the levels tested."
+2. OVERALL FINDING — max 3 sentences. State the experimental structure \
+(number of genotypes and environments). State whether genotype effect was \
+significant, cite F-value and p-value. Must include "in this experiment" \
+or "among the levels tested."
 
 3. STATISTICAL EVIDENCE — F-value, p-value, and η² for each ANOVA \
 source. η² benchmarks: <0.01 negligible, 0.01–0.06 small, \
@@ -219,7 +220,8 @@ Section content:
 1. DATA QUALITY NOTE — flag negative variance, h² > 1, or unusual \
 patterns. If none: "No data quality concerns detected."
 
-2. OVERALL FINDING — 1–2 sentences. State h² value and class \
+2. OVERALL FINDING — 1–2 sentences. State the experimental structure \
+(number of genotypes and environments). State h² value and class \
 (high/moderate/low). State GAM% and class. Both in one finding.
 
 3. HERITABILITY INTERPRETATION — explain what the h² value means \
@@ -297,8 +299,9 @@ Section content:
 1. DATA QUALITY NOTE — unusual pair counts, missing values, n_obs. \
 If none: "No data quality concerns detected."
 
-2. OVERALL FINDING — how many pairs were tested, how many were \
-significant (p < 0.05), and the strongest r value found.
+2. OVERALL FINDING — state the experimental structure (number of genotype \
+means). How many pairs were tested, how many were significant (p < 0.05), \
+and the strongest r value found.
 
 3. PAIRWISE INTERPRETATION — discuss significant pairs. \
 Cite r and p for each. Classify as weak/moderate/strong. \
@@ -770,6 +773,16 @@ class _AnovaFallback:
 
         total_ss = sum(x for x in sss if x is not None)
 
+        n_g = result.get("n_genotypes")
+        n_e = result.get("n_environments")
+        
+        exp_str = ""
+        if n_g is not None:
+            if n_e is not None and n_e > 1:
+                exp_str = f" evaluated across {n_g} genotypes and {n_e} environments"
+            else:
+                exp_str = f" evaluated across {n_g} genotypes"
+
         # ── DATA QUALITY ────────────────────────────────────────────────────
         dq_lines = []
         for w in (result.get("data_warnings") or []):
@@ -785,14 +798,14 @@ class _AnovaFallback:
             eta = (ss / total_ss) if (ss and total_ss) else None
             sig = "significant" if (p is not None and p < 0.05) else "not significant"
             s["overall_finding"] = (
-                f"The effect of genotype on {trait} was {sig} in this experiment "
-                f"(F = {_fmt(f, 3)}, p = {_fmt_p(p)}). "
+                f"An analysis of variance was conducted for {trait}{exp_str}. "
+                f"The effect of genotype was {sig} (F = {_fmt(f, 3)}, p = {_fmt_p(p)}). "
                 + (f"Genotype accounted for η² = {_fmt(eta, 4)} of total variance." if eta else "")
             )
         else:
             s["overall_finding"] = (
-                f"Refer to the ANOVA table for genotype F-value, p-value, and η² "
-                f"for {trait} in this experiment."
+                f"An analysis of variance was conducted for {trait}{exp_str}. "
+                f"Refer to the ANOVA table for genotype F-value, p-value, and η²."
             )
 
         # ── STATISTICAL EVIDENCE ─────────────────────────────────────────────
@@ -885,6 +898,16 @@ class _GpFallback:
             "low" if gam is not None else "not computed"
         )
 
+        n_g = result.get("n_genotypes")
+        n_e = result.get("n_environments")
+        
+        exp_str = ""
+        if n_g is not None:
+            if n_e is not None and n_e > 1:
+                exp_str = f" evaluated across {n_g} genotypes and {n_e} environments"
+            else:
+                exp_str = f" evaluated across {n_g} genotypes"
+
         s["data_quality_note"] = (
             "⚠ Negative genotypic variance detected. Treat estimates cautiously."
             if (vc.get("sigma2_genotype") or 0) < 0
@@ -892,7 +915,7 @@ class _GpFallback:
         )
 
         s["overall_finding"] = (
-            f"For {trait} in this experiment: "
+            f"For {trait}{exp_str}: "
             f"h² = {_fmt(h2, 4)} ({h2_class} heritability), "
             f"GAM = {_fmt(gam, 2)}% ({gam_class} genetic advance)."
         )
@@ -949,6 +972,7 @@ class _CorrFallback:
             f"Method: {method.capitalize()}."
         )
         s["overall_finding"] = (
+            f"A phenotypic correlation analysis was conducted across {n_obs} genotype means. "
             f"Out of {n*(n-1)//2} trait pair(s) tested, "
             f"{len(sig_pairs)} were significant (p < 0.05) "
             f"among the genotypes tested in this experiment."

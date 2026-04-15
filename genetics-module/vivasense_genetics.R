@@ -83,9 +83,6 @@ compute_mean_separation <- function(model, trait_name = "Trait",
   )
 }
 
-# Load the strict interpretation engine
-source("vivasense_interpretation_engine.R")
-
 # ============================================================================
 # LAYER 1: COMPUTATION LAYER
 # Core mathematical and statistical functions
@@ -624,13 +621,6 @@ genetics_analysis <- function(data,
   # Validate variance components
   warnings_vc <- validate_variance_components(result)
   
-  # Generate interpretation using new strict engine
-  if (mode == "single") {
-    interpretation <- interpret_single_environment_strict(result, warnings_vc)
-  } else {
-    interpretation <- interpret_multi_environment_strict(result, warnings_vc)
-  }
-  
   # Return structured output
   list(
     status = "SUCCESS",
@@ -638,7 +628,7 @@ genetics_analysis <- function(data,
     data_validation = data_validation$warnings,
     variance_warnings = warnings_vc$warnings,
     result = result,
-    interpretation = interpretation
+    interpretation = NULL
   )
 }
 

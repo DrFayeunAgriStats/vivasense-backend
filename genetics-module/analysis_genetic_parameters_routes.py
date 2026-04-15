@@ -17,9 +17,10 @@ If /analysis/anova was already called for the same dataset_token + trait,
 the result is read from dataset_cache — no duplicate R subprocess call.
 """
 
+import asyncio
 import base64
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException
 
@@ -31,10 +32,32 @@ from module_schemas import (
     ModuleRequest,
 )
 import dataset_cache
+from interpretation import InterpretationEngine
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Analysis"])
 
+
+def _build_gp_text(trait: str, res) -> Tuple[str, str]:
+    """Build precise Genetic Parameters text, completely decoupled from ANOVA."""
+    try:
+        hp = res.heritability if isinstance(res.heritability, dict) else {}
+        gp = res.genetic_parameters if isinstance(res.genetic_parameters, dict) else {}
+        
+        h2_val = hp.get("h2_broad_sense")
+        
+        engine = InterpretationEngine()
+        support = engine.generate_decision_support(
+            trait_name=trait,
+            h2=float(h2_val) if h2_val is not None else 0.0,
+            gam=float(gp.get("GAM_percent") or 0.0),
+            gcv=float(gp.get("GCV") or 0.0),
+            pcv=float(gp.get("PCV") or 0.0)
+        )
+        return support["interpretation"], support["recommendation"]
+    except Exception as exc:
+        logger.warning("Failed to build GP interpretation for '%s': %s", trait, exc)
+        return "Genetic parameters interpretation not available.", "Breeding implication not available."
 
 @router.post(
     "/analysis/genetic-parameters",
@@ -89,7 +112,10 @@ async def analysis_genetic_parameters(request: ModuleRequest):
     trait_results: Dict[str, GeneticParametersTraitResult] = {}
     failed_traits: List[str] = []
 
-    for trait in request.trait_columns:
+    MAX_CONCURRENT_R_PROCESSES = 4
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_R_PROCESSES)
+
+    async def process_trait(trait: str):
         try:
             # ── Cache check ──────────────────────────────────────────────────
             cached: Optional[GeneticsResponse] = dataset_cache.get_analysis(
@@ -97,15 +123,17 @@ async def analysis_genetic_parameters(request: ModuleRequest):
             )
 
             if cached is None:
-                balance_warnings = check_balance(df, geno_col, rep_col, trait, env_col)
-                observations     = build_observations(df, geno_col, rep_col, trait, env_col)
+                async with semaphore:
+                    balance_warnings = check_balance(df, geno_col, rep_col, trait, env_col)
+                    observations     = build_observations(df, geno_col, rep_col, trait, env_col)
 
-                result_dict = r_engine.run_analysis(
-                    data=observations,
-                    mode=mode,
-                    trait_name=trait,
-                    random_environment=random_env,
-                )
+                    result_dict = await asyncio.to_thread(
+                        r_engine.run_analysis,
+                        data=observations,
+                        mode=mode,
+                        trait_name=trait,
+                        random_environment=random_env,
+                    )
 
                 if result_dict.get("status") == "ERROR":
                     r_errors = result_dict.get("errors") or {}
@@ -125,8 +153,11 @@ async def analysis_genetic_parameters(request: ModuleRequest):
                 raise RuntimeError("R returned status OK but result object is empty")
 
             gp = res.genetic_parameters if isinstance(res.genetic_parameters, dict) else {}
+            
+            # Build pure Genetic Parameters text
+            interp_text, breeding_text = _build_gp_text(trait, res)
 
-            trait_results[trait] = GeneticParametersTraitResult(
+            result_obj = GeneticParametersTraitResult(
                 trait=trait,
                 status="success",
                 grand_mean=res.grand_mean,
@@ -138,19 +169,29 @@ async def analysis_genetic_parameters(request: ModuleRequest):
                 pcv=gp.get("PCV"),
                 ga=gp.get("GAM"),        # GA absolute value
                 gam=gp.get("GAM_percent"),
-                breeding_implication=res.breeding_implication,
-                interpretation=cached.interpretation,
+                breeding_implication=breeding_text,
+                interpretation=interp_text,
                 data_warnings=balance_warnings,
             )
+            return trait, "success", result_obj
 
         except Exception as exc:
             logger.warning("GeneticParameters: trait '%s' failed — %s", trait, exc)
-            failed_traits.append(trait)
-            trait_results[trait] = GeneticParametersTraitResult(
+            result_obj = GeneticParametersTraitResult(
                 trait=trait,
                 status="failed",
                 error=str(exc),
             )
+            return trait, "failed", result_obj
+
+    # Execute all trait analyses concurrently
+    tasks = [process_trait(trait) for trait in request.trait_columns]
+    results = await asyncio.gather(*tasks)
+
+    for trait, status, result_obj in results:
+        trait_results[trait] = result_obj
+        if status == "failed":
+            failed_traits.append(trait)
 
     return GeneticParametersModuleResponse(
         dataset_token=request.dataset_token,

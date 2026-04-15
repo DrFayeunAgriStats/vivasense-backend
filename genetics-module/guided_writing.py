@@ -92,14 +92,24 @@ def _build_anova_writing(
 
     starters: List[SentenceStarter] = []
 
+    n_genos = result.get("n_genotypes")
+    n_envs = result.get("n_environments")
+    exp_str = "in this experiment"
+    if n_genos is not None:
+        if n_envs is not None and n_envs > 1:
+            exp_str = f"evaluated across {n_genos} genotypes and {n_envs} environments"
+        else:
+            exp_str = f"evaluated across {n_genos} genotypes"
+
     # ── Starter 1: Significance ──────────────────────────────────────────────
     starters.append(SentenceStarter(
         purpose="Significance statement",
         template=(
-            "Genotype had a significant effect on {trait} in this experiment "
+            "An analysis of variance for {trait} {exp_str} showed that the genotype effect was ___ "
             "(F = ___, p = ___, η² = ___)."
-        ).format(trait=trait),
+        ).format(trait=trait, exp_str=exp_str),
         values_to_fill=[
+            "write 'significant' (p < 0.05) or 'not significant' (p ≥ 0.05)",
             "F-value for Genotype (from ANOVA table)",
             "p-value for Genotype (from ANOVA table)",
             "η² = SS_Genotype ÷ SS_Total (calculate from ANOVA table)",
@@ -252,14 +262,22 @@ def _build_gp_writing(
 
     starters: List[SentenceStarter] = []
 
+    n_genos = result.get("n_genotypes")
+    n_envs = result.get("n_environments")
+    exp_str = "in this experiment"
+    if n_genos is not None:
+        if n_envs is not None and n_envs > 1:
+            exp_str = f"evaluated across {n_genos} genotypes and {n_envs} environments"
+        else:
+            exp_str = f"evaluated across {n_genos} genotypes"
+
     # ── Starter 1: Heritability ──────────────────────────────────────────────
     starters.append(SentenceStarter(
         purpose="Heritability statement",
         template=(
-            "The estimated broad-sense heritability for {trait} was ___ "
-            "(h² = ___), indicating ___ genetic control of this trait "
-            "in this experiment."
-        ).format(trait=trait),
+            "For {trait} {exp_str}, the estimated broad-sense heritability was ___ "
+            "(h² = ___), indicating ___ genetic control."
+        ).format(trait=trait, exp_str=exp_str),
         values_to_fill=[
             "heritability classification: 'high' (h² ≥ 0.60), 'moderate' (0.30–0.59), or 'low' (< 0.30)",
             "h² value from Genetic Parameters table",
@@ -383,6 +401,9 @@ def _build_correlation_writing(
     trait_names = result.get("trait_names") or []
     n_traits = len(trait_names)
     method = result.get("method", "Pearson")
+    
+    n_obs = result.get("n_observations")
+    obs_str = f"across {n_obs} genotype means" if n_obs else "among the genotypes tested"
 
     starters: List[SentenceStarter] = []
 
@@ -391,8 +412,8 @@ def _build_correlation_writing(
         purpose="Pairwise correlation statement",
         template=(
             "A ___ phenotypic correlation was observed between ___ and ___ "
-            "among the genotypes tested (r = ___, p = ___)."
-        ),
+            "{obs_str} (r = ___, p = ___)."
+        ).format(obs_str=obs_str),
         values_to_fill=[
             "direction + strength: 'strong positive' (r ≥ 0.70), 'moderate positive' (0.40–0.69), "
             "'weak' (< 0.40), 'moderate negative', or 'strong negative'",
@@ -478,6 +499,9 @@ def _build_heatmap_writing(
 
     labels = result.get("labels") or []
     method = result.get("method", "Pearson")
+    
+    n_obs = result.get("n_observations")
+    obs_str = f"across {n_obs} genotype means" if n_obs else "among the genotypes tested"
 
     starters: List[SentenceStarter] = []
 
@@ -487,8 +511,8 @@ def _build_heatmap_writing(
             "The {method} correlation heatmap for ___ traits revealed that "
             "___ and ___ showed the strongest positive association "
             "(r ≈ ___), while ___ and ___ showed the strongest "
-            "negative association (r ≈ ___) among the genotypes tested."
-        ).format(method=method.capitalize()),
+            "negative association (r ≈ ___) {obs_str}."
+        ).format(method=method.capitalize(), obs_str=obs_str),
         values_to_fill=[
             f"number of traits ({len(labels)} in this analysis)",
             "trait with highest off-diagonal r value — from heatmap or matrix",

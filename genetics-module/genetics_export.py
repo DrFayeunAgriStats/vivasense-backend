@@ -331,34 +331,6 @@ def _add_kv(doc: Document, key: str, value: str) -> None:
 # BREEDING RECOMMENDATION
 # ============================================================================
 
-def _breeding_recommendation(h2: Optional[float], gam_pct: Optional[float]) -> str:
-    if h2 is None:
-        return "Insufficient data for a breeding recommendation."
-    if h2 >= 0.80 and gam_pct is not None and gam_pct >= 5.0:
-        return (
-            "Direct selection is recommended. High heritability combined with "
-            "high genetic advance (GAM ≥ 5 %) indicates strong additive genetic "
-            "control — phenotypic selection will be effective and rapid."
-        )
-    if h2 >= 0.80:
-        return (
-            "High heritability but narrow genetic advance suggests strong genetic "
-            "control with a limited phenotypic range. Consider hybridisation or "
-            "crossing programmes to broaden the genetic base before selection."
-        )
-    if h2 >= 0.50:
-        return (
-            "Moderate heritability. Both additive genetic and environmental effects "
-            "contribute to phenotypic variation. Use replicated multi-environment "
-            "trials; family-based or progeny selection may improve efficiency."
-        )
-    return (
-        "Low heritability indicates dominant environmental influence. "
-        "Direct phenotypic selection is unlikely to be efficient. "
-        "Increase replication, use controlled environments, or apply "
-        "marker-assisted selection."
-    )
-
 
 # ============================================================================
 # SECTION: CROSS-TRAIT SUMMARY TABLE
@@ -507,7 +479,6 @@ def _add_executive_summary(
         _add_kv(doc, key, val)
 
     doc.add_paragraph()
-    _add_body(doc, _breeding_recommendation(h2, gam_pct))
 
 
 # ============================================================================
@@ -779,9 +750,6 @@ def _add_interpretation_section(
         _add_heading(doc, "Breeding Implication", level=3)
         _add_body(doc, result.breeding_implication)
         doc.add_paragraph()
-
-    _add_heading(doc, "Breeding Recommendation", level=3)
-    _add_body(doc, _breeding_recommendation(h2, gam_pct))
 
 
 # ============================================================================

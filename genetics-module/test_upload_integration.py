@@ -16,6 +16,10 @@ import json
 import sys
 import types
 import unittest
+import subprocess
+import shutil
+import tempfile
+import os
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -60,12 +64,7 @@ def _make_genetics_response_dict(mode: str, trait_name: str, grand_mean: float):
                 "selection_intensity": 1.4,
             },
         },
-        "interpretation": (
-            f"[Mock] {trait_name}: Broad-sense heritability was high (H² = 0.72), "
-            "indicating strong genetic control. GCV (14.3%) was lower than PCV (18.9%), "
-            "suggesting moderate environmental influence. Genetic advance under selection "
-            "was 24.0% of the mean, indicating good response to selection."
-        ),
+        "interpretation": None,
     }
 
 
@@ -252,7 +251,6 @@ def run_scenario(
         detect_columns,
         build_observations,
         check_balance,
-        _classify_heritability,
         _build_summary_row,
     )
     from multitrait_upload_schemas import (
@@ -438,6 +436,64 @@ def check_response_shape(label: str, resp: dict, expected_traits: list,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# R Engine Subprocess Verification
+# ─────────────────────────────────────────────────────────────────────────────
+
+def check_r_engine_payload_is_numeric():
+    """Ensure the R backend returns purely numeric/statistical data, no text."""
+    print(f"\n{'='*60}")
+    print("TEST: Actual R Engine Payload is Strictly Numeric")
+    print(f"{'='*60}")
+    
+    if not shutil.which("Rscript"):
+        print("  SKIP: Rscript not found in PATH. Skipping raw R execution test.")
+        return True
+
+    # Minimal mock data to guarantee a successful R analysis
+    data = [
+        {"genotype": "G1", "rep": "R1", "trait_value": 45.2},
+        {"genotype": "G1", "rep": "R2", "trait_value": 46.1},
+        {"genotype": "G2", "rep": "R1", "trait_value": 48.5},
+        {"genotype": "G2", "rep": "R2", "trait_value": 49.2},
+        {"genotype": "G3", "rep": "R1", "trait_value": 50.1},
+        {"genotype": "G3", "rep": "R2", "trait_value": 51.2},
+    ]
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.R', delete=False) as tmp_r:
+        data_json = json.dumps(data)
+        r_code = f'''
+source("vivasense_genetics.R")
+data_list <- jsonlite::fromJSON('{data_json}')
+data <- as.data.frame(data_list)
+data$trait_value <- as.numeric(data$trait_value)
+result <- genetics_analysis(data, mode="single", trait_name="Test")
+cat(export_to_json(result))
+'''
+        tmp_r.write(r_code)
+        tmp_r_path = tmp_r.name
+
+    try:
+        result = subprocess.run(["Rscript", tmp_r_path], capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"  FAIL [R Execution]: {result.stderr}")
+            return False
+            
+        output = json.loads(result.stdout.strip())
+        
+        ok = True
+        ok &= assert_eq("Raw R interpretation is explicitly null", output.get("interpretation"), None)
+        res = output.get("result") or {}
+        ok &= assert_eq("Raw R breeding_implication is absent", res.get("breeding_implication"), None)
+        
+        return ok
+    except Exception as e:
+        print(f"  FAIL: Error running R script test: {e}")
+        return False
+    finally:
+        os.unlink(tmp_r_path)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -524,6 +580,9 @@ def main():
         expected_failed=[],
         check_warnings=True,  # expect unbalanced-design warnings on Yield
     )
+
+    # ── Check Actual R Engine Payload ─────────────────────────────────────────
+    all_ok &= check_r_engine_payload_is_numeric()
 
     # ── Summary ───────────────────────────────────────────────────────────────
     print(f"\n{'='*60}")

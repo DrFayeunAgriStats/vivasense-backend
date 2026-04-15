@@ -20,6 +20,7 @@ to /analysis/genetic-parameters for the same dataset_token + traits
 does not trigger a second R subprocess call.
 """
 
+import asyncio
 import base64
 import logging
 from typing import Dict, List, Optional
@@ -33,6 +34,48 @@ import dataset_cache
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Analysis"])
+
+
+def _build_anova_interpretation(trait: str, res) -> str:
+    """Build a precise, ANOVA-only interpretation string (no genetic parameters)."""
+    parts = []
+    
+    # 1. Experimental Structure
+    n_g = getattr(res, "n_genotypes", None)
+    n_e = getattr(res, "n_environments", None)
+    
+    if n_g is not None:
+        if n_e is not None and n_e > 1:
+            parts.append(f"An analysis of variance was conducted for {trait} evaluated across {n_g} genotypes and {n_e} environments.")
+        else:
+            parts.append(f"An analysis of variance was conducted for {trait} evaluated across {n_g} genotypes.")
+
+    # 2. ANOVA Significance
+    if res.anova_table and "genotype" in res.anova_table.source:
+        try:
+            idx = res.anova_table.source.index("genotype")
+            p = res.anova_table.p_value[idx]
+            f = res.anova_table.f_value[idx]
+            if p is not None:
+                sig = "significant" if p < 0.05 else "not significant"
+                p_str = "< 0.001" if p < 0.001 else f"{p:.4f}"
+                f_str = f"{f:.3f}" if f is not None else "—"
+                parts.append(f"The effect of genotype on {trait} was {sig} in this experiment (F = {f_str}, p = {p_str}).")
+        except (ValueError, IndexError):
+            pass
+            
+    # 3. Mean Separation
+    if res.mean_separation and res.mean_separation.genotype:
+        try:
+            top_g = res.mean_separation.genotype[0]
+            top_m = res.mean_separation.mean[0]
+            bot_g = res.mean_separation.genotype[-1]
+            bot_m = res.mean_separation.mean[-1]
+            parts.append(f"The highest mean among the genotypes tested was recorded in {top_g} ({top_m:.2f}), while the lowest was recorded in {bot_g} ({bot_m:.2f}).")
+        except (IndexError, TypeError):
+            pass
+            
+    return " ".join(parts) if parts else "ANOVA interpretation not available."
 
 
 @router.post(
@@ -88,7 +131,10 @@ async def analysis_anova(request: ModuleRequest):
     trait_results: Dict[str, AnovaTraitResult] = {}
     failed_traits: List[str] = []
 
-    for trait in request.trait_columns:
+    MAX_CONCURRENT_R_PROCESSES = 4
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_R_PROCESSES)
+
+    async def process_trait(trait: str):
         try:
             # ── Cache check ──────────────────────────────────────────────────
             cached: Optional[GeneticsResponse] = dataset_cache.get_analysis(
@@ -96,15 +142,17 @@ async def analysis_anova(request: ModuleRequest):
             )
 
             if cached is None:
-                balance_warnings = check_balance(df, geno_col, rep_col, trait, env_col)
-                observations     = build_observations(df, geno_col, rep_col, trait, env_col)
+                async with semaphore:
+                    balance_warnings = check_balance(df, geno_col, rep_col, trait, env_col)
+                    observations     = build_observations(df, geno_col, rep_col, trait, env_col)
 
-                result_dict = r_engine.run_analysis(
-                    data=observations,
-                    mode=mode,
-                    trait_name=trait,
-                    random_environment=random_env,
-                )
+                    result_dict = await asyncio.to_thread(
+                        r_engine.run_analysis,
+                        data=observations,
+                        mode=mode,
+                        trait_name=trait,
+                        random_environment=random_env,
+                    )
 
                 if result_dict.get("status") == "ERROR":
                     r_errors = result_dict.get("errors") or {}
@@ -123,7 +171,7 @@ async def analysis_anova(request: ModuleRequest):
             if res is None:
                 raise RuntimeError("R returned status OK but result object is empty")
 
-            trait_results[trait] = AnovaTraitResult(
+            result_obj = AnovaTraitResult(
                 trait=trait,
                 status="success",
                 grand_mean=res.grand_mean,
@@ -134,18 +182,28 @@ async def analysis_anova(request: ModuleRequest):
                 descriptive_stats=res.descriptive_stats,
                 assumption_tests=res.assumption_tests,
                 mean_separation=res.mean_separation,
-                interpretation=cached.interpretation,
+                interpretation=_build_anova_interpretation(trait, res),
                 data_warnings=balance_warnings,
             )
+            return trait, "success", result_obj
 
         except Exception as exc:
             logger.warning("ANOVA: trait '%s' failed — %s", trait, exc)
-            failed_traits.append(trait)
-            trait_results[trait] = AnovaTraitResult(
+            result_obj = AnovaTraitResult(
                 trait=trait,
                 status="failed",
                 error=str(exc),
             )
+            return trait, "failed", result_obj
+
+    # Execute all trait analyses concurrently
+    tasks = [process_trait(trait) for trait in request.trait_columns]
+    results = await asyncio.gather(*tasks)
+
+    for trait, status, result_obj in results:
+        trait_results[trait] = result_obj
+        if status == "failed":
+            failed_traits.append(trait)
 
     return AnovaModuleResponse(
         dataset_token=request.dataset_token,

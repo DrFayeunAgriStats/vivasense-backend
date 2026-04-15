@@ -21,8 +21,12 @@ frontend are not throttled by the backend.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
+import threading
+from collections import OrderedDict
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
@@ -37,10 +41,17 @@ _api_key_available: bool = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
 if _api_key_available:
     logger.info("AcademicMentor: ANTHROPIC_API_KEY present — AI interpretation enabled")
 else:
-    logger.warning(
-        "AcademicMentor: ANTHROPIC_API_KEY not set — "
-        "POST /academic/interpret will return 503 until the key is configured"
-    )
+    logger.warning("AcademicMentor: ANTHROPIC_API_KEY not set — deterministic fallback will be used")
+
+# ── In-memory LRU Cache ───────────────────────────────────────────────────────
+_CACHE_MAX_SIZE = 200
+_cache_lock = threading.Lock()
+_interp_cache: OrderedDict = OrderedDict()
+
+def _get_cache_key(request: AcademicInterpretRequest) -> str:
+    """Generate a deterministic hash key from the request payload."""
+    req_str = json.dumps(request.model_dump(), sort_keys=True)
+    return hashlib.sha256(req_str.encode("utf-8")).hexdigest()
 
 # ── Router ────────────────────────────────────────────────────────────────────
 router = APIRouter(tags=["Academic Mentor"])
@@ -76,15 +87,13 @@ async def interpret(request: AcademicInterpretRequest) -> AcademicInterpretation
     7. Return AcademicInterpretationResponse
     """
 
-    # ── 503 guard ─────────────────────────────────────────────────────────────
-    if not _api_key_available:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Academic Mentor AI is unavailable: ANTHROPIC_API_KEY is not configured. "
-                "Set ANTHROPIC_API_KEY in the Render environment variables and redeploy."
-            ),
-        )
+    # ── Cache Check ───────────────────────────────────────────────────────────
+    cache_key = _get_cache_key(request)
+    with _cache_lock:
+        if cache_key in _interp_cache:
+            logger.info("AcademicMentor: cache hit for %s trait='%s'", request.module_type, request.trait)
+            _interp_cache.move_to_end(cache_key)
+            return _interp_cache[cache_key]
 
     # ── Lazy import to keep startup fast when key is absent ───────────────────
     try:
@@ -99,6 +108,13 @@ async def interpret(request: AcademicInterpretRequest) -> AcademicInterpretation
     # ── Execute interpretation pipeline ───────────────────────────────────────
     try:
         result = await interpret_module(request)
+        
+        # Cache the successful result
+        with _cache_lock:
+            _interp_cache[cache_key] = result
+            if len(_interp_cache) > _CACHE_MAX_SIZE:
+                _interp_cache.popitem(last=False)
+                
         return result
 
     except ValueError as exc:

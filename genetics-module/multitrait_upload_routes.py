@@ -17,6 +17,7 @@ Engine integration:
     capturing the initial None value set before the startup event fires.
 """
 
+import asyncio
 import base64
 import io
 import logging
@@ -37,6 +38,7 @@ from multitrait_upload_schemas import (
 )
 from genetics_schemas import GeneticsResponse
 import result_cache
+from interpretation import InterpretationEngine
 
 logger = logging.getLogger(__name__)
 
@@ -299,20 +301,13 @@ def check_balance(
 # SUMMARY HELPERS
 # ============================================================================
 
-def _classify_heritability(h2: float) -> str:
-    if h2 >= 0.60:
-        return "high"
-    if h2 >= 0.30:
-        return "moderate"
-    return "low"
-
-
 def _build_summary_row(trait: str, result_dict: Dict[str, Any]) -> SummaryTableRow:
     """Extract scalar metrics from a GeneticsResponse dict for the summary table."""
     res = result_dict.get("result") or {}
     hp = res.get("heritability") or {}
     gp = res.get("genetic_parameters") or {}
     h2 = hp.get("h2_broad_sense")
+    h2_class = InterpretationEngine.classify_heritability(h2) if h2 is not None else None
     return SummaryTableRow(
         trait=trait,
         grand_mean=res.get("grand_mean"),
@@ -320,7 +315,7 @@ def _build_summary_row(trait: str, result_dict: Dict[str, Any]) -> SummaryTableR
         gcv=gp.get("GCV"),
         pcv=gp.get("PCV"),
         gam_percent=gp.get("GAM_percent"),
-        heritability_class=_classify_heritability(h2) if h2 is not None else None,
+        heritability_class=h2_class,
         status="success",
     )
 
@@ -474,94 +469,95 @@ async def analyze_upload(request: UploadAnalysisRequest):
 
     env_col_for_mode = request.environment_column if request.mode == "multi" else None
 
-    for trait in request.trait_columns:
-        logger.info("Analyzing trait: %s", trait)
-        try:
-            balance_warnings = check_balance(
-                df=df,
-                genotype_col=request.genotype_column,
-                rep_col=request.rep_column,
-                trait_col=trait,
-                env_col=env_col_for_mode,
-            )
-            if balance_warnings:
-                for w in balance_warnings:
-                    logger.warning("Trait '%s': %s", trait, w)
+    # Bounded concurrency: Limit active R subprocesses to prevent Out-Of-Memory (OOM) 
+    # errors when processing massive datasets with 50+ traits.
+    MAX_CONCURRENT_R_PROCESSES = 4
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_R_PROCESSES)
 
-            observations = build_observations(
-                df=df,
-                genotype_col=request.genotype_column,
-                rep_col=request.rep_column,
-                trait_col=trait,
-                env_col=env_col_for_mode,
-            )
-
-            # r_engine.run_analysis() is the shared genetics core.
-            # It invokes genetics_analysis() in vivasense_genetics.R via
-            # subprocess and returns the parsed JSON as a plain dict that
-            # conforms to the GeneticsResponse schema.
-            result_dict = r_engine.run_analysis(
-                data=observations,
-                mode=request.mode,
-                trait_name=trait,
-                random_environment=request.random_environment,
-            )
-
-            # R returns status="ERROR" when computation fails (e.g. insufficient
-            # replication, singular model).  Treat that as a trait failure with a
-            # human-readable message rather than a Pydantic crash.
-            if result_dict.get("status") == "ERROR":
-                r_errors = result_dict.get("errors") or {}
-                r_msg = (
-                    result_dict.get("interpretation")
-                    or next(iter(r_errors.values()), None)
-                    or str(r_errors)
-                    or "R analysis returned ERROR"
+    async def analyze_single_trait(trait: str):
+        async with semaphore:
+            logger.info("Analyzing trait: %s", trait)
+            try:
+                balance_warnings = check_balance(
+                    df=df,
+                    genotype_col=request.genotype_column,
+                    rep_col=request.rep_column,
+                    trait_col=trait,
+                    env_col=env_col_for_mode,
                 )
-                raise RuntimeError(f"R ERROR: {r_msg}")
+                if balance_warnings:
+                    for w in balance_warnings:
+                        logger.warning("Trait '%s': %s", trait, w)
 
-            # Log R result structure before Pydantic validation (debug aid)
-            r_result = result_dict.get("result") or {}
-            logger.info(
-                "Trait '%s' R result keys: %s\n"
-                "  - descriptive_stats: %s\n"
-                "  - assumption_tests: %s\n"
-                "  - anova_table: %s\n"
-                "  - mean_separation: %s\n"
-                "  - breeding_implication: %s",
-                trait,
-                list(r_result.keys()),
-                r_result.get("descriptive_stats") is not None,
-                r_result.get("assumption_tests") is not None,
-                r_result.get("anova_table") is not None,
-                r_result.get("mean_separation") is not None,
-                r_result.get("breeding_implication") is not None,
-            )
+                observations = build_observations(
+                    df=df,
+                    genotype_col=request.genotype_column,
+                    rep_col=request.rep_column,
+                    trait_col=trait,
+                    env_col=env_col_for_mode,
+                )
 
-            # Validate the dict against the real GeneticsResponse schema.
-            validated = GeneticsResponse(**result_dict)
+                # Execute blocking R subprocess concurrently via ThreadPool
+                result_dict = await asyncio.to_thread(
+                    r_engine.run_analysis,
+                    data=observations,
+                    mode=request.mode,
+                    trait_name=trait,
+                    random_environment=request.random_environment,
+                )
 
+                # R returns status="ERROR" when computation fails
+                if result_dict.get("status") == "ERROR":
+                    r_errors = result_dict.get("errors") or {}
+                    r_msg = (
+                        result_dict.get("interpretation")
+                        or next(iter(r_errors.values()), None)
+                        or str(r_errors)
+                        or "R analysis returned ERROR"
+                    )
+                    raise RuntimeError(f"R ERROR: {r_msg}")
+
+                r_result = result_dict.get("result") or {}
+                
+                logger.info(
+                    "Trait '%s' R result keys: %s",
+                    trait, list(r_result.keys())
+                )
+
+                # Validate the dict against the real GeneticsResponse schema.
+                validated = GeneticsResponse(**result_dict)
+
+                return trait, "success", validated, balance_warnings, result_dict, None
+
+            except Exception as exc:
+                import traceback as _tb
+                print(f"[TRAIT_FAIL] trait={trait} exc_type={type(exc).__name__} exc={exc}", flush=True)
+                print(_tb.format_exc(), flush=True)
+                logger.warning("Trait '%s' failed: %s", trait, exc)
+                return trait, "failed", None, [], None, str(exc)
+
+    # Execute all trait analyses concurrently, respecting the semaphore limit
+    tasks = [analyze_single_trait(trait) for trait in request.trait_columns]
+    concurrent_results = await asyncio.gather(*tasks)
+
+    # Aggregate results into response payload
+    for trait, status, validated, balance_warnings, result_dict, error_msg in concurrent_results:
+        if status == "success":
             trait_results[trait] = TraitResult(
                 status="success",
                 analysis_result=validated,
                 data_warnings=balance_warnings,
             )
             summary_table.append(_build_summary_row(trait, result_dict))
-
-        except Exception as exc:
-            import traceback as _tb
-            print(f"[TRAIT_FAIL] trait={trait} exc_type={type(exc).__name__} exc={exc}", flush=True)
-            print(_tb.format_exc(), flush=True)
-            logger.warning("Trait '%s' failed: %s", trait, exc)
+        else:
             failed_traits.append(trait)
-            # analysis_result stays None — schema validates because it is Optional
             trait_results[trait] = TraitResult(
                 status="failed",
                 analysis_result=None,
-                error=str(exc),
+                error=error_msg,
             )
             summary_table.append(
-                SummaryTableRow(trait=trait, status="failed", error=str(exc))
+                SummaryTableRow(trait=trait, status="failed", error=error_msg)
             )
 
     # Build the full response first (without token so the object is complete)

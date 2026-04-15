@@ -23,6 +23,7 @@ import os
 import sys
 from pathlib import Path
 import logging
+from interpretation import InterpretationEngine
 
 # ============================================================================
 # LOGGING SETUP
@@ -293,6 +294,11 @@ class RGeneticsEngine:
         """
         
         try:
+            # Serialize input data directly to a temporary JSON file (Memory Optimized)
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp_json:
+                json.dump(data, tmp_json)
+                tmp_json_path = tmp_json.name
+
             # Create temporary R script that loads data and runs analysis
             with tempfile.NamedTemporaryFile(
                 mode='w',
@@ -300,18 +306,17 @@ class RGeneticsEngine:
                 delete=False
             ) as tmp_r:
                 
-                # Serialize input data as R code
-                data_json = json.dumps(data)
                 random_env_str = "TRUE" if random_environment else "FALSE"
+                # Escape file path for R (converts Windows \ to /)
+                r_json_path = tmp_json_path.replace('\\', '/')
                 
                 r_code = f'''
 # VivaSense Genetics Analysis Execution
 .libPaths(c("C:/Users/user/.gemini/antigravity/scratch/R_libs", .libPaths()))
 source("{self.r_script_path}")
 
-# Load data from JSON
-data_json <- '{data_json}'
-data_list <- jsonlite::fromJSON(data_json)
+# Load data from JSON file
+data_list <- jsonlite::fromJSON('{r_json_path}')
 data <- as.data.frame(data_list)
 
 # Convert to proper types
@@ -361,6 +366,27 @@ cat(json_output)
 
             analysis_result = json.loads(json_output)
 
+            # --- SINGLE SOURCE OF TRUTH INTEGRATION ---
+            try:
+                r_result = analysis_result.get("result") or {}
+                h2_val = r_result.get("heritability", {}).get("h2_broad_sense")
+                gp_dict = r_result.get("genetic_parameters", {})
+                
+                engine = InterpretationEngine()
+                support = engine.generate_decision_support(
+                    trait_name=trait_name,
+                    h2=float(h2_val) if h2_val is not None else 0.0,
+                    gam=float(gp_dict.get("GAM_percent") or 0.0),
+                    gcv=float(gp_dict.get("GCV") or 0.0),
+                    pcv=float(gp_dict.get("PCV") or 0.0)
+                )
+                
+                analysis_result["interpretation"] = support["interpretation"]
+                r_result["breeding_implication"] = support["recommendation"]
+            except Exception as engine_exc:
+                logger.warning("InterpretationEngine failed for trait '%s': %s", trait_name, engine_exc)
+            # ------------------------------------------
+
             logger.info("Analysis completed (status=%s, mode=%s)", analysis_result.get("status"), mode)
 
             return analysis_result
@@ -380,12 +406,13 @@ cat(json_output)
             raise
         
         finally:
-            # Clean up temporary R script
-            if 'tmp_r_path' in locals():
-                try:
-                    os.unlink(tmp_r_path)
-                except:
-                    pass
+            # Clean up temporary files
+            for tmp_file in ('tmp_r_path', 'tmp_json_path'):
+                if tmp_file in locals():
+                    try:
+                        os.unlink(locals()[tmp_file])
+                    except:
+                        pass
 
 
 # Initialize R engine (on app startup)
