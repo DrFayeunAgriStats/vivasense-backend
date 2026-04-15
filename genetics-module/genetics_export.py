@@ -755,7 +755,9 @@ def _add_interpretation_section(
     h2      = hp.get("h2_broad_sense")
     gam_pct = gp.get("GAM_percent")
 
-    if ar.interpretation:
+    # ANOVA interpretation comes from the Academic Mentor — never from the
+    # InterpretationEngine (which generates genetic parameter narrative).
+    if not is_anova and ar.interpretation:
         _add_heading(doc, "Statistical Interpretation", level=3)
         _add_body(doc, ar.interpretation)
         doc.add_paragraph()

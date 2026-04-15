@@ -527,17 +527,17 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
 
                 r_result = result_dict.get("result") or {}
                 
-                # Enforce strict module isolation - strip out genetic params if ANOVA
+                # Enforce strict module isolation — ANOVA never exposes genetic parameters
                 if actual_module == "anova":
                     if "result" in result_dict and isinstance(result_dict["result"], dict):
-                        result_dict["result"]["genetic_parameters"] = None
-                        result_dict["result"]["heritability"] = None
+                        # Use {} not None: GeneticsResult.heritability / genetic_parameters
+                        # are non-Optional Dict fields — None would fail Pydantic validation
+                        result_dict["result"]["genetic_parameters"] = {}
+                        result_dict["result"]["heritability"] = {}
+                    # Clear interpretation completely — ANOVA interpretation comes
+                    # from the Academic Mentor, not from InterpretationEngine
+                    result_dict["interpretation"] = None
                     result_dict["breeding_implication"] = None
-                    
-                    r_interp = result_dict.get("interpretation", "")
-                    if r_interp:
-                        cleaned_lines = [line for line in r_interp.split('\n') if not any(term in line.lower() for term in ["heritability", "h²", "gcv", "pcv", "gam", "genetic advance"])]
-                        result_dict["interpretation"] = "\n".join(cleaned_lines)
                 
                 logger.info(
                     "Trait '%s' R result keys: %s",

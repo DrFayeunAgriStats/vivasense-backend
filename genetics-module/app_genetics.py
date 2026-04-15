@@ -370,26 +370,11 @@ cat(json_output)
 
             analysis_result = json.loads(json_output)
 
-            # --- SINGLE SOURCE OF TRUTH INTEGRATION ---
-            try:
-                r_result = analysis_result.get("result") or {}
-                h2_val = r_result.get("heritability", {}).get("h2_broad_sense")
-                gp_dict = r_result.get("genetic_parameters", {})
-                
-                engine = InterpretationEngine()
-                support = engine.generate_decision_support(
-                    trait_name=trait_name,
-                    h2=float(h2_val) if h2_val is not None else 0.0,
-                    gam=float(gp_dict.get("GAM_percent") or 0.0),
-                    gcv=float(gp_dict.get("GCV") or 0.0),
-                    pcv=float(gp_dict.get("PCV") or 0.0)
-                )
-                
-                analysis_result["interpretation"] = support["interpretation"]
-                r_result["breeding_implication"] = support["recommendation"]
-            except Exception as engine_exc:
-                logger.warning("InterpretationEngine failed for trait '%s': %s", trait_name, engine_exc)
-            # ------------------------------------------
+            # InterpretationEngine (genetic parameter narrative) is intentionally
+            # NOT called here. run_analysis() is module-agnostic — it services
+            # ANOVA, Genetic Parameters, Correlation, and Heatmap requests.
+            # Genetic parameter interpretation belongs in analysis_genetic_parameters_routes.py
+            # and the Academic Mentor (/academic/interpret), not in this wrapper.
 
             logger.info("Analysis completed (status=%s, mode=%s)", analysis_result.get("status"), mode)
 
