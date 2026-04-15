@@ -566,7 +566,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                 analysis_result=validated,
                 data_warnings=balance_warnings,
             )
-                summary_table.append(_build_summary_row(trait, result_dict, actual_module))
+            summary_table.append(_build_summary_row(trait, result_dict, actual_module))
         else:
             failed_traits.append(trait)
             trait_results[trait] = TraitResult(
