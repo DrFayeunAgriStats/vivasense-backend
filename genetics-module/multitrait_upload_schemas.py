@@ -76,6 +76,11 @@ class UploadAnalysisRequest(BaseModel):
     mode: str = Field(..., pattern="^(single|multi)$")
     random_environment: bool = False
     selection_intensity: float = 1.4
+    module: Optional[str] = Field(
+        default=None,
+        description="Analysis module: 'anova' | 'genetic_parameters' | 'correlation' | 'heatmap'. "
+                    "Can also be sent as a URL query parameter. Body value takes priority.",
+    )
 
 
 # ============================================================================

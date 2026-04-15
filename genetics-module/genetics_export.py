@@ -1000,7 +1000,23 @@ def export_traits_to_word(
     trait_results = results.trait_results or {}
 
     if not trait_results:
-        doc.add_paragraph("No trait data found in the results.")
+        # Cache recovery found nothing (server restart / token expired).
+        # Render what we do know from summary_table so the document is not empty.
+        if results.summary_table:
+            doc.add_paragraph(
+                "Detailed trait sections could not be recovered — the server may have "
+                "restarted since the analysis was run. Please re-run the analysis and "
+                "download the report immediately afterwards.",
+                style="No Spacing",
+            )
+            doc.add_paragraph()
+            for row in results.summary_table:
+                status_line = f"{row.trait}: {row.status.upper()}"
+                if row.status == "failed" and row.error:
+                    status_line += f" — {row.error}"
+                doc.add_paragraph(f"• {status_line}", style="List Bullet")
+        else:
+            doc.add_paragraph("No trait data found in the results.")
         return doc
 
     for trait, tr in trait_results.items():
@@ -1219,6 +1235,16 @@ def _recover_from_cache(data: DownloadReportRequest) -> DownloadReportRequest:
     Returns the (possibly patched) DownloadReportRequest.
     """
     trait_names = list((data.trait_results or {}).keys())
+
+    # Fallback: if the frontend sent an empty trait_results dict, derive the
+    # trait names from summary_table (which is always populated).
+    if not trait_names and data.summary_table:
+        trait_names = [row.trait for row in data.summary_table]
+        logger.info(
+            "_recover_from_cache: trait_results empty — derived %d trait name(s) "
+            "from summary_table for cache lookup",
+            len(trait_names),
+        )
 
     # ── Step 1: token lookup ─────────────────────────────────────────────────
     cached = None

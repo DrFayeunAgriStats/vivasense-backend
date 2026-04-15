@@ -7,7 +7,7 @@ so that both app_genetics.py and multitrait_upload_schemas.py can import them
 without creating a circular dependency.
 """
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 from typing import Any, Dict, List, Optional, Union
 
 
@@ -74,6 +74,18 @@ class GeneticsResult(BaseModel):
     descriptive_stats: Optional[Dict[str, Any]] = None
     assumption_tests: Optional[Dict[str, Any]] = None
     breeding_implication: Optional[str] = None
+
+    @field_validator("variance_components", "heritability", "genetic_parameters", mode="before")
+    @classmethod
+    def coerce_dict_field(cls, v: Any) -> Dict[str, Any]:
+        """
+        R serialises empty/failed dict fields as null or [] in some edge cases
+        (singular models, insufficient degrees of freedom, etc.).
+        Coerce both to {} so Pydantic validation never fails on these fields.
+        """
+        if v is None or isinstance(v, list):
+            return {}
+        return v
 
 
 class GeneticsResponse(BaseModel):

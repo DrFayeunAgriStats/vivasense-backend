@@ -415,7 +415,9 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
     The R engine (vivasense_genetics.R) performs all ANOVA computations.
     This endpoint contains no genetics computation logic.
     """
-    actual_module = module or getattr(request, "module", "genetic_parameters")
+    # module can arrive as a URL query param OR in the JSON body.
+    # Body field takes priority; query param is the fallback; default is genetic_parameters.
+    actual_module = getattr(request, "module", None) or module or "genetic_parameters"
     print(f"[MODULE ROUTING] Module selected: {actual_module}", flush=True)
 
     # Lazy import: r_engine is None at module load time and is assigned by
