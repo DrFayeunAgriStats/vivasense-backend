@@ -416,6 +416,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
     This endpoint contains no genetics computation logic.
     """
     actual_module = module or getattr(request, "module", "genetic_parameters")
+    print(f"[MODULE ROUTING] Module selected: {actual_module}", flush=True)
 
     # Lazy import: r_engine is None at module load time and is assigned by
     # the FastAPI startup event in app_genetics.py. Accessing it through the
@@ -482,7 +483,8 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
 
     async def analyze_single_trait(trait: str):
         async with semaphore:
-            logger.info("Analyzing trait: %s", trait)
+            print(f"[PIPELINE] Running {actual_module.upper()} pipeline for trait: {trait}", flush=True)
+            logger.info("Analyzing trait: %s (module=%s)", trait, actual_module)
             try:
                 balance_warnings = check_balance(
                     df=df,
@@ -585,6 +587,8 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
         dataset_summary=dataset_summary,
         failed_traits=failed_traits,
     )
+
+    print(f"[EXPORT] Generating {actual_module.upper()} report — {len(summary_table)} trait(s) processed", flush=True)
 
     # Cache the complete response and attach the token.
     # The frontend echoes the token back when it calls /download-results,

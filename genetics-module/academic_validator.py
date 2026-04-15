@@ -104,6 +104,23 @@ _CAUSATION_PHRASES: List[Tuple[str, str, str]] = [
     (r"\bdetermines\b",           "CA_DETERMINES",  "Replace 'determines' — correlation does not determine outcomes"),
 ]
 
+# ── ANOVA module: genetic parameter terms are strictly forbidden ──────────────
+# ANOVA interprets variance partitioning and significance only.
+# Heritability, GAM, GCV, PCV, and selection language belong exclusively
+# to the Genetic Parameters module.
+_ANOVA_GENETIC_TERM_BLOCKS: List[Tuple[str, str, str]] = [
+    (r"\bheritabilit",              "ANOVA_HERIT",    "Remove 'heritability' — not reported in ANOVA module"),
+    (r"\bh[²2]\b",                  "ANOVA_H2",       "Remove 'h²' — heritability is not part of ANOVA output"),
+    (r"\bgcv\b",                    "ANOVA_GCV",      "Remove 'GCV' — genotypic coefficient of variation belongs to Genetic Parameters module"),
+    (r"\bpcv\b",                    "ANOVA_PCV",      "Remove 'PCV' — phenotypic coefficient of variation belongs to Genetic Parameters module"),
+    (r"\bgam\b",                    "ANOVA_GAM",      "Remove 'GAM' — genetic advance belongs to Genetic Parameters module"),
+    (r"genetic advance",            "ANOVA_GA",       "Remove 'genetic advance' — not part of ANOVA module"),
+    (r"\badditive gene",            "ANOVA_ADDITIVE", "Remove 'additive gene' — gene action language belongs to Genetic Parameters module"),
+    (r"\bnon[-\s]?additive\b",      "ANOVA_NONADD",   "Remove 'non-additive' — gene action language belongs to Genetic Parameters module"),
+    (r"genetic control",            "ANOVA_GENCTRL",  "Remove 'genetic control' — belongs to Genetic Parameters module"),
+    (r"direct phenotypic selection","ANOVA_DIRSEL",   "Remove 'direct phenotypic selection' — selection language belongs to Genetic Parameters module"),
+]
+
 # ── Scope phrases — at least one required ────────────────────────────────────
 _SCOPE_PHRASES: List[str] = [
     "in this experiment",
@@ -220,6 +237,19 @@ class AcademicValidator:
             for pattern, rule_id, message in _CAUSATION_PHRASES:
                 if re.search(pattern, lower):
                     match = re.search(pattern, lower)
+                    excerpt = cls._excerpt(text, match.start(), match.end() + 40)
+                    violations.append(ValidationViolation(
+                        rule_id=rule_id,
+                        severity="block",
+                        excerpt=excerpt,
+                        message=message,
+                    ))
+
+        # ── 4b. Genetic parameter terms forbidden in ANOVA output ─────────────
+        if module_type == "anova":
+            for pattern, rule_id, message in _ANOVA_GENETIC_TERM_BLOCKS:
+                match = re.search(pattern, lower)
+                if match:
                     excerpt = cls._excerpt(text, match.start(), match.end() + 40)
                     violations.append(ValidationViolation(
                         rule_id=rule_id,

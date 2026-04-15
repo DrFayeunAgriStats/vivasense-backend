@@ -461,31 +461,36 @@ def _add_executive_summary(
     doc: Document,
     trait: str,
     result: GeneticsResult,
+    is_anova: bool = False,
 ) -> None:
     _add_heading(doc, "Executive Summary", level=2)
 
-    hp = result.heritability if isinstance(result.heritability, dict) else {}
-    gp = result.genetic_parameters if isinstance(result.genetic_parameters, dict) else {}
-    h2 = hp.get("h2_broad_sense")
-    gcv = gp.get("GCV")
-    pcv = gp.get("PCV")
-    gam_pct = gp.get("GAM_percent")
-
-    h2_class = (
-        "High" if h2 is not None and h2 >= 0.6
-        else "Moderate" if h2 is not None and h2 >= 0.3
-        else "Low" if h2 is not None
-        else "—"
-    )
-
-    for key, val in [
+    fields = [
         ("Trait", trait),
         ("Grand Mean", _fmt(result.grand_mean)),
-        ("Heritability (H²)", f"{_fmt(h2, 3)} [{h2_class}]"),
-        ("GCV (%)", _fmt(gcv, 2)),
-        ("PCV (%)", _fmt(pcv, 2)),
-        ("GAM (%)", _fmt(gam_pct, 2)),
-    ]:
+    ]
+
+    if not is_anova:
+        hp = result.heritability if isinstance(result.heritability, dict) else {}
+        gp = result.genetic_parameters if isinstance(result.genetic_parameters, dict) else {}
+        h2 = hp.get("h2_broad_sense")
+        gcv = gp.get("GCV")
+        pcv = gp.get("PCV")
+        gam_pct = gp.get("GAM_percent")
+        h2_class = (
+            "High" if h2 is not None and h2 >= 0.6
+            else "Moderate" if h2 is not None and h2 >= 0.3
+            else "Low" if h2 is not None
+            else "—"
+        )
+        fields += [
+            ("Heritability (H²)", f"{_fmt(h2, 3)} [{h2_class}]"),
+            ("GCV (%)", _fmt(gcv, 2)),
+            ("PCV (%)", _fmt(pcv, 2)),
+            ("GAM (%)", _fmt(gam_pct, 2)),
+        ]
+
+    for key, val in fields:
         _add_kv(doc, key, val)
 
     doc.add_paragraph()
@@ -1049,7 +1054,7 @@ def export_traits_to_word(
 
         try:
             # ── 1. Executive Summary ─────────────────────────────────────────
-            _add_executive_summary(doc, trait, result)
+            _add_executive_summary(doc, trait, result, is_anova=is_anova)
             doc.add_paragraph()
 
             # ── 2. Descriptive Statistics ────────────────────────────────────
@@ -1082,13 +1087,13 @@ def export_traits_to_word(
                 _add_assumption_tests_section(doc, result.assumption_tests)
                 doc.add_paragraph()
 
-            # ── 6. Genetic Parameters ─────────────────────────────────────────
-        if not is_anova:
-            _add_genetic_parameters_section(doc, result)
-            doc.add_paragraph()
+            # ── 6. Genetic Parameters (skipped for ANOVA module) ──────────────
+            if not is_anova:
+                _add_genetic_parameters_section(doc, result)
+                doc.add_paragraph()
 
             # ── 7. Interpretation & Breeding Recommendations ──────────────────
-        _add_interpretation_section(doc, ar, result, is_anova=is_anova)
+            _add_interpretation_section(doc, ar, result, is_anova=is_anova)
 
         except Exception as exc:
             logger.error(

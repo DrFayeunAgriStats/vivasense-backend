@@ -142,8 +142,12 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # No credentials used — open to all origins (Lovable previews, production)
-    allow_credentials=False,
+    allow_origins=[
+        "https://www.fieldtoinsightacademy.com.ng",
+        "https://fieldtoinsightacademy.com.ng",
+        "http://localhost:5173",
+    ],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
