@@ -169,6 +169,16 @@ try:
 except Exception as _e:
     print(f"WARN: analysis-heatmap router not loaded — {_e}", flush=True)
 
+# Step 9.5 — Trait Association analysis module (/genetics/trait-association/analyze)
+_an_ta_ok = False
+try:
+    from analysis_trait_association_routes import router as trait_assoc_router  # noqa: E402
+    app.include_router(trait_assoc_router)
+    _an_ta_ok = True
+    print("Router registered: analysis-trait-association (/genetics/trait-association/analyze)", flush=True)
+except Exception as _e:
+    print(f"WARN: analysis-trait-association router not loaded — {_e}", flush=True)
+
 # Step 10 — Module-specific export endpoints (/export/*)
 _ex_mod_ok = False
 try:

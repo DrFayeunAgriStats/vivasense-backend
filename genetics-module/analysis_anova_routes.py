@@ -25,6 +25,7 @@ import base64
 import logging
 from typing import Dict, List, Optional
 
+import pandas as pd
 from fastapi import APIRouter, HTTPException
 
 from genetics_schemas import GeneticsResponse
@@ -36,46 +37,316 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Analysis"])
 
 
-def _build_anova_interpretation(trait: str, res) -> str:
-    """Build a precise, ANOVA-only interpretation string (no genetic parameters)."""
+def generate_anova_interpretation(
+    trait: str,
+    summary: Dict[str, Optional[float]],
+    precision_level: Optional[str],
+    cv_interpretation_flag: Optional[str],
+    genotype_significant: Optional[bool],
+    environment_significant: Optional[bool],
+    gxe_significant: Optional[bool],
+    ranking_caution: Optional[bool],
+    selection_feasible: Optional[bool],
+    mean_separation: Optional[Any],
+    n_genotypes: Optional[int],
+    n_environments: Optional[int],
+    n_reps: Optional[int],
+) -> str:
+    """Generate academic-grade ANOVA interpretation following VivaSense standards."""
+    
     parts = []
     
-    # 1. Experimental Structure
-    n_g = getattr(res, "n_genotypes", None)
-    n_e = getattr(res, "n_environments", None)
-    
-    if n_g is not None:
-        if n_e is not None and n_e > 1:
-            parts.append(f"An analysis of variance was conducted for {trait} evaluated across {n_g} genotypes and {n_e} environments.")
+    # 1. Overview
+    overview = []
+    if n_genotypes and n_environments and n_reps:
+        if n_environments > 1:
+            overview.append(f"This analysis evaluated {trait} across {n_genotypes} genotypes tested in {n_environments} environments with {n_reps} replications per genotype-environment combination.")
         else:
-            parts.append(f"An analysis of variance was conducted for {trait} evaluated across {n_g} genotypes.")
-
-    # 2. ANOVA Significance
-    if res.anova_table and "genotype" in res.anova_table.source:
+            overview.append(f"This analysis evaluated {trait} across {n_genotypes} genotypes with {n_reps} replications per genotype.")
+    
+    if summary.get("grand_mean") is not None:
+        overview.append(f"The overall mean performance for {trait} was {summary['grand_mean']:.2f}.")
+    
+    if cv_interpretation_flag == "cv_available" and summary.get("cv_percent") is not None:
+        cv = summary["cv_percent"]
+        overview.append(f"The coefficient of variation (CV) was {cv:.1f}%, indicating {'high' if cv > 20 else 'moderate' if cv > 10 else 'low'} experimental variability.")
+    else:
+        overview.append("Experimental precision could not be assessed due to insufficient data for CV calculation.")
+    
+    parts.append(" ".join(overview))
+    
+    # 2. Descriptive Interpretation
+    desc = []
+    if summary.get("grand_mean") is not None:
+        desc.append(f"The grand mean of {summary['grand_mean']:.2f} represents the average {trait} performance across all experimental units.")
+    
+    if summary.get("min") is not None and summary.get("max") is not None and summary.get("range") is not None:
+        desc.append(f"Performance ranged from {summary['min']:.2f} to {summary['max']:.2f}, with a total range of {summary['range']:.2f}, indicating {'substantial' if summary['range'] > summary['grand_mean'] * 0.5 else 'moderate'} variability among genotypes.")
+    
+    if precision_level == "good":
+        desc.append("The experimental precision was good, suggesting reliable and reproducible results.")
+    elif precision_level == "moderate":
+        desc.append("The experimental precision was moderate, indicating acceptable but not optimal experimental control.")
+    elif precision_level == "low":
+        desc.append("The experimental precision was low, suggesting high variability that warrants cautious interpretation of the results.")
+    elif cv_interpretation_flag == "cv_unavailable":
+        desc.append("Experimental precision could not be assessed, limiting confidence in the results.")
+    
+    parts.append(" ".join(desc))
+    
+    # 3. Genotype Effect
+    if genotype_significant is True:
+        parts.append(f"Significant genetic variation was detected for {trait} (p < 0.05), indicating that genotypes differ in their performance and that selection for improved {trait} is feasible.")
+    elif genotype_significant is False:
+        parts.append(f"No significant genetic variation was detected for {trait}, suggesting that the genotypes tested do not differ sufficiently to justify selection based on this trait.")
+    else:
+        parts.append(f"The significance of genetic variation for {trait} could not be determined.")
+    
+    # 4. Environment Effect
+    if environment_significant is True:
+        parts.append(f"Significant environmental variation was observed for {trait}, indicating that growing conditions substantially influence performance and that results may not be transferable across environments.")
+    elif environment_significant is False:
+        parts.append(f"No significant environmental variation was detected for {trait}, suggesting relatively consistent performance across the tested conditions.")
+    else:
+        parts.append(f"The significance of environmental variation for {trait} could not be determined.")
+    
+    # 5. G×E Interaction
+    if gxe_significant is True:
+        parts.append(f"A significant genotype × environment interaction was detected for {trait}, indicating that genotype performance is not consistent across environments. This suggests that no single genotype is universally superior, and selection strategies should account for environmental stability.")
+    elif gxe_significant is False:
+        parts.append(f"No significant genotype × environment interaction was detected for {trait}, suggesting relatively stable genotype performance across the tested environments.")
+    else:
+        parts.append(f"The presence of genotype × environment interaction for {trait} could not be determined.")
+    
+    # 6. Mean Performance and Ranking
+    ranking = []
+    if mean_separation and hasattr(mean_separation, 'genotype') and mean_separation.genotype:
         try:
-            idx = res.anova_table.source.index("genotype")
-            p = res.anova_table.p_value[idx]
-            f = res.anova_table.f_value[idx]
-            if p is not None:
-                sig = "significant" if p < 0.05 else "not significant"
-                p_str = "< 0.001" if p < 0.001 else f"{p:.4f}"
-                f_str = f"{f:.3f}" if f is not None else "—"
-                parts.append(f"The effect of genotype on {trait} was {sig} in this experiment (F = {f_str}, p = {p_str}).")
-        except (ValueError, IndexError):
-            pass
-            
-    # 3. Mean Separation
-    if res.mean_separation and res.mean_separation.genotype:
-        try:
-            top_g = res.mean_separation.genotype[0]
-            top_m = res.mean_separation.mean[0]
-            bot_g = res.mean_separation.genotype[-1]
-            bot_m = res.mean_separation.mean[-1]
-            parts.append(f"The highest mean among the genotypes tested was recorded in {top_g} ({top_m:.2f}), while the lowest was recorded in {bot_g} ({bot_m:.2f}).")
+            top_genotype = mean_separation.genotype[0]
+            top_mean = mean_separation.mean[0]
+            ranking.append(f"Based on overall means, {top_genotype} exhibited the highest {trait} performance ({top_mean:.2f}).")
         except (IndexError, TypeError):
-            pass
-            
-    return " ".join(parts) if parts else "ANOVA interpretation not available."
+            ranking.append("Mean separation analysis was available but could not be summarized.")
+    else:
+        ranking.append("Detailed mean separation analysis was not available.")
+    
+    if ranking_caution is True:
+        ranking.append("However, due to significant genotype × environment interaction, ranking based on overall means should be interpreted cautiously, as performance may vary across environments.")
+    
+    parts.append(" ".join(ranking))
+    
+    # 7. Breeding Interpretation
+    breeding = []
+    if selection_feasible is True:
+        breeding.append("The results suggest that selection for improved {trait} is feasible.")
+        if gxe_significant is False:
+            breeding.append("Given the absence of significant genotype × environment interaction, breeding efforts can focus on broad adaptation across environments.")
+        else:
+            breeding.append("However, due to significant genotype × environment interaction, breeding strategies should prioritize stability analysis and environment-specific selection.")
+    else:
+        breeding.append("The lack of significant genetic variation indicates that selection for {trait} may not be effective with the current germplasm.")
+    
+    breeding.append("The observed variability and experimental precision should guide the design of future experiments and breeding trials.")
+    parts.append(" ".join(breeding))
+    
+    # 8. Risk and Limitations
+    risks = []
+    if gxe_significant is True:
+        risks.append("The significant genotype × environment interaction represents a major limitation, as it complicates genotype evaluation and selection.")
+    if precision_level == "low":
+        risks.append("The low experimental precision introduces uncertainty in the results and suggests potential issues with experimental control or replication.")
+    if environment_significant is True:
+        risks.append("Strong environmental influence may limit the generalizability of these results to other locations or conditions.")
+    if not risks:
+        risks.append("No major experimental limitations were identified in this analysis.")
+    parts.append(" ".join(risks))
+    
+    # 9. Recommendation
+    recs = []
+    if gxe_significant is True:
+        recs.append("Conduct stability analysis (e.g., AMMI or GGE biplot) to identify genotypes with consistent performance across environments.")
+    if selection_feasible is True:
+        recs.append("Consider advancing promising genotypes to further evaluation, with appropriate caution regarding environmental interactions.")
+    if precision_level == "low":
+        recs.append("Improve experimental design by increasing replication or enhancing environmental control to reduce variability.")
+    recs.append("Integrate these ANOVA results with genetic parameter estimates (heritability, genetic coefficient of variation) for comprehensive trait evaluation.")
+    parts.append(" ".join(recs))
+    
+    # Format with headers
+    sections = [
+        "Overview",
+        "Descriptive Interpretation", 
+        "Genotype Effect",
+        "Environment Effect",
+        "G×E Interaction",
+        "Mean Performance and Ranking",
+        "Breeding Interpretation",
+        "Risk and Limitations",
+        "Recommendation"
+    ]
+    
+    formatted = []
+    for section, content in zip(sections, parts):
+        formatted.append(f"{section}\n{content}")
+    
+    return "\n\n".join(formatted)
+
+
+def compute_descriptive_stats(series: pd.Series) -> Dict[str, Optional[float]]:
+    """Compute numeric descriptive statistics for a trait series.
+
+    This uses raw observation-level data and ignores missing values.
+    If insufficient observations exist, variance/SD/SE are returned as None.
+    """
+    clean = pd.to_numeric(series, errors="coerce").dropna()
+    n = len(clean)
+
+    if n == 0:
+        return {
+            "grand_mean": None,
+            "standard_deviation": None,
+            "variance": None,
+            "standard_error": None,
+            "cv_percent": None,
+            "min": None,
+            "max": None,
+            "range": None,
+        }
+
+    grand_mean = float(clean.mean())
+    min_val = float(clean.min())
+    max_val = float(clean.max())
+    range_val = max_val - min_val
+
+    if n >= 2:
+        variance = float(clean.var(ddof=1))
+        standard_deviation = float(variance ** 0.5)
+        standard_error = float(standard_deviation / (n ** 0.5))
+    else:
+        variance = None
+        standard_deviation = None
+        standard_error = None
+
+    cv_percent = None
+    if grand_mean != 0 and standard_deviation is not None:
+        cv_percent = float((standard_deviation / grand_mean) * 100)
+
+    return {
+        "grand_mean": grand_mean,
+        "standard_deviation": standard_deviation,
+        "variance": variance,
+        "standard_error": standard_error,
+        "cv_percent": cv_percent,
+        "min": min_val,
+        "max": max_val,
+        "range": range_val,
+    }
+
+
+def compute_per_genotype_stats(
+    df: pd.DataFrame, trait_column: str, genotype_column: str
+) -> List[Dict[str, Optional[float]]]:
+    """Compute per-genotype descriptive statistics for the requested trait."""
+    if genotype_column not in df.columns:
+        return []
+
+    grouped = df[[genotype_column, trait_column]].copy()
+    grouped[trait_column] = pd.to_numeric(grouped[trait_column], errors="coerce")
+
+    stats: List[Dict[str, Optional[float]]] = []
+    for genotype, group in grouped.groupby(genotype_column, sort=True):
+        clean = group[trait_column].dropna()
+        n = len(clean)
+
+        if n == 0:
+            stats.append(
+                {
+                    "genotype": genotype,
+                    "mean": None,
+                    "sd": None,
+                    "cv_percent": None,
+                }
+            )
+            continue
+
+        mean_val = float(clean.mean())
+        sd_val = None
+        cv_percent = None
+
+        if n >= 2:
+            variance = float(clean.var(ddof=1))
+            sd_val = float(variance ** 0.5)
+            if mean_val != 0:
+                cv_percent = float((sd_val / mean_val) * 100)
+
+        stats.append(
+            {
+                "genotype": genotype,
+                "mean": mean_val,
+                "sd": sd_val,
+                "cv_percent": cv_percent,
+            }
+        )
+
+    return stats
+
+
+def classify_precision_level(cv_percent: Optional[float]) -> str:
+    """Classify experimental precision based on coefficient of variation."""
+    if cv_percent is None:
+        return "low"  # No CV available, assume low precision
+    if cv_percent < 10.0:
+        return "good"
+    elif cv_percent < 20.0:
+        return "moderate"
+    else:
+        return "low"
+
+
+def get_cv_interpretation_flag(cv_percent: Optional[float]) -> str:
+    """Return flag indicating if CV is available for interpretation."""
+    return "cv_available" if cv_percent is not None else "cv_unavailable"
+
+
+def is_genotype_effect_significant(anova_table) -> bool:
+    """Check if genotype effect is significant (p < 0.05)."""
+    if not anova_table or not hasattr(anova_table, "source") or not hasattr(anova_table, "p_value"):
+        return False
+    try:
+        idx = anova_table.source.index("genotype")
+        p_val = anova_table.p_value[idx]
+        return p_val is not None and p_val < 0.05
+    except (ValueError, IndexError):
+        return False
+
+
+def is_environment_effect_significant(anova_table) -> bool:
+    """Check if environment effect is significant (p < 0.05)."""
+    if not anova_table or not hasattr(anova_table, "source") or not hasattr(anova_table, "p_value"):
+        return False
+    try:
+        idx = anova_table.source.index("environment")
+        p_val = anova_table.p_value[idx]
+        return p_val is not None and p_val < 0.05
+    except (ValueError, IndexError):
+        return False
+
+
+def is_gxe_effect_significant(anova_table) -> bool:
+    """Check if genotype x environment interaction is significant (p < 0.05)."""
+    if not anova_table or not hasattr(anova_table, "source") or not hasattr(anova_table, "p_value"):
+        return False
+    # Look for common GxE terms
+    gxe_terms = ["genotype:environment", "environment:genotype", "GxE", "gxe"]
+    for term in gxe_terms:
+        try:
+            idx = anova_table.source.index(term)
+            p_val = anova_table.p_value[idx]
+            if p_val is not None and p_val < 0.05:
+                return True
+        except (ValueError, IndexError):
+            continue
+    return False
 
 
 @router.post(
@@ -171,6 +442,28 @@ async def analysis_anova(request: ModuleRequest):
             if res is None:
                 raise RuntimeError("R returned status OK but result object is empty")
 
+            trait_descriptive_stats = compute_descriptive_stats(df[trait])
+            per_genotype_stats = compute_per_genotype_stats(df, trait, geno_col)
+
+            # Build summary from descriptive stats
+            summary = {
+                "grand_mean": trait_descriptive_stats["grand_mean"],
+                "cv_percent": trait_descriptive_stats["cv_percent"],
+                "min": trait_descriptive_stats["min"],
+                "max": trait_descriptive_stats["max"],
+                "range": trait_descriptive_stats["range"],
+                "standard_error": trait_descriptive_stats["standard_error"],
+            }
+
+            # Classify precision and flags
+            precision_level = classify_precision_level(trait_descriptive_stats["cv_percent"])
+            cv_interpretation_flag = get_cv_interpretation_flag(trait_descriptive_stats["cv_percent"])
+            ranking_caution = request.gxe_significant
+            selection_feasible = is_genotype_effect_significant(res.anova_table)
+            genotype_significant = is_genotype_effect_significant(res.anova_table)
+            environment_significant = is_environment_effect_significant(res.anova_table)
+            gxe_significant = is_gxe_effect_significant(res.anova_table)
+
             result_obj = AnovaTraitResult(
                 trait=trait,
                 status="success",
@@ -179,10 +472,33 @@ async def analysis_anova(request: ModuleRequest):
                 n_reps=res.n_reps,
                 n_environments=res.n_environments,
                 anova_table=res.anova_table,
-                descriptive_stats=res.descriptive_stats,
+                descriptive_stats=trait_descriptive_stats,
+                per_genotype_stats=per_genotype_stats,
+                summary=summary,
+                precision_level=precision_level,
+                cv_interpretation_flag=cv_interpretation_flag,
+                ranking_caution=ranking_caution,
+                selection_feasible=selection_feasible,
+                genotype_significant=genotype_significant,
+                environment_significant=environment_significant,
+                gxe_significant=gxe_significant,
                 assumption_tests=res.assumption_tests,
                 mean_separation=res.mean_separation,
-                interpretation=_build_anova_interpretation(trait, res),
+                interpretation=generate_anova_interpretation(
+                    trait=trait,
+                    summary=summary,
+                    precision_level=precision_level,
+                    cv_interpretation_flag=cv_interpretation_flag,
+                    genotype_significant=genotype_significant,
+                    environment_significant=environment_significant,
+                    gxe_significant=gxe_significant,
+                    ranking_caution=ranking_caution,
+                    selection_feasible=selection_feasible,
+                    mean_separation=res.mean_separation,
+                    n_genotypes=res.n_genotypes,
+                    n_environments=res.n_environments,
+                    n_reps=res.n_reps,
+                ),
                 data_warnings=balance_warnings,
             )
             return trait, "success", result_obj

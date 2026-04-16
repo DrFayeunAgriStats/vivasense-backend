@@ -63,6 +63,28 @@ class ModuleRequest(BaseModel):
 # ANOVA MODULE
 # ============================================================================
 
+class DescriptiveStats(BaseModel):
+    """Numerical descriptive statistics computed from trait observations."""
+    grand_mean: Optional[float] = None
+    standard_deviation: Optional[float] = None
+    variance: Optional[float] = None
+    standard_error: Optional[float] = None
+    cv_percent: Optional[float] = None
+    min: Optional[float] = None
+    max: Optional[float] = None
+    range: Optional[float] = None
+
+
+class SummaryStats(BaseModel):
+    """Structured summary of key descriptive statistics for interpretation."""
+    grand_mean: Optional[float] = None
+    cv_percent: Optional[float] = None
+    min: Optional[float] = None
+    max: Optional[float] = None
+    range: Optional[float] = None
+    standard_error: Optional[float] = None
+
+
 class AnovaTraitResult(BaseModel):
     """Per-trait result slice returned by the ANOVA module."""
     trait: str
@@ -72,7 +94,16 @@ class AnovaTraitResult(BaseModel):
     n_reps: Optional[int] = None
     n_environments: Optional[int] = None
     anova_table: Optional[AnovaTable] = None
-    descriptive_stats: Optional[Dict[str, Any]] = None
+    descriptive_stats: Optional[DescriptiveStats] = None
+    per_genotype_stats: Optional[List[GenotypeDescriptiveStats]] = None
+    summary: Optional[SummaryStats] = None
+    precision_level: Optional[str] = None  # "good" | "moderate" | "low"
+    cv_interpretation_flag: Optional[str] = None  # "cv_available" | "cv_unavailable"
+    ranking_caution: Optional[bool] = None
+    selection_feasible: Optional[bool] = None
+    genotype_significant: Optional[bool] = None
+    environment_significant: Optional[bool] = None
+    gxe_significant: Optional[bool] = None
     assumption_tests: Optional[Dict[str, Any]] = None
     mean_separation: Optional[MeanSeparation] = None
     interpretation: Optional[str] = None
