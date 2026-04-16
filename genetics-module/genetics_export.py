@@ -756,9 +756,8 @@ def _add_interpretation_section(
     h2      = hp.get("h2_broad_sense")
     gam_pct = gp.get("GAM_percent")
 
-    # ANOVA interpretation comes from the Academic Mentor
+    # ANOVA interpretation comes from the per-trait result or is generated on-the-fly
     if is_anova:
-        # For ANOVA data, interpretation comes from tr.interpretation if available, else ar.interpretation
         interpretation_text = None
         if hasattr(tr, 'interpretation') and tr.interpretation:
             interpretation_text = tr.interpretation
@@ -767,13 +766,54 @@ def _add_interpretation_section(
             interpretation_text = ar.interpretation
             logger.info("Using ANOVA interpretation from analysis_result: %d characters", len(interpretation_text))
         else:
-            logger.warning("No ANOVA interpretation available in response")
-            _add_body(doc, "[Interpretation not available]", italic=True)
-        
+            # Generate ANOVA interpretation on-the-fly from result data
+            logger.info("No ANOVA interpretation cached — generating from result data for trait '%s'", trait_name)
+            try:
+                from analysis_anova_routes import (
+                    generate_anova_interpretation,
+                    classify_precision_level,
+                    get_cv_interpretation_flag,
+                    is_genotype_effect_significant,
+                    is_environment_effect_significant,
+                    is_gxe_effect_significant,
+                )
+                ds = result.descriptive_stats or {}
+                cv_pct = ds.get("cv_percent")
+                summary = {
+                    "grand_mean":      result.grand_mean,
+                    "cv_percent":      cv_pct,
+                    "min":             ds.get("min"),
+                    "max":             ds.get("max"),
+                    "range":           ds.get("range"),
+                    "standard_error":  ds.get("standard_error"),
+                }
+                gxe_sig = is_gxe_effect_significant(result.anova_table)
+                interpretation_text = generate_anova_interpretation(
+                    trait=trait_name,
+                    summary=summary,
+                    precision_level=classify_precision_level(cv_pct),
+                    cv_interpretation_flag=get_cv_interpretation_flag(cv_pct),
+                    genotype_significant=is_genotype_effect_significant(result.anova_table),
+                    environment_significant=is_environment_effect_significant(result.anova_table),
+                    gxe_significant=gxe_sig,
+                    ranking_caution=gxe_sig,
+                    selection_feasible=is_genotype_effect_significant(result.anova_table),
+                    mean_separation=result.mean_separation,
+                    n_genotypes=result.n_genotypes,
+                    n_environments=result.n_environments,
+                    n_reps=result.n_reps,
+                )
+                logger.info("Generated ANOVA interpretation on-the-fly: %d characters", len(interpretation_text))
+            except Exception as _exc:
+                logger.warning("Could not generate ANOVA interpretation on-the-fly: %s", _exc)
+                interpretation_text = None
+
         if interpretation_text:
             _add_heading(doc, "Statistical Interpretation", level=3)
             _add_body(doc, interpretation_text)
             doc.add_paragraph()
+        else:
+            logger.warning("ANOVA interpretation unavailable and could not be generated for trait '%s'", trait_name)
     else:
         # Genetic parameters interpretation
         interpretation_text = None

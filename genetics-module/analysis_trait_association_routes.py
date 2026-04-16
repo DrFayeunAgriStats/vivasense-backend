@@ -22,6 +22,7 @@ from trait_relationships_routes import (
     _build_wide_records,
     tr_engine,
 )
+from trait_association_interpretation import generate_trait_association_interpretation
 from multitrait_upload_routes import read_file
 from module_schemas import TraitAssociationModuleRequest, TraitAssociationModuleResponse, SignificantPair, StrongestPair, TraitAssociationSummary, TraitAssociationHeatmap, InterpretationPlaceholder
 import dataset_cache
@@ -279,8 +280,17 @@ async def analyze_trait_association(request: TraitAssociationModuleRequest):
         type="correlation_heatmap_ready"
     )
 
-    # Interpretation placeholder
-    interpretation_placeholder = InterpretationPlaceholder()
+    # Generate actual interpretation (not placeholder)
+    interpretation_text = generate_trait_association_interpretation(
+        n_traits=len(trait_names),
+        n_observations=n_observations,
+        n_significant_pairs=len(significant_pairs),
+        strongest_positive=strongest_positive.dict() if strongest_positive else None,
+        strongest_negative=strongest_negative.dict() if strongest_negative else None,
+        risk_flags=risk_flags,
+        gxe_significant=request.gxe_significant,
+        environment_context=request.environment_context
+    )
 
     return TraitAssociationModuleResponse(
         analysis_unit=request.analysis_unit,
@@ -297,7 +307,7 @@ async def analyze_trait_association(request: TraitAssociationModuleRequest):
         risk_flags=risk_flags,
         summary=summary,
         heatmap=heatmap,
-        interpretation_placeholder=interpretation_placeholder,
+        interpretation=interpretation_text,
         dataset_token=request.dataset_token,
         warnings=warnings,
     )

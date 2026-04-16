@@ -32,6 +32,9 @@ from fastapi import APIRouter, HTTPException
 
 from trait_relationships_schemas import CorrelationRequest, CorrelationResponse
 
+# Import the new trait association interpretation function (no circular dependencies)
+from trait_association_interpretation import generate_trait_association_interpretation
+
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Trait Relationships"])
 
@@ -149,6 +152,55 @@ def init_trait_relationships_engine() -> None:
         logger.info("TraitRelationshipsEngine ready")
     except FileNotFoundError as exc:
         logger.error("TraitRelationshipsEngine unavailable: %s", exc)
+
+
+def _compute_significant_pairs_and_strongest(
+    trait_names: List[str],
+    r_matrix: List[List[Optional[float]]],
+    p_matrix: List[List[Optional[float]]],
+    alpha: float = 0.05
+) -> tuple[int, Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """
+    Compute significant pairs count and strongest positive/negative pairs.
+    
+    Returns:
+        n_significant_pairs: Number of significant pairs
+        strongest_positive: Dict with trait_1, trait_2, r for strongest positive correlation
+        strongest_negative: Dict with trait_1, trait_2, r for strongest negative correlation
+    """
+    n_significant_pairs = 0
+    strongest_positive = None
+    strongest_negative = None
+    max_positive_r = 0.0
+    max_negative_r = 0.0
+    
+    n = len(trait_names)
+    for i in range(n):
+        for j in range(i + 1, n):  # Upper triangle only
+            r_val = r_matrix[i][j] if r_matrix and i < len(r_matrix) and j < len(r_matrix[i]) else None
+            p_val = p_matrix[i][j] if p_matrix and i < len(p_matrix) and j < len(p_matrix[i]) else None
+            
+            if r_val is not None and p_val is not None and p_val <= alpha:
+                n_significant_pairs += 1
+            
+            # Track strongest pairs
+            if r_val is not None:
+                if r_val > 0 and r_val > max_positive_r:
+                    max_positive_r = r_val
+                    strongest_positive = {
+                        "trait_1": trait_names[i],
+                        "trait_2": trait_names[j],
+                        "r": r_val
+                    }
+                elif r_val < 0 and r_val < max_negative_r:
+                    max_negative_r = r_val
+                    strongest_negative = {
+                        "trait_1": trait_names[i],
+                        "trait_2": trait_names[j],
+                        "r": r_val
+                    }
+    
+    return n_significant_pairs, strongest_positive, strongest_negative
 
 
 # ============================================================================
@@ -290,7 +342,37 @@ async def compute_correlation(request: CorrelationRequest):
         logger.error("Correlation R error: %s", exc)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    # Extract data from R result
+    trait_names = result.get("trait_names", request.trait_columns)
+    n_observations = result.get("n_observations", 0)
+    r_matrix = result.get("r_matrix", [])
+    p_matrix = result.get("p_matrix", [])
+    warnings = result.get("warnings", [])
+    
+    # Compute significant pairs and strongest correlations for interpretation
+    n_significant_pairs, strongest_positive, strongest_negative = _compute_significant_pairs_and_strongest(
+        trait_names, r_matrix, p_matrix
+    )
+    
+    # Compute risk flags (assume single environment, no GxE for correlation endpoint)
+    risk_flags = _compute_risk_flags(n_observations, "genotype_mean", False)
+    
+    # Generate new academic-grade interpretation instead of using R script's legacy text
+    interpretation_text = generate_trait_association_interpretation(
+        n_traits=len(trait_names),
+        n_observations=n_observations,
+        n_significant_pairs=n_significant_pairs,
+        strongest_positive=strongest_positive,
+        strongest_negative=strongest_negative,
+        risk_flags=risk_flags,
+        gxe_significant=False,  # Correlation endpoint doesn't handle GxE
+        environment_context="single_environment"  # Default for correlation endpoint
+    )
+    
+    # Override the R script's interpretation with the new validated interpretation
+    result["interpretation"] = interpretation_text
     result["statistical_note"] = _STATISTICAL_NOTE
+    
     import json as _json
     logger.info("[correlation] response keys: %s", list(result.keys()))
     logger.info("[correlation] trait_names: %s", result.get("trait_names"))
@@ -299,4 +381,6 @@ async def compute_correlation(request: CorrelationRequest):
                 len(result.get("r_matrix", [])),
                 len(result["r_matrix"][0]) if result.get("r_matrix") else 0)
     logger.info("[correlation] warnings: %s", result.get("warnings"))
+    logger.info("[correlation] new interpretation generated: %s", bool(interpretation_text))
+    
     return CorrelationResponse(**result)

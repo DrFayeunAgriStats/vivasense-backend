@@ -23,7 +23,7 @@ does not trigger a second R subprocess call.
 import asyncio
 import base64
 import logging
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException
@@ -458,11 +458,12 @@ async def analysis_anova(request: ModuleRequest):
             # Classify precision and flags
             precision_level = classify_precision_level(trait_descriptive_stats["cv_percent"])
             cv_interpretation_flag = get_cv_interpretation_flag(trait_descriptive_stats["cv_percent"])
-            ranking_caution = request.gxe_significant
-            selection_feasible = is_genotype_effect_significant(res.anova_table)
             genotype_significant = is_genotype_effect_significant(res.anova_table)
             environment_significant = is_environment_effect_significant(res.anova_table)
             gxe_significant = is_gxe_effect_significant(res.anova_table)
+            # ranking_caution follows directly from GxE significance
+            ranking_caution = gxe_significant
+            selection_feasible = genotype_significant
 
             # Generate ANOVA interpretation
             anova_interpretation = generate_anova_interpretation(

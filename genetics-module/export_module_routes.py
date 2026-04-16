@@ -726,6 +726,11 @@ async def export_correlation_word(data: CorrelationExportRequest):
             statistical_note=data.statistical_note or "",
         )
 
+        logger.info(
+            "Correlation export: processing interpretation (length: %d chars)",
+            len(corr.interpretation)
+        )
+
         _add_correlation_section(doc, corr)
 
         _scope_paragraph(doc)
