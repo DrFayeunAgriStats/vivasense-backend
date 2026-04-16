@@ -720,15 +720,43 @@ def _add_genetic_parameters_section(doc: Document, result: GeneticsResult) -> No
         _add_stat_table(doc, ["Parameter", "Value"], ga_rows, numeric_cols={1})
         doc.add_paragraph()
 
-    # GCV vs PCV text
+    # GCV vs PCV text — conditional on ANOVA significance flags derived from the table
     if gcv is not None and pcv is not None:
         diff = abs(gcv - pcv)
+
+        # Derive significance flags from the ANOVA table that lives on this result
+        _at = result.anova_table
+        def _sig(src):
+            if _at is None or not hasattr(_at, "source"):
+                return False
+            try:
+                idx = _at.source.index(src)
+                p = _at.p_value[idx]
+                return p is not None and float(p) < 0.05
+            except (ValueError, IndexError, TypeError):
+                return False
+
+        _env_active = _sig("environment") or any(
+            _sig(t) for t in ["genotype:environment", "environment:genotype", "GxE", "gxe"]
+        )
+
         if diff < 1.0:
-            comment = (
-                f"GCV ({_fmt(gcv, 2)}%) ≈ PCV ({_fmt(pcv, 2)}%) — "
-                "genetic and phenotypic variances are nearly identical, "
-                "indicating minimal environmental influence on this trait."
-            )
+            if _env_active:
+                comment = (
+                    f"GCV ({_fmt(gcv, 2)}%) ≈ PCV ({_fmt(pcv, 2)}%) — "
+                    "limited variance inflation between the genetic and phenotypic "
+                    "coefficients of variation. However, the ANOVA results indicate "
+                    "significant environmental effects or genotype × environment interaction, "
+                    "suggesting that environmental conditions may still affect trait expression "
+                    "and genotype rankings across environments."
+                )
+            else:
+                comment = (
+                    f"GCV ({_fmt(gcv, 2)}%) ≈ PCV ({_fmt(pcv, 2)}%) — "
+                    "limited variance inflation between the genetic and phenotypic "
+                    "coefficients of variation in this experiment. "
+                    "Environmental effects on this trait appear modest under the conditions tested."
+                )
         elif gcv < pcv:
             comment = (
                 f"GCV ({_fmt(gcv, 2)}%) < PCV ({_fmt(pcv, 2)}%) — "

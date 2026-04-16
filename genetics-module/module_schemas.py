@@ -146,6 +146,10 @@ class GeneticParametersTraitResult(BaseModel):
     gam: Optional[float] = None
     breeding_implication: Optional[str] = None
     interpretation: Optional[str] = None
+    # ANOVA significance flags — forwarded from the ANOVA table so the export
+    # layer can apply conditional GCV/PCV commentary without re-running the model.
+    environment_significant: Optional[bool] = None
+    gxe_significant: Optional[bool] = None
     data_warnings: List[str] = Field(default_factory=list)
     error: Optional[str] = None
 

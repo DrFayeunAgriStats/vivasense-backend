@@ -14,6 +14,8 @@ def generate_genetics_interpretation(
     gam: Optional[float],
     gcv: Optional[float],
     pcv: Optional[float],
+    gxe_significant: bool = False,
+    environment_significant: bool = False,
 ) -> Tuple[str, str]:
     """
     Generate academic-grade genetics interpretation following VivaSense standards.
@@ -85,16 +87,36 @@ def generate_genetics_interpretation(
     if gcv is not None and pcv is not None:
         try:
             diff = float(pcv) - float(gcv)
+            env_active = gxe_significant or environment_significant
             if diff <= 2:
-                interpretation += (
-                    f" The GCV ({gcv:.2f}%) is only slightly lower than the PCV ({pcv:.2f}%), "
-                    "indicating limited environmental influence on trait expression."
-                )
+                if env_active:
+                    interpretation += (
+                        f" The GCV ({gcv:.2f}%) is similar to the PCV ({pcv:.2f}%), "
+                        "indicating limited variance inflation between the genetic and phenotypic coefficients of variation. "
+                        "However, the ANOVA results indicate significant environmental effects or genotype × environment "
+                        "interaction for this trait, suggesting that environmental conditions may still influence trait "
+                        "expression and alter genotype rankings across environments. "
+                        "The GCV–PCV comparison alone should not be taken as evidence of negligible environmental effects."
+                    )
+                else:
+                    interpretation += (
+                        f" The GCV ({gcv:.2f}%) is similar to the PCV ({pcv:.2f}%), "
+                        "indicating limited variance inflation between the genetic and phenotypic coefficients of variation "
+                        "in this experiment. Environmental effects on this trait appear modest under the conditions tested."
+                    )
             elif diff <= 7:
-                interpretation += (
-                    f" The GCV ({gcv:.2f}%) is moderately lower than the PCV ({pcv:.2f}%), "
-                    "suggesting appreciable but not dominant environmental influence."
-                )
+                if env_active:
+                    interpretation += (
+                        f" The GCV ({gcv:.2f}%) is moderately lower than the PCV ({pcv:.2f}%), "
+                        "suggesting appreciable environmental influence on trait expression. "
+                        "This is consistent with the ANOVA evidence of significant environmental or "
+                        "genotype × environment effects."
+                    )
+                else:
+                    interpretation += (
+                        f" The GCV ({gcv:.2f}%) is moderately lower than the PCV ({pcv:.2f}%), "
+                        "suggesting appreciable but not dominant environmental influence."
+                    )
             else:
                 interpretation += (
                     f" The GCV ({gcv:.2f}%) is substantially lower than the PCV ({pcv:.2f}%), "
