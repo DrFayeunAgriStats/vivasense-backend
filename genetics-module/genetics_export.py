@@ -747,7 +747,7 @@ def _add_genetic_parameters_section(doc: Document, result: GeneticsResult) -> No
 # ============================================================================
 
 def _add_interpretation_section(
-    doc: Document, ar: GeneticsResponse, result: GeneticsResult, trait_name: str, is_anova: bool = False
+    doc: Document, ar: GeneticsResponse, result: GeneticsResult, trait_name: str, tr: TraitResult, is_anova: bool = False
 ) -> None:
     _add_heading(doc, "Interpretation & Breeding Recommendations", level=2)
 
@@ -758,33 +758,58 @@ def _add_interpretation_section(
 
     # ANOVA interpretation comes from the Academic Mentor
     if is_anova:
-        # For ANOVA data, interpretation comes from ar.interpretation if available
-        if ar.interpretation:
-            _add_heading(doc, "Statistical Interpretation", level=3)
-            _add_body(doc, ar.interpretation)
-            logger.info("Added ANOVA interpretation: %d characters", len(ar.interpretation))
+        # For ANOVA data, interpretation comes from tr.interpretation if available, else ar.interpretation
+        interpretation_text = None
+        if hasattr(tr, 'interpretation') and tr.interpretation:
+            interpretation_text = tr.interpretation
+            logger.info("Using ANOVA interpretation from trait_result: %d characters", len(interpretation_text))
+        elif ar.interpretation:
+            interpretation_text = ar.interpretation
+            logger.info("Using ANOVA interpretation from analysis_result: %d characters", len(interpretation_text))
         else:
             logger.warning("No ANOVA interpretation available in response")
             _add_body(doc, "[Interpretation not available]", italic=True)
-    elif True:  # Always generate for genetic parameters
-        # Genetic parameters interpretation - generate on the fly
-        gcv_val = gp.get("GCV")
-        pcv_val = gp.get("PCV")
-        interpretation, _ = generate_genetics_interpretation(
-            trait_name=trait_name,
-            h2=h2,
-            gam=gam_pct,
-            gcv=gcv_val,
-            pcv=pcv_val,
-        )
-        _add_heading(doc, "Statistical Interpretation", level=3)
-        _add_body(doc, interpretation)
-        doc.add_paragraph()
+        
+        if interpretation_text:
+            _add_heading(doc, "Statistical Interpretation", level=3)
+            _add_body(doc, interpretation_text)
+            doc.add_paragraph()
+    else:
+        # Genetic parameters interpretation
+        interpretation_text = None
+        if hasattr(tr, 'interpretation') and tr.interpretation:
+            interpretation_text = tr.interpretation
+            logger.info("Using Genetics interpretation from trait_result: %d characters", len(interpretation_text))
+        else:
+            # Fallback to generating on the fly
+            gcv_val = gp.get("GCV")
+            pcv_val = gp.get("PCV")
+            interpretation_text, _ = generate_genetics_interpretation(
+                trait_name=trait_name,
+                h2=h2,
+                gam=gam_pct,
+                gcv=gcv_val,
+                pcv=pcv_val,
+            )
+            logger.info("Generated Genetics interpretation on the fly: %d characters", len(interpretation_text))
+        
+        if interpretation_text:
+            _add_heading(doc, "Statistical Interpretation", level=3)
+            _add_body(doc, interpretation_text)
+            doc.add_paragraph()
 
-    # Breeding implication from the R engine (if present)
-    if result.breeding_implication and not is_anova:
+    # Breeding implication
+    breeding_text = None
+    if hasattr(tr, 'breeding_implication') and tr.breeding_implication:
+        breeding_text = tr.breeding_implication
+        logger.info("Using breeding implication from trait_result: %d characters", len(breeding_text))
+    elif result.breeding_implication and not is_anova:
+        breeding_text = result.breeding_implication
+        logger.info("Using breeding implication from analysis_result: %d characters", len(breeding_text))
+    
+    if breeding_text:
         _add_heading(doc, "Breeding Implication", level=3)
-        _add_body(doc, result.breeding_implication)
+        _add_body(doc, breeding_text)
         doc.add_paragraph()
 
 
@@ -907,7 +932,16 @@ def _add_trait_section(
     _add_genetic_parameters_section(doc, result)
     doc.add_paragraph()
 
-    _add_interpretation_section(doc, ar, result, trait_name)
+    # Log interpretation details before rendering
+    tr_interp_len = len(getattr(tr, 'interpretation', '') or '')
+    ar_interp_len = len(getattr(ar, 'interpretation', '') or '')
+    tr_breeding_len = len(getattr(tr, 'breeding_implication', '') or '')
+    logger.info(
+        "Interpretation logging for trait '%s': tr.interpretation=%d chars, ar.interpretation=%d chars, tr.breeding_implication=%d chars",
+        trait_name, tr_interp_len, ar_interp_len, tr_breeding_len
+    )
+
+    _add_interpretation_section(doc, ar, result, trait_name, tr)
 
 
 # ============================================================================
@@ -1130,7 +1164,15 @@ def export_traits_to_word(
                 doc.add_paragraph()
 
             # ── 7. Interpretation & Breeding Recommendations ──────────────────
-            _add_interpretation_section(doc, ar, result, trait, is_anova=is_anova)
+            # Log interpretation details before rendering
+            tr_interp_len = len(getattr(tr, 'interpretation', '') or '')
+            ar_interp_len = len(getattr(ar, 'interpretation', '') or '')
+            tr_breeding_len = len(getattr(tr, 'breeding_implication', '') or '')
+            logger.info(
+                "Interpretation logging for trait '%s' (ANOVA): tr.interpretation=%d chars, ar.interpretation=%d chars, tr.breeding_implication=%d chars",
+                trait, tr_interp_len, ar_interp_len, tr_breeding_len
+            )
+            _add_interpretation_section(doc, ar, result, trait, tr, is_anova=is_anova)
 
         except Exception as exc:
             logger.error(
