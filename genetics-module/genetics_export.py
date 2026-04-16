@@ -47,6 +47,7 @@ from genetics_schemas import AnovaTable, MeanSeparation, GeneticsResult, Genetic
 from multitrait_upload_schemas import UploadAnalysisResponse, SummaryTableRow, TraitResult
 from trait_relationships_schemas import CorrelationResponse
 import result_cache
+from genetics_interpretation import generate_genetics_interpretation
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Export"])
@@ -746,7 +747,7 @@ def _add_genetic_parameters_section(doc: Document, result: GeneticsResult) -> No
 # ============================================================================
 
 def _add_interpretation_section(
-    doc: Document, ar: GeneticsResponse, result: GeneticsResult, is_anova: bool = False
+    doc: Document, ar: GeneticsResponse, result: GeneticsResult, trait_name: str, is_anova: bool = False
 ) -> None:
     _add_heading(doc, "Interpretation & Breeding Recommendations", level=2)
 
@@ -765,10 +766,19 @@ def _add_interpretation_section(
         else:
             logger.warning("No ANOVA interpretation available in response")
             _add_body(doc, "[Interpretation not available]", italic=True)
-    elif ar.interpretation:
-        # Genetic parameters interpretation
+    elif True:  # Always generate for genetic parameters
+        # Genetic parameters interpretation - generate on the fly
+        gcv_val = gp.get("GCV")
+        pcv_val = gp.get("PCV")
+        interpretation, _ = generate_genetics_interpretation(
+            trait_name=trait_name,
+            h2=h2,
+            gam=gam_pct,
+            gcv=gcv_val,
+            pcv=pcv_val,
+        )
         _add_heading(doc, "Statistical Interpretation", level=3)
-        _add_body(doc, ar.interpretation)
+        _add_body(doc, interpretation)
         doc.add_paragraph()
 
     # Breeding implication from the R engine (if present)
@@ -897,7 +907,7 @@ def _add_trait_section(
     _add_genetic_parameters_section(doc, result)
     doc.add_paragraph()
 
-    _add_interpretation_section(doc, ar, result)
+    _add_interpretation_section(doc, ar, result, trait_name)
 
 
 # ============================================================================
@@ -1120,7 +1130,7 @@ def export_traits_to_word(
                 doc.add_paragraph()
 
             # ── 7. Interpretation & Breeding Recommendations ──────────────────
-            _add_interpretation_section(doc, ar, result, is_anova=is_anova)
+            _add_interpretation_section(doc, ar, result, trait, is_anova=is_anova)
 
         except Exception as exc:
             logger.error(
