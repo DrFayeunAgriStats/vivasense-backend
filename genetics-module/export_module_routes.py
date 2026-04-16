@@ -467,6 +467,18 @@ async def export_anova_word(data: AnovaExportRequest):
         n_success  = sum(1 for tr in data.trait_results.values() if tr.status == "success")
         mode_label = "Multi-environment" if data.mode == "multi" else "Single-environment"
 
+        logger.info(
+            "ANOVA export started: %d traits, %d successful",
+            n_traits, n_success
+        )
+        for trait, tr in data.trait_results.items():
+            logger.info(
+                "  trait '%s': status=%s, has_interpretation=%s, interpretation_len=%d",
+                trait, tr.status,
+                "YES" if tr.interpretation else "NO",
+                len(tr.interpretation) if tr.interpretation else 0
+            )
+
         doc = _new_document(
             "VivaSense ANOVA Analysis Report",
             f"{mode_label}  ·  {n_traits} trait(s)  ·  {n_success} analysed successfully",
@@ -540,7 +552,10 @@ async def export_anova_word(data: AnovaExportRequest):
             doc.add_paragraph()
 
             # ── 5. Interpretation ──────────────────────────────────────────────
+            logger.info("ANOVA export: processing interpretation for trait '%s'", trait)
+            logger.info("  Raw interpretation length: %d chars", len(tr.interpretation or ""))
             cleaned = _clean_interpretation(tr.interpretation, trait)
+            logger.info("  Cleaned interpretation length: %d chars", len(cleaned))
             if cleaned:
                 _add_heading(doc, "Interpretation", level=2)
                 for para_text in cleaned.split("\n\n"):
@@ -548,6 +563,11 @@ async def export_anova_word(data: AnovaExportRequest):
                     if para_text:
                         _add_body(doc, para_text)
                 doc.add_paragraph()
+            else:
+                logger.warning(
+                    "ANOVA export: interpretation is empty for trait '%s' (raw was: %s)",
+                    trait, "None" if tr.interpretation is None else "empty string"
+                )
 
             # ── 6. Academic Writing Support ────────────────────────────────────
             _add_writing_support_section(

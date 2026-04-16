@@ -464,6 +464,27 @@ async def analysis_anova(request: ModuleRequest):
             environment_significant = is_environment_effect_significant(res.anova_table)
             gxe_significant = is_gxe_effect_significant(res.anova_table)
 
+            # Generate ANOVA interpretation
+            anova_interpretation = generate_anova_interpretation(
+                trait=trait,
+                summary=summary,
+                precision_level=precision_level,
+                cv_interpretation_flag=cv_interpretation_flag,
+                genotype_significant=genotype_significant,
+                environment_significant=environment_significant,
+                gxe_significant=gxe_significant,
+                ranking_caution=ranking_caution,
+                selection_feasible=selection_feasible,
+                mean_separation=res.mean_separation,
+                n_genotypes=res.n_genotypes,
+                n_environments=res.n_environments,
+                n_reps=res.n_reps,
+            )
+            logger.info(
+                "ANOVA interpretation generated for trait '%s': %d characters",
+                trait, len(anova_interpretation) if anova_interpretation else 0
+            )
+
             result_obj = AnovaTraitResult(
                 trait=trait,
                 status="success",
@@ -484,21 +505,7 @@ async def analysis_anova(request: ModuleRequest):
                 gxe_significant=gxe_significant,
                 assumption_tests=res.assumption_tests,
                 mean_separation=res.mean_separation,
-                interpretation=generate_anova_interpretation(
-                    trait=trait,
-                    summary=summary,
-                    precision_level=precision_level,
-                    cv_interpretation_flag=cv_interpretation_flag,
-                    genotype_significant=genotype_significant,
-                    environment_significant=environment_significant,
-                    gxe_significant=gxe_significant,
-                    ranking_caution=ranking_caution,
-                    selection_feasible=selection_feasible,
-                    mean_separation=res.mean_separation,
-                    n_genotypes=res.n_genotypes,
-                    n_environments=res.n_environments,
-                    n_reps=res.n_reps,
-                ),
+                interpretation=anova_interpretation,
                 data_warnings=balance_warnings,
             )
             return trait, "success", result_obj
@@ -520,6 +527,16 @@ async def analysis_anova(request: ModuleRequest):
         trait_results[trait] = result_obj
         if status == "failed":
             failed_traits.append(trait)
+        else:
+            logger.info(
+                "ANOVA response: trait '%s' has interpretation = %s",
+                trait, "YES" if result_obj.interpretation else "NO"
+            )
+
+    logger.info(
+        "ANOVA endpoint returning %d successful traits, %d failed traits",
+        len(trait_results) - len(failed_traits), len(failed_traits)
+    )
 
     return AnovaModuleResponse(
         dataset_token=request.dataset_token,

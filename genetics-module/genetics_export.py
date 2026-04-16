@@ -755,15 +755,24 @@ def _add_interpretation_section(
     h2      = hp.get("h2_broad_sense")
     gam_pct = gp.get("GAM_percent")
 
-    # ANOVA interpretation comes from the Academic Mentor — never from the
-    # InterpretationEngine (which generates genetic parameter narrative).
-    if not is_anova and ar.interpretation:
+    # ANOVA interpretation comes from the Academic Mentor
+    if is_anova:
+        # For ANOVA data, interpretation comes from ar.interpretation if available
+        if ar.interpretation:
+            _add_heading(doc, "Statistical Interpretation", level=3)
+            _add_body(doc, ar.interpretation)
+            logger.info("Added ANOVA interpretation: %d characters", len(ar.interpretation))
+        else:
+            logger.warning("No ANOVA interpretation available in response")
+            _add_body(doc, "[Interpretation not available]", italic=True)
+    elif ar.interpretation:
+        # Genetic parameters interpretation
         _add_heading(doc, "Statistical Interpretation", level=3)
         _add_body(doc, ar.interpretation)
         doc.add_paragraph()
 
-    # Breeding implication from the R engine (if present in payload)
-    if not is_anova and result.breeding_implication:
+    # Breeding implication from the R engine (if present)
+    if result.breeding_implication and not is_anova:
         _add_heading(doc, "Breeding Implication", level=3)
         _add_body(doc, result.breeding_implication)
         doc.add_paragraph()
