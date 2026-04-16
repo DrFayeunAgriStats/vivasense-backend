@@ -241,6 +241,14 @@ try:
 except Exception as _e:
     logger.warning("analysis-heatmap router not loaded — %s", _e)
 
+# Step 9.5 — Trait Association analysis module (/genetics/trait-association/analyze)
+try:
+    from analysis_trait_association_routes import router as trait_assoc_router
+    app.include_router(trait_assoc_router)
+    logger.info("analysis-trait-association router loaded (/genetics/trait-association/analyze)")
+except Exception as _e:
+    logger.warning("analysis-trait-association router not loaded — %s", _e)
+
 # Step 10 — Module-specific Word/report export (/export/*)
 try:
     from export_module_routes import router as export_mod_router

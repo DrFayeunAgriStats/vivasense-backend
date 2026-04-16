@@ -178,3 +178,84 @@ class CorrelationExportRequest(CorrelationModuleResponse):
 class HeatmapExportRequest(HeatmapModuleResponse):
     """POST /export/heatmap-report — extends HeatmapModuleResponse."""
     pass
+
+
+# ============================================================================
+# TRAIT ASSOCIATION MODULE
+# ============================================================================
+
+class TraitAssociationModuleRequest(ModuleRequest):
+    """Request body for POST /genetics/trait-association/analyze."""
+    analysis_unit: str = Field(default="genotype_mean", pattern="^(genotype_mean|plot_level)$")
+    alpha: float = Field(default=0.05, ge=0.0, le=1.0)
+    gxe_significant: bool = Field(default=False)
+    environment_context: str = Field(default="single_environment", pattern="^(single_environment|multi_environment)$")
+
+
+class SignificantPair(BaseModel):
+    """Details of a significant trait pair.
+
+    The v1 beta response uses safer labels for UI display.
+    Legacy fields are kept temporarily for backward compatibility.
+    Future versions will require a pairwise n_matrix for full confidence grading.
+    """
+    trait_1: str
+    trait_2: str
+    r: float
+    p_value: float
+    direction: str  # "positive" | "negative" | "none"
+    strength: str   # "very weak" | "weak" | "moderate" | "strong" | "very strong"
+    confidence_status: str  # "limited_by_pairwise_n" or future full confidence grades
+    selection_signal: str  # "exploratory only" | "potentially useful with validation" | "useful with validation"
+    # Legacy compatibility fields for older clients
+    confidence: Optional[str] = Field(None, description="Legacy field, mirrors confidence_status")
+    selection_relevance: Optional[str] = Field(None, description="Legacy field, mirrors selection_signal")
+
+
+class StrongestPair(BaseModel):
+    """Strongest positive or negative pair."""
+    trait_1: str
+    trait_2: str
+    r: float
+
+
+class TraitAssociationSummary(BaseModel):
+    """Statistical summary of the analysis."""
+    num_traits: int
+    num_significant_pairs: int
+    strongest_positive_pair_label: Optional[str] = None
+    strongest_negative_pair_label: Optional[str] = None
+
+
+class TraitAssociationHeatmap(BaseModel):
+    """Heatmap-ready matrix data."""
+    matrix: Dict[str, Dict[str, Optional[float]]]
+    type: str = "correlation_heatmap_ready"
+
+
+class InterpretationPlaceholder(BaseModel):
+    """Placeholder for future LLM interpretation."""
+    status: str = "pending"
+    message: str = "LLM interpretation not yet attached"
+
+
+class TraitAssociationModuleResponse(BaseModel):
+    """Response from POST /genetics/trait-association/analyze."""
+    module: str = "trait_association_intelligence"
+    analysis_unit: str
+    n_observations: int
+    alpha: float
+    environment_context: str
+    gxe_significant: bool
+    trait_names: List[str]
+    correlation_matrix: Dict[str, Dict[str, Optional[float]]]
+    pvalue_matrix: Dict[str, Dict[str, Optional[float]]]
+    significant_pairs: List[SignificantPair]
+    strongest_positive_pair: Optional[StrongestPair] = None
+    strongest_negative_pair: Optional[StrongestPair] = None
+    risk_flags: List[str] = Field(default_factory=list)
+    summary: TraitAssociationSummary
+    heatmap: TraitAssociationHeatmap
+    interpretation_placeholder: InterpretationPlaceholder
+    dataset_token: str
+    warnings: List[str] = Field(default_factory=list)
