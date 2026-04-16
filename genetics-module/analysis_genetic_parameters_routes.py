@@ -32,29 +32,41 @@ from module_schemas import (
     ModuleRequest,
 )
 import dataset_cache
-from interpretation import InterpretationEngine
+from genetics_interpretation import generate_genetics_interpretation
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Analysis"])
 
 
 def _build_gp_text(trait: str, res) -> Tuple[str, str]:
-    """Build precise Genetic Parameters text, completely decoupled from ANOVA."""
+    """
+    Build academic-grade genetic parameters interpretation text.
+    Replaces legacy R engine output with validated interpretation.
+    """
     try:
         hp = res.heritability if isinstance(res.heritability, dict) else {}
         gp = res.genetic_parameters if isinstance(res.genetic_parameters, dict) else {}
         
         h2_val = hp.get("h2_broad_sense")
+        gam_val = gp.get("GAM_percent")
+        gcv_val = gp.get("GCV")
+        pcv_val = gp.get("PCV")
         
-        engine = InterpretationEngine()
-        support = engine.generate_decision_support(
+        # Generate NEW interpretation using genetics interpretation engine
+        interpretation, breeding_implication = generate_genetics_interpretation(
             trait_name=trait,
-            h2=float(h2_val) if h2_val is not None else 0.0,
-            gam=float(gp.get("GAM_percent") or 0.0),
-            gcv=float(gp.get("GCV") or 0.0),
-            pcv=float(gp.get("PCV") or 0.0)
+            h2=float(h2_val) if h2_val is not None else None,
+            gam=float(gam_val) if gam_val is not None else None,
+            gcv=float(gcv_val) if gcv_val is not None else None,
+            pcv=float(pcv_val) if pcv_val is not None else None,
         )
-        return support["interpretation"], support["recommendation"]
+        
+        logger.info(
+            "[genetic_parameters] generated NEW interpretation for trait '%s': %d chars",
+            trait, len(interpretation)
+        )
+        
+        return interpretation, breeding_implication
     except Exception as exc:
         logger.warning("Failed to build GP interpretation for '%s': %s", trait, exc)
         return "Genetic parameters interpretation not available.", "Breeding implication not available."
