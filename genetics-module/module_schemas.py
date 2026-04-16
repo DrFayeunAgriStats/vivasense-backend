@@ -75,6 +75,16 @@ class DescriptiveStats(BaseModel):
     range: Optional[float] = None
 
 
+class GenotypeDescriptiveStats(BaseModel):
+    """Per-genotype descriptive statistics for a single trait."""
+    genotype: str
+    mean: Optional[float] = None
+    se: Optional[float] = None
+    min: Optional[float] = None
+    max: Optional[float] = None
+    n_reps: Optional[int] = None
+
+
 class SummaryStats(BaseModel):
     """Structured summary of key descriptive statistics for interpretation."""
     grand_mean: Optional[float] = None
@@ -287,6 +297,7 @@ class TraitAssociationModuleResponse(BaseModel):
     risk_flags: List[str] = Field(default_factory=list)
     summary: TraitAssociationSummary
     heatmap: TraitAssociationHeatmap
-    interpretation_placeholder: InterpretationPlaceholder
+    interpretation: Optional[str] = None
+    interpretation_placeholder: InterpretationPlaceholder = Field(default_factory=InterpretationPlaceholder)
     dataset_token: str
     warnings: List[str] = Field(default_factory=list)
