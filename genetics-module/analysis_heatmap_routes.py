@@ -115,7 +115,7 @@ async def analysis_heatmap(request: CorrelationModuleRequest):
     r_matrix  = raw.get("r_matrix", [])
     warnings  = raw.get("warnings", [])
 
-    # Compute min/max over off-diagonal values for colour-scale calibration
+    # Compute statistics over off-diagonal values for interpretation
     off_diag: List[float] = []
     for i, row in enumerate(r_matrix):
         for j, val in enumerate(row):
@@ -125,8 +125,10 @@ async def analysis_heatmap(request: CorrelationModuleRequest):
                 except (TypeError, ValueError):
                     pass
 
-    min_val = min(off_diag) if off_diag else -1.0
-    max_val = max(off_diag) if off_diag else 1.0
+    # Use fixed scale (-1 to +1) for all heatmaps to ensure color scale
+    # always represents the full correlation range, making sign structure clear
+    min_val = -1.0
+    max_val = 1.0
 
     # Build a human-readable interpretation
     n_traits = len(labels)

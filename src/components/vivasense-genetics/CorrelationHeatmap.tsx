@@ -3,9 +3,11 @@
  * ==================
  * Publication-quality correlation heatmap for the VivaSense Genetics module.
  *
- * Colour scale : Red (r = −1) → White (r = 0) → Blue (r = +1)
+ * Colour scale : Red (r = −1) → Light Red (r = −0.5) → White (r = 0) → Light Blue (r = +0.5) → Blue (r = +1)
+ * Perceptually uniform diverging scale (RdBu style) for clear sign distinction.
  * Cell content : coefficient (2 d.p.) + significance stars
  * Significance : *** p < 0.001 · ** p < 0.01 · * p < 0.05 · ns ≥ 0.05
+ * Diagonal    : Self-correlations (r = 1.0) shown as light gray with trait initial
  *
  * Data shape accepted:
  *   The component internally flattens the r_matrix into
@@ -77,40 +79,73 @@ function flattenMatrix(data: CorrelationResponse): HeatmapCell[] {
 
 /**
  * Map a correlation coefficient r ∈ [−1, +1] to an RGB background colour.
+ * Uses a perceptually-uniform diverging colour scale (RdBu-style):
  *
- *   r = −1  → deep red    (220, 38, 38)
- *   r =  0  → white       (255, 255, 255)
- *   r = +1  → deep blue   (37, 99, 235)
+ *   r = −1  → strong red    (#D73027)
+ *   r = −0.5 → light red    (#F1A340)
+ *   r =  0  → white         (#F7F7F7)
+ *   r = +0.5 → light blue   (#91BFDB)
+ *   r = +1  → strong blue   (#4575B4)
  *
  * Null / missing → light gray.
  */
 function rToRgb(r: number | null, isDiagonal: boolean): string {
-  if (r === null || isDiagonal) return isDiagonal ? "#F1F5F9" : "#E5E7EB";
+  if (r === null) return "#D1D5DB"; // neutral gray for null values
+  if (isDiagonal) return "#F9FAFB"; // very light gray for diagonal (self-correlation)
 
   const clamped = Math.max(-1, Math.min(1, r));
 
-  if (clamped >= 0) {
-    // White → Blue
-    const t = clamped;
-    const red   = Math.round(255 - t * (255 - 37));
-    const green = Math.round(255 - t * (255 - 99));
-    const blue  = Math.round(255 - t * (255 - 235));
-    return `rgb(${red},${green},${blue})`;
+  if (clamped > 0) {
+    // Positive: White → Light Blue → Strong Blue
+    if (clamped <= 0.5) {
+      // White to Light Blue: 0 → 0.5
+      const t = clamped / 0.5; // normalize to 0-1
+      const r_val = Math.round(247 - t * (247 - 145)); // #F7 to #91
+      const g_val = Math.round(247 - t * (247 - 191)); // #F7 to #BF
+      const b_val = Math.round(247 + t * (219 - 247)); // #F7 to #DB
+      return `rgb(${r_val},${g_val},${b_val})`;
+    } else {
+      // Light Blue to Strong Blue: 0.5 → 1.0
+      const t = (clamped - 0.5) / 0.5; // normalize to 0-1
+      const r_val = Math.round(145 - t * (145 - 69)); // #91 to #45
+      const g_val = Math.round(191 - t * (191 - 117)); // #BF to #75
+      const b_val = Math.round(219 - t * (219 - 180)); // #DB to #B4
+      return `rgb(${r_val},${g_val},${b_val})`;
+    }
+  } else if (clamped < 0) {
+    // Negative: Strong Red → Light Red → White
+    if (clamped >= -0.5) {
+      // Light Red to White: -0.5 → 0
+      const t = (-clamped) / 0.5; // normalize to 0-1
+      const r_val = Math.round(241 + t * (247 - 241)); // #F1 to #F7
+      const g_val = Math.round(163 + t * (247 - 163)); // #A3 to #F7
+      const b_val = Math.round(64 + t * (247 - 64)); // #40 to #F7
+      return `rgb(${r_val},${g_val},${b_val})`;
+    } else {
+      // Strong Red to Light Red: -1 → -0.5
+      const t = (-clamped - 0.5) / 0.5; // normalize to 0-1
+      const r_val = Math.round(215 + t * (241 - 215)); // #D7 to #F1
+      const g_val = Math.round(48 + t * (163 - 48)); // #30 to #A3
+      const b_val = Math.round(39 + t * (64 - 39)); // #27 to #40
+      return `rgb(${r_val},${g_val},${b_val})`;
+    }
   } else {
-    // Red → White
-    const t = -clamped;
-    const red   = Math.round(255 - t * (255 - 220));
-    const green = Math.round(255 - t * 255);
-    const blue  = Math.round(255 - t * 255);
-    return `rgb(${red},${green},${blue})`;
+    // r = 0 exactly → white
+    return "#F7F7F7";
   }
 }
 
 /** Choose black or white label text based on background luminance. */
 function labelColor(r: number | null, isDiagonal: boolean): string {
-  if (r === null || isDiagonal) return "#6B7280";
+  if (r === null) return "#6B7280";
+  if (isDiagonal) return "#6B7280";
+  
   const abs = Math.abs(r);
-  return abs > 0.5 ? "#FFFFFF" : "#1F2937";
+  // For very light colors (near 0), use dark text
+  // For very dark colors (near ±1), use white text
+  if (abs < 0.3) return "#1F2937"; // dark gray/black for light backgrounds (near zero)
+  if (abs < 0.6) return "#1F2937"; // dark text for medium colors
+  return "#FFFFFF"; // white text for strong colors (dark backgrounds)
 }
 
 /** Significance stars. */
@@ -175,21 +210,24 @@ function exportAsPng(svgEl: SVGSVGElement, filename = "correlation_heatmap.png",
 
 function ColorLegend() {
   const stops: string[] = [];
-  for (let i = 0; i <= 20; i++) {
-    const r = (i / 20) * 2 - 1; // -1 to +1
+  // Generate 30 stops for smooth gradient from -1 to +1
+  for (let i = 0; i <= 30; i++) {
+    const r = (i / 30) * 2 - 1; // -1 to +1
     stops.push(rToRgb(r, false));
   }
   const gradient = stops.join(", ");
 
   return (
-    <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
-      <span className="font-medium text-red-600">−1</span>
-      <div
-        className="h-3 flex-1 rounded"
-        style={{ background: `linear-gradient(to right, ${gradient})` }}
-        aria-label="Colour scale: red for negative, white for zero, blue for positive"
-      />
-      <span className="font-medium text-blue-600">+1</span>
+    <div className="flex items-center gap-3 text-xs text-gray-500 mt-2">
+      <div className="flex items-center gap-1.5 flex-1">
+        <span className="font-semibold text-red-700 w-8">−1.0</span>
+        <div
+          className="h-4 flex-1 rounded"
+          style={{ background: `linear-gradient(to right, ${gradient})` }}
+          aria-label="Diverging colour scale: red for negative correlations, white for zero, blue for positive correlations"
+        />
+        <span className="font-semibold text-blue-700 w-8 text-right">+1.0</span>
+      </div>
     </div>
   );
 }
