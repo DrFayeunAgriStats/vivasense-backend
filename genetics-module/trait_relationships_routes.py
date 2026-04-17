@@ -32,8 +32,11 @@ from fastapi import APIRouter, HTTPException
 
 from trait_relationships_schemas import CorrelationRequest, CorrelationResponse
 
-# Import the new trait association interpretation function (no circular dependencies)
-from trait_association_interpretation import generate_trait_association_interpretation
+# Import interpretation helpers (no circular dependencies — this module is a leaf)
+from trait_association_interpretation import (
+    generate_trait_association_interpretation,
+    _compute_risk_flags,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Trait Relationships"])

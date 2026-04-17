@@ -29,7 +29,7 @@ from trait_relationships_routes import (
 from multitrait_upload_routes import read_file
 from trait_relationships_schemas import CorrelationResponse
 from module_schemas import CorrelationModuleResponse, ModuleRequest
-from analysis_trait_association_routes import generate_trait_association_interpretation, _compute_risk_flags
+from trait_association_interpretation import generate_trait_association_interpretation, _compute_risk_flags
 import dataset_cache
 
 logger = logging.getLogger(__name__)

@@ -22,7 +22,10 @@ from trait_relationships_routes import (
     _build_wide_records,
     tr_engine,
 )
-from trait_association_interpretation import generate_trait_association_interpretation
+from trait_association_interpretation import (
+    generate_trait_association_interpretation,
+    _compute_risk_flags,
+)
 from multitrait_upload_routes import read_file
 from module_schemas import TraitAssociationModuleRequest, TraitAssociationModuleResponse, SignificantPair, StrongestPair, TraitAssociationSummary, TraitAssociationHeatmap, InterpretationPlaceholder
 import dataset_cache
@@ -84,25 +87,6 @@ def _classify_selection_relevance(r: float, p_value: float, alpha: float, n: int
     if abs_r >= 0.60 and p_value <= alpha and n >= 10:
         return "useful with validation"
     return "exploratory only"
-
-
-def _compute_risk_flags(n: int, analysis_unit: str, gxe_significant: bool) -> List[str]:
-    """Compute risk flags for the analysis."""
-    flags = []
-
-    if n < 10:
-        flags.append("small_sample_size")
-
-    if analysis_unit == "genotype_mean":
-        flags.append("genotype_mean_based")
-
-    if gxe_significant:
-        flags.append("gxe_significant")
-
-    # Always include this flag since pairwise N is not tracked
-    flags.append("pairwise_n_not_tracked")
-
-    return flags
 
 
 def _build_matrix_dict(trait_names: List[str], matrix: List[List[Optional[float]]]) -> Dict[str, Dict[str, Optional[float]]]:

@@ -8,6 +8,30 @@ No imports from routes modules to avoid circular dependencies.
 from typing import Any, Dict, List, Optional
 
 
+def _compute_risk_flags(n: int, analysis_unit: str, gxe_significant: bool) -> List[str]:
+    """
+    Compute risk flags for a trait association / correlation analysis.
+
+    Defined here (not in routes) so it can be imported by any module —
+    including trait_relationships_routes — without creating circular imports.
+    """
+    flags: List[str] = []
+
+    if n < 10:
+        flags.append("small_sample_size")
+
+    if analysis_unit == "genotype_mean":
+        flags.append("genotype_mean_based")
+
+    if gxe_significant:
+        flags.append("gxe_significant")
+
+    # Always present: pairwise N is not tracked in the current engine
+    flags.append("pairwise_n_not_tracked")
+
+    return flags
+
+
 def generate_trait_association_interpretation(
     n_traits: int,
     n_observations: int,
