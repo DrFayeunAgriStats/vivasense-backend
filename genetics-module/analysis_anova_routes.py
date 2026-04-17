@@ -37,6 +37,37 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Analysis"])
 
 
+def compute_cv_from_anova(
+    anova_table,
+    grand_mean: Optional[float],
+) -> Optional[float]:
+    """
+    Compute CV% from the ANOVA error mean square.
+
+    CV% = sqrt(MSE) / grand_mean × 100
+
+    Tries common residual/error row names in the ANOVA source column
+    (R typically uses "Residuals"; other conventions are also handled).
+    Returns None when the table is absent, grand_mean is zero, MSE is
+    negative (variance component issue), or no error term is found.
+    """
+    if anova_table is None or grand_mean is None or grand_mean == 0:
+        return None
+    if not hasattr(anova_table, "source") or not hasattr(anova_table, "ms"):
+        return None
+
+    error_terms = ["Residuals", "residuals", "Residual", "residual", "error", "Error"]
+    for term in error_terms:
+        try:
+            idx = anova_table.source.index(term)
+            mse = anova_table.ms[idx]
+            if mse is not None and mse >= 0:
+                return float((mse ** 0.5) / grand_mean * 100)
+        except (ValueError, IndexError, TypeError):
+            continue
+    return None
+
+
 def generate_anova_interpretation(
     trait: str,
     summary: Dict[str, Optional[float]],
@@ -51,145 +82,278 @@ def generate_anova_interpretation(
     n_genotypes: Optional[int],
     n_environments: Optional[int],
     n_reps: Optional[int],
+    environment_mode: str = "single",
 ) -> str:
-    """Generate academic-grade ANOVA interpretation following VivaSense standards."""
-    
-    parts = []
-    
-    # 1. Overview
+    """
+    Generate context-aware ANOVA interpretation following VivaSense standards.
+
+    environment_mode="single"
+        Sections: Overview, Descriptive Interpretation, Genotype Effect,
+                  Mean Performance and Ranking, Breeding Interpretation,
+                  Risk and Limitations, Recommendation.
+        Environment Effect and G×E Interaction sections are omitted.
+        No environment-stability or broad-adaptation claims.
+
+    environment_mode="multi"
+        All nine sections including Environment Effect and G×E Interaction.
+    """
+    is_multi = environment_mode == "multi"
+    # List of (heading, content) tuples built up below
+    sections: List[tuple] = []
+
+    # ── 1. Overview ────────────────────────────────────────────────────────────
     overview = []
-    if n_genotypes and n_environments and n_reps:
-        if n_environments > 1:
-            overview.append(f"This analysis evaluated {trait} across {n_genotypes} genotypes tested in {n_environments} environments with {n_reps} replications per genotype-environment combination.")
+    if n_genotypes and n_reps:
+        if is_multi and n_environments and n_environments > 1:
+            overview.append(
+                f"This analysis evaluated {trait} across {n_genotypes} genotypes "
+                f"tested in {n_environments} environments with {n_reps} replications "
+                "per genotype-environment combination."
+            )
         else:
-            overview.append(f"This analysis evaluated {trait} across {n_genotypes} genotypes with {n_reps} replications per genotype.")
-    
+            overview.append(
+                f"This analysis evaluated {trait} across {n_genotypes} genotypes "
+                f"with {n_reps} replications per genotype."
+            )
+
     if summary.get("grand_mean") is not None:
-        overview.append(f"The overall mean performance for {trait} was {summary['grand_mean']:.2f}.")
-    
+        overview.append(
+            f"The overall mean performance for {trait} was {summary['grand_mean']:.2f}."
+        )
+
     if cv_interpretation_flag == "cv_available" and summary.get("cv_percent") is not None:
         cv = summary["cv_percent"]
-        overview.append(f"The coefficient of variation (CV) was {cv:.1f}%, indicating {'high' if cv > 20 else 'moderate' if cv > 10 else 'low'} experimental variability.")
+        precision_word = "good" if cv < 10 else "moderate" if cv <= 20 else "low"
+        overview.append(
+            f"The coefficient of variation (CV) was {cv:.1f}%, indicating "
+            f"{precision_word} experimental precision."
+        )
     else:
-        overview.append("Experimental precision could not be assessed due to insufficient data for CV calculation.")
-    
-    parts.append(" ".join(overview))
-    
-    # 2. Descriptive Interpretation
+        overview.append(
+            "Experimental precision could not be assessed due to insufficient "
+            "data for CV calculation."
+        )
+
+    sections.append(("Overview", " ".join(overview)))
+
+    # ── 2. Descriptive Interpretation ─────────────────────────────────────────
     desc = []
     if summary.get("grand_mean") is not None:
-        desc.append(f"The grand mean of {summary['grand_mean']:.2f} represents the average {trait} performance across all experimental units.")
-    
-    if summary.get("min") is not None and summary.get("max") is not None and summary.get("range") is not None:
-        desc.append(f"Performance ranged from {summary['min']:.2f} to {summary['max']:.2f}, with a total range of {summary['range']:.2f}, indicating {'substantial' if summary['range'] > summary['grand_mean'] * 0.5 else 'moderate'} variability among genotypes.")
-    
+        desc.append(
+            f"The grand mean of {summary['grand_mean']:.2f} represents the average "
+            f"{trait} performance across all experimental units."
+        )
+
+    if (
+        summary.get("min") is not None
+        and summary.get("max") is not None
+        and summary.get("range") is not None
+    ):
+        variability = (
+            "substantial"
+            if summary["range"] > summary["grand_mean"] * 0.5
+            else "moderate"
+        )
+        desc.append(
+            f"Performance ranged from {summary['min']:.2f} to {summary['max']:.2f}, "
+            f"with a total range of {summary['range']:.2f}, indicating {variability} "
+            "variability among genotypes."
+        )
+
     if precision_level == "good":
-        desc.append("The experimental precision was good, suggesting reliable and reproducible results.")
+        desc.append(
+            "The experimental precision was good, suggesting reliable and "
+            "reproducible results."
+        )
     elif precision_level == "moderate":
-        desc.append("The experimental precision was moderate, indicating acceptable but not optimal experimental control.")
+        desc.append(
+            "The experimental precision was moderate, indicating acceptable but "
+            "not optimal experimental control."
+        )
     elif precision_level == "low":
-        desc.append("The experimental precision was low, suggesting high variability that warrants cautious interpretation of the results.")
+        desc.append(
+            "The experimental precision was low, suggesting high variability that "
+            "warrants cautious interpretation of the results."
+        )
     elif cv_interpretation_flag == "cv_unavailable":
-        desc.append("Experimental precision could not be assessed, limiting confidence in the results.")
-    
-    parts.append(" ".join(desc))
-    
-    # 3. Genotype Effect
+        desc.append(
+            "Experimental precision could not be assessed, limiting confidence "
+            "in the results."
+        )
+
+    sections.append(("Descriptive Interpretation", " ".join(desc)))
+
+    # ── 3. Genotype Effect ─────────────────────────────────────────────────────
     if genotype_significant is True:
-        parts.append(f"Significant genetic variation was detected for {trait} (p < 0.05), indicating that genotypes differ in their performance and that selection for improved {trait} is feasible.")
+        geno_text = (
+            f"Significant genetic variation was detected for {trait} (p < 0.05), "
+            f"indicating that genotypes differ in their performance and that "
+            f"selection for improved {trait} is feasible."
+        )
     elif genotype_significant is False:
-        parts.append(f"No significant genetic variation was detected for {trait}, suggesting that the genotypes tested do not differ sufficiently to justify selection based on this trait.")
+        geno_text = (
+            f"No significant genetic variation was detected for {trait}, suggesting "
+            "that the genotypes tested do not differ sufficiently to justify "
+            "selection based on this trait."
+        )
     else:
-        parts.append(f"The significance of genetic variation for {trait} could not be determined.")
-    
-    # 4. Environment Effect
-    if environment_significant is True:
-        parts.append(f"Significant environmental variation was observed for {trait}, indicating that growing conditions substantially influence performance and that results may not be transferable across environments.")
-    elif environment_significant is False:
-        parts.append(f"No significant environmental variation was detected for {trait}, suggesting relatively consistent performance across the tested conditions.")
-    else:
-        parts.append(f"The significance of environmental variation for {trait} could not be determined.")
-    
-    # 5. G×E Interaction
-    if gxe_significant is True:
-        parts.append(f"A significant genotype × environment interaction was detected for {trait}, indicating that genotype performance is not consistent across environments. This suggests that no single genotype is universally superior, and selection strategies should account for environmental stability.")
-    elif gxe_significant is False:
-        parts.append(f"No significant genotype × environment interaction was detected for {trait}, suggesting relatively stable genotype performance across the tested environments.")
-    else:
-        parts.append(f"The presence of genotype × environment interaction for {trait} could not be determined.")
-    
-    # 6. Mean Performance and Ranking
+        geno_text = (
+            f"The significance of genetic variation for {trait} could not be determined."
+        )
+    sections.append(("Genotype Effect", geno_text))
+
+    # ── 4. Environment Effect (multi only) ────────────────────────────────────
+    if is_multi:
+        if environment_significant is True:
+            env_text = (
+                f"Significant environmental variation was observed for {trait}, "
+                "indicating that growing conditions substantially influence performance "
+                "and that results may not be transferable across environments."
+            )
+        elif environment_significant is False:
+            env_text = (
+                f"No significant environmental variation was detected for {trait}, "
+                "suggesting relatively consistent performance across the tested conditions."
+            )
+        else:
+            env_text = (
+                f"The significance of environmental variation for {trait} "
+                "could not be determined."
+            )
+        sections.append(("Environment Effect", env_text))
+
+        # ── 5. G×E Interaction (multi only) ───────────────────────────────────
+        if gxe_significant is True:
+            gxe_text = (
+                f"A significant genotype \u00d7 environment interaction was detected "
+                f"for {trait}, indicating that genotype performance is not consistent "
+                "across environments. This suggests that no single genotype is "
+                "universally superior, and selection strategies should account for "
+                "environmental stability."
+            )
+        elif gxe_significant is False:
+            gxe_text = (
+                f"No significant genotype \u00d7 environment interaction was detected "
+                f"for {trait}, suggesting relatively stable genotype performance across "
+                "the tested environments."
+            )
+        else:
+            gxe_text = (
+                f"The presence of genotype \u00d7 environment interaction for {trait} "
+                "could not be determined."
+            )
+        sections.append(("G\u00d7E Interaction", gxe_text))
+
+    # ── 6 (single: 4). Mean Performance and Ranking ───────────────────────────
     ranking = []
-    if mean_separation and hasattr(mean_separation, 'genotype') and mean_separation.genotype:
+    if mean_separation and hasattr(mean_separation, "genotype") and mean_separation.genotype:
         try:
             top_genotype = mean_separation.genotype[0]
             top_mean = mean_separation.mean[0]
-            ranking.append(f"Based on overall means, {top_genotype} exhibited the highest {trait} performance ({top_mean:.2f}).")
+            ranking.append(
+                f"Based on overall means, {top_genotype} exhibited the highest "
+                f"{trait} performance ({top_mean:.2f})."
+            )
         except (IndexError, TypeError):
-            ranking.append("Mean separation analysis was available but could not be summarized.")
+            ranking.append(
+                "Mean separation analysis was available but could not be summarised."
+            )
     else:
         ranking.append("Detailed mean separation analysis was not available.")
-    
-    if ranking_caution is True:
-        ranking.append("However, due to significant genotype × environment interaction, ranking based on overall means should be interpreted cautiously, as performance may vary across environments.")
-    
-    parts.append(" ".join(ranking))
-    
-    # 7. Breeding Interpretation
+
+    # Ranking caution only meaningful in multi-environment context
+    if is_multi and ranking_caution is True:
+        ranking.append(
+            "However, due to significant genotype \u00d7 environment interaction, "
+            "ranking based on overall means should be interpreted cautiously, as "
+            "performance may vary across environments."
+        )
+
+    sections.append(("Mean Performance and Ranking", " ".join(ranking)))
+
+    # ── 7 (single: 5). Breeding Interpretation ────────────────────────────────
     breeding = []
     if selection_feasible is True:
-        breeding.append("The results suggest that selection for improved {trait} is feasible.")
-        if gxe_significant is False:
-            breeding.append("Given the absence of significant genotype × environment interaction, breeding efforts can focus on broad adaptation across environments.")
-        else:
-            breeding.append("However, due to significant genotype × environment interaction, breeding strategies should prioritize stability analysis and environment-specific selection.")
+        breeding.append(
+            f"The results suggest that selection for improved {trait} is feasible."
+        )
+        if is_multi:
+            if gxe_significant is False:
+                breeding.append(
+                    "Given the absence of significant genotype \u00d7 environment "
+                    "interaction, breeding efforts can focus on broad adaptation "
+                    "across environments."
+                )
+            else:
+                breeding.append(
+                    "However, due to significant genotype \u00d7 environment "
+                    "interaction, breeding strategies should prioritise stability "
+                    "analysis and environment-specific selection."
+                )
     else:
-        breeding.append("The lack of significant genetic variation indicates that selection for {trait} may not be effective with the current germplasm.")
-    
-    breeding.append("The observed variability and experimental precision should guide the design of future experiments and breeding trials.")
-    parts.append(" ".join(breeding))
-    
-    # 8. Risk and Limitations
+        breeding.append(
+            f"The lack of significant genetic variation indicates that selection "
+            f"for {trait} may not be effective with the current germplasm."
+        )
+
+    breeding.append(
+        "The observed variability and experimental precision should guide the "
+        "design of future experiments and breeding trials."
+    )
+    sections.append(("Breeding Interpretation", " ".join(breeding)))
+
+    # ── 8 (single: 6). Risk and Limitations ───────────────────────────────────
     risks = []
-    if gxe_significant is True:
-        risks.append("The significant genotype × environment interaction represents a major limitation, as it complicates genotype evaluation and selection.")
+    if is_multi and gxe_significant is True:
+        risks.append(
+            "The significant genotype \u00d7 environment interaction represents a "
+            "major limitation, as it complicates genotype evaluation and selection."
+        )
     if precision_level == "low":
-        risks.append("The low experimental precision introduces uncertainty in the results and suggests potential issues with experimental control or replication.")
-    if environment_significant is True:
-        risks.append("Strong environmental influence may limit the generalizability of these results to other locations or conditions.")
+        risks.append(
+            "The low experimental precision introduces uncertainty in the results "
+            "and suggests potential issues with experimental control or replication."
+        )
+    if is_multi and environment_significant is True:
+        risks.append(
+            "Strong environmental influence may limit the generalisability of these "
+            "results to other locations or conditions."
+        )
     if not risks:
         risks.append("No major experimental limitations were identified in this analysis.")
-    parts.append(" ".join(risks))
-    
-    # 9. Recommendation
+    sections.append(("Risk and Limitations", " ".join(risks)))
+
+    # ── 9 (single: 7). Recommendation ─────────────────────────────────────────
     recs = []
-    if gxe_significant is True:
-        recs.append("Conduct stability analysis (e.g., AMMI or GGE biplot) to identify genotypes with consistent performance across environments.")
+    if is_multi and gxe_significant is True:
+        recs.append(
+            "Conduct stability analysis (e.g., AMMI or GGE biplot) to identify "
+            "genotypes with consistent performance across environments."
+        )
     if selection_feasible is True:
-        recs.append("Consider advancing promising genotypes to further evaluation, with appropriate caution regarding environmental interactions.")
+        if is_multi:
+            recs.append(
+                "Consider advancing promising genotypes to further evaluation, "
+                "with appropriate caution regarding environmental interactions."
+            )
+        else:
+            recs.append(
+                "Consider advancing promising genotypes to further evaluation "
+                "in additional environments to validate their performance."
+            )
     if precision_level == "low":
-        recs.append("Improve experimental design by increasing replication or enhancing environmental control to reduce variability.")
-    recs.append("Integrate these ANOVA results with genetic parameter estimates (heritability, genetic coefficient of variation) for comprehensive trait evaluation.")
-    parts.append(" ".join(recs))
-    
-    # Format with headers
-    sections = [
-        "Overview",
-        "Descriptive Interpretation", 
-        "Genotype Effect",
-        "Environment Effect",
-        "G×E Interaction",
-        "Mean Performance and Ranking",
-        "Breeding Interpretation",
-        "Risk and Limitations",
-        "Recommendation"
-    ]
-    
-    formatted = []
-    for section, content in zip(sections, parts):
-        formatted.append(f"{section}\n{content}")
-    
-    return "\n\n".join(formatted)
+        recs.append(
+            "Improve experimental design by increasing replication or enhancing "
+            "environmental control to reduce variability."
+        )
+    recs.append(
+        "Integrate these ANOVA results with genetic parameter estimates "
+        "(heritability, genetic coefficient of variation) for comprehensive "
+        "trait evaluation."
+    )
+    sections.append(("Recommendation", " ".join(recs)))
+
+    return "\n\n".join(f"{heading}\n{content}" for heading, content in sections)
 
 
 def compute_descriptive_stats(series: pd.Series) -> Dict[str, Optional[float]]:
@@ -292,12 +456,18 @@ def compute_per_genotype_stats(
 
 
 def classify_precision_level(cv_percent: Optional[float]) -> str:
-    """Classify experimental precision based on coefficient of variation."""
+    """Classify experimental precision based on coefficient of variation.
+
+    Thresholds (aligned with VivaSense ANOVA spec):
+      < 10  → good
+      10–20 → moderate   (20 inclusive)
+      > 20  → low
+    """
     if cv_percent is None:
         return "low"  # No CV available, assume low precision
     if cv_percent < 10.0:
         return "good"
-    elif cv_percent < 20.0:
+    elif cv_percent <= 20.0:
         return "moderate"
     else:
         return "low"
@@ -396,8 +566,10 @@ async def analysis_anova(request: ModuleRequest):
     mode         = ctx["mode"]
     env_col      = ctx["environment_column"] if mode == "multi" else None
     geno_col     = ctx["genotype_column"]
-    rep_col      = ctx["rep_column"]
+    rep_col      = ctx["rep_column"]        # may be None for CRD datasets
     random_env   = ctx["random_environment"]
+    # CRD: no explicit rep column AND single-environment mode
+    crd_mode     = (rep_col is None) and (mode == "single")
 
     trait_results: Dict[str, AnovaTraitResult] = {}
     failed_traits: List[str] = []
@@ -423,6 +595,7 @@ async def analysis_anova(request: ModuleRequest):
                         mode=mode,
                         trait_name=trait,
                         random_environment=random_env,
+                        crd_mode=crd_mode,
                     )
 
                 if result_dict.get("status") == "ERROR":
@@ -445,6 +618,12 @@ async def analysis_anova(request: ModuleRequest):
             trait_descriptive_stats = compute_descriptive_stats(df[trait])
             per_genotype_stats = compute_per_genotype_stats(df, trait, geno_col)
 
+            # Prefer ANOVA-derived CV (sqrt(MSE)/grand_mean*100) over the
+            # raw-observation SD-based CV when the ANOVA table is available.
+            anova_cv = compute_cv_from_anova(res.anova_table, res.grand_mean)
+            if anova_cv is not None:
+                trait_descriptive_stats["cv_percent"] = anova_cv
+
             # Build summary from descriptive stats
             summary = {
                 "grand_mean": trait_descriptive_stats["grand_mean"],
@@ -465,7 +644,7 @@ async def analysis_anova(request: ModuleRequest):
             ranking_caution = gxe_significant
             selection_feasible = genotype_significant
 
-            # Generate ANOVA interpretation
+            # Generate ANOVA interpretation — mode-aware (single vs multi)
             anova_interpretation = generate_anova_interpretation(
                 trait=trait,
                 summary=summary,
@@ -480,6 +659,7 @@ async def analysis_anova(request: ModuleRequest):
                 n_genotypes=res.n_genotypes,
                 n_environments=res.n_environments,
                 n_reps=res.n_reps,
+                environment_mode=mode,
             )
             logger.info(
                 "ANOVA interpretation generated for trait '%s': %d characters",

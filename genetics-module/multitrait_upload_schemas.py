@@ -70,7 +70,13 @@ class UploadAnalysisRequest(BaseModel):
     base64_content: str = Field(..., description="Base64-encoded file content")
     file_type: str = Field(..., description="'csv', 'xlsx', or 'xls'", pattern="^(csv|xlsx|xls)$")
     genotype_column: str
-    rep_column: str
+    rep_column: Optional[str] = Field(
+        default=None,
+        description=(
+            "Replication/block column. Omit for CRD datasets — "
+            "replication will be inferred from repeated observations."
+        ),
+    )
     environment_column: Optional[str] = None
     trait_columns: List[str] = Field(..., min_length=1)
     mode: str = Field(..., pattern="^(single|multi)$")

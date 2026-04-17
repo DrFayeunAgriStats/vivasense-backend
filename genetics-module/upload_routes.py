@@ -83,7 +83,10 @@ async def upload_preview_v2(file: UploadFile = File(...)):
     if detected.genotype is None:
         warnings.append("Could not detect genotype column — please specify manually")
     if detected.rep is None:
-        warnings.append("Could not detect replication column — please specify manually")
+        warnings.append(
+            "No replication column detected — CRD assumed "
+            "(replication inferred from data)"
+        )
     if not detected.traits:
         warnings.append(
             "No numeric trait columns detected. "
@@ -139,8 +142,10 @@ async def upload_dataset(request: UploadDatasetRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # Validate required columns exist
-    required = [request.genotype_column, request.rep_column]
+    # Validate required columns exist (rep_column is optional — CRD allowed)
+    required = [request.genotype_column]
+    if request.rep_column:
+        required.append(request.rep_column)
     if request.environment_column:
         required.append(request.environment_column)
     missing = [c for c in required if c not in df.columns]
@@ -152,7 +157,11 @@ async def upload_dataset(request: UploadDatasetRequest):
 
     # Gather dataset-level stats
     n_genotypes = int(df[request.genotype_column].nunique())
-    n_reps      = int(df[request.rep_column].nunique())
+    if request.rep_column:
+        n_reps = int(df[request.rep_column].nunique())
+    else:
+        # CRD: infer n_reps as maximum observations per genotype
+        n_reps = int(df.groupby(request.genotype_column).size().max())
     n_envs: Optional[int] = (
         int(df[request.environment_column].nunique())
         if request.environment_column
@@ -165,7 +174,7 @@ async def upload_dataset(request: UploadDatasetRequest):
         "base64_content":    request.base64_content,
         "file_type":         request.file_type,
         "genotype_column":   request.genotype_column,
-        "rep_column":        request.rep_column,
+        "rep_column":        request.rep_column,       # may be None for CRD
         "environment_column": request.environment_column,
         "mode":              request.mode,
         "random_environment": request.random_environment,

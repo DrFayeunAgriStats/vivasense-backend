@@ -27,11 +27,23 @@ class UploadDatasetRequest(BaseModel):
     """
     POST /upload/dataset — confirm column mapping and register a reusable
     dataset context.  Returns dataset_token used by all analysis modules.
+
+    rep_column is optional.  When absent the system assumes a Completely
+    Randomised Design (CRD) and infers replication from repeated observations
+    per genotype.  When an environment_column is also provided in single-env
+    mode the analysis uses a factorial CRD model
+    (trait ~ genotype + factor + genotype:factor).
     """
     base64_content: str = Field(..., description="Base64-encoded CSV or Excel file")
     file_type: str = Field(..., pattern="^(csv|xlsx|xls)$")
     genotype_column: str
-    rep_column: str
+    rep_column: Optional[str] = Field(
+        default=None,
+        description=(
+            "Replication/block column. Leave null for CRD datasets — "
+            "replication will be inferred from repeated observations."
+        ),
+    )
     environment_column: Optional[str] = None
     mode: str = Field(default="single", pattern="^(single|multi)$")
     random_environment: bool = False

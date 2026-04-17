@@ -89,39 +89,72 @@ compute_mean_separation <- function(model, trait_name = "Trait",
 # ============================================================================
 
 #' Single-Environment Genetics Analysis
-#' 
+#'
 #' @param data data frame with columns: genotype, rep, trait_value
+#'             (CRD: also optionally "factor" for factorial CRD)
 #' @param trait_name character, name of the trait being analyzed
+#' @param crd_mode   logical; TRUE = Completely Randomised Design (no blocking).
+#'                   FALSE (default) = RCBD (rep is a blocking factor).
 #' @return list with variance components and heritability estimates
 #'
-compute_single_environment <- function(data, trait_name = "Trait") {
-  
+compute_single_environment <- function(data, trait_name = "Trait",
+                                       crd_mode = FALSE) {
+
   # Ensure factors
   data$genotype <- factor(data$genotype)
-  data$rep <- factor(data$rep)
-  
+  data$rep      <- factor(data$rep)
+
   n_genotypes <- nlevels(data$genotype)
-  n_reps <- nlevels(data$rep)
-  
-  # ANOVA under CRD or RCBD (assuming RCBD: genotype as fixed, rep as fixed block)
-  model <- aov(trait_value ~ rep + genotype, data = data)
+
+  # ── Model selection ──────────────────────────────────────────────────────────
+  # CRD (no blocking):   trait_value ~ genotype
+  # Factorial CRD:       trait_value ~ genotype * factor
+  # RCBD (blocking):     trait_value ~ rep + genotype
+  has_factor <- crd_mode && ("factor" %in% colnames(data))
+
+  if (crd_mode) {
+    # n_reps = average observations per genotype (inferred from data)
+    obs_per_geno <- table(data$genotype)
+    n_reps <- round(mean(obs_per_geno))
+
+    if (has_factor) {
+      data$factor <- factor(data$factor)
+      message(sprintf(
+        "[INFO] Factorial CRD model for %s: trait_value ~ genotype * factor (%d factor levels)",
+        trait_name, nlevels(data$factor)
+      ))
+      model <- aov(trait_value ~ genotype * factor, data = data)
+    } else {
+      message(sprintf(
+        "[INFO] CRD model for %s: trait_value ~ genotype (n_reps inferred = %d)",
+        trait_name, n_reps
+      ))
+      model <- aov(trait_value ~ genotype, data = data)
+    }
+  } else {
+    # RCBD: rep is a fixed blocking factor
+    n_reps <- nlevels(data$rep)
+    model  <- aov(trait_value ~ rep + genotype, data = data)
+  }
+
   anova_table <- anova(model)
   
   # Extract mean squares
+  # "genotype" row exists in all three model variants (CRD, factorial CRD, RCBD)
   ms_genotype <- anova_table["genotype", "Mean Sq"]
-  ms_error <- anova_table["Residuals", "Mean Sq"]
-  
-  # Variance components (assuming Model 1: fixed genotype)
+  ms_error    <- anova_table["Residuals", "Mean Sq"]
+
+  # Variance components
   # σ²e = MSE
-  # σ²g = (MS_g - MS_e) / n_reps
+  # σ²g = (MS_g - MS_e) / n_reps   [same formula for CRD and RCBD]
   sigma2_error <- ms_error
-  
+
   # CRITICAL FIX: Clamp negative variance to zero + flag warning
   sigma2_genotype_raw <- (ms_genotype - ms_error) / n_reps
-  sigma2_genotype <- max(0, sigma2_genotype_raw)
-  negative_sigma2g <- sigma2_genotype_raw < -0.001
-  
-  # Phenotypic variance (under RCBD, expected phenotypic variance among entries)
+  sigma2_genotype     <- max(0, sigma2_genotype_raw)
+  negative_sigma2g    <- sigma2_genotype_raw < -0.001
+
+  # Phenotypic variance (entry-mean basis)
   sigma2_phenotypic <- sigma2_genotype + (sigma2_error / n_reps)
   
   # CRITICAL FIX: Handle edge case where phenotypic variance ≤ 0
@@ -153,39 +186,50 @@ compute_single_environment <- function(data, trait_name = "Trait") {
     gam_percent <- (gam / grand_mean) * 100
   }
   
-  mean_sep <- compute_mean_separation(model, trait_name)
+  df_err   <- anova_table["Residuals", "Df"]
+  mean_sep <- compute_mean_separation(model, trait_name,
+                                      df_error = df_err, ms_error = ms_error)
+
+  design_label <- if (crd_mode) {
+    if (has_factor) "factorial_crd" else "crd"
+  } else {
+    "rcbd"
+  }
 
   list(
     environment_mode = "single_environment",
-    n_genotypes = n_genotypes,
-    n_reps = n_reps,
-    grand_mean = grand_mean,
+    design           = design_label,
+    n_genotypes      = n_genotypes,
+    n_reps           = n_reps,
+    grand_mean       = grand_mean,
     variance_components = list(
-      sigma2_genotype = sigma2_genotype,
-      sigma2_error = sigma2_error,
+      sigma2_genotype  = sigma2_genotype,
+      sigma2_error     = sigma2_error,
       sigma2_phenotypic = sigma2_phenotypic
     ),
     heritability = list(
-      h2_broad_sense = h2,
-      h2_is_valid = h2_is_valid,
+      h2_broad_sense      = h2,
+      h2_is_valid         = h2_is_valid,
       interpretation_basis = "entry-mean (single environment)"
     ),
     genetic_parameters = list(
-      GCV = gcv,
-      PCV = pcv,
-      GAM = gam,
-      GAM_percent = gam_percent,
+      GCV             = gcv,
+      PCV             = pcv,
+      GAM             = gam,
+      GAM_percent     = gam_percent,
       selection_intensity = 1.4
     ),
     flags = list(
       negative_sigma2_genotype = negative_sigma2g,
-      sigma2_g_raw = sigma2_genotype_raw,
-      mean_valid = mean_is_valid
+      sigma2_g_raw             = sigma2_genotype_raw,
+      mean_valid               = mean_is_valid,
+      crd_mode                 = crd_mode,
+      factorial_crd            = has_factor
     ),
-    anova_table = as.data.frame(anova_table),
+    anova_table    = as.data.frame(anova_table),
     mean_separation = mean_sep,
-    ms_genotype = ms_genotype,
-    ms_error = ms_error
+    ms_genotype    = ms_genotype,
+    ms_error       = ms_error
   )
 }
 
@@ -392,21 +436,35 @@ compute_multi_environment <- function(data, trait_name = "Trait",
 # Check data quality, variance reasonableness, and flag issues
 # ============================================================================
 
-validate_input_data <- function(data, env_mode = "single") {
-  
+validate_input_data <- function(data, env_mode = "single", crd_mode = FALSE) {
+
   warnings_list <- list()
-  is_valid <- TRUE
-  
-  # Check required columns
+  is_valid      <- TRUE
+
+  # Required columns vary by mode.
+  # CRD: "rep" is synthetic (present) but not a true blocking factor.
+  # We still require it in data because Python always injects a synthetic rep.
   required_cols <- c("genotype", "rep", "trait_value")
   if (env_mode == "multi") required_cols <- c(required_cols, "environment")
-  
+
   missing_cols <- setdiff(required_cols, colnames(data))
   if (length(missing_cols) > 0) {
-    warnings_list$missing_columns <- missing_cols
-    is_valid <- FALSE
+    # For CRD mode the absence of "rep" is non-fatal — Python injects a
+    # synthetic column, but guard against any edge case where it is absent.
+    truly_missing <- if (crd_mode) {
+      setdiff(missing_cols, "rep")
+    } else {
+      missing_cols
+    }
+    if (length(truly_missing) > 0) {
+      warnings_list$missing_columns <- truly_missing
+      is_valid <- FALSE
+    } else if (length(missing_cols) > 0) {
+      warnings_list$note_crd_no_rep <-
+        "Replication inferred from repeated observations (CRD assumed)"
+    }
   }
-  
+
   # Check for missing values in key columns
   for (col in required_cols) {
     if (col %in% colnames(data)) {
@@ -416,39 +474,45 @@ validate_input_data <- function(data, env_mode = "single") {
       }
     }
   }
-  
+
   # Check for NA in trait values
   na_trait <- sum(is.na(data$trait_value))
   if (na_trait > 0) {
     warnings_list$missing_trait_values <- na_trait
   }
-  
+
   # Check minimum replication
   if (env_mode == "single") {
-    min_reps <- data %>% group_by(genotype) %>% summarise(n = n(), .groups = "drop") %>% pull(n) %>% min()
+    min_reps <- data %>%
+      group_by(genotype) %>%
+      summarise(n = n(), .groups = "drop") %>%
+      pull(n) %>%
+      min()
     if (min_reps < 2) {
-      warnings_list$insufficient_replication <- paste("Minimum reps per genotype:", min_reps)
+      warnings_list$insufficient_replication <-
+        paste("Minimum observations per genotype:", min_reps, "(minimum 2 required)")
       is_valid <- FALSE
     }
   } else {
-    min_reps_per_gxe <- data %>% 
-      group_by(genotype, environment) %>% 
-      summarise(n = n(), .groups = "drop") %>% 
-      pull(n) %>% 
+    min_reps_per_gxe <- data %>%
+      group_by(genotype, environment) %>%
+      summarise(n = n(), .groups = "drop") %>%
+      pull(n) %>%
       min()
     if (min_reps_per_gxe < 2) {
-      warnings_list$insufficient_replication <- paste("Minimum reps per G×E:", min_reps_per_gxe)
+      warnings_list$insufficient_replication <-
+        paste("Minimum reps per G\u00d7E:", min_reps_per_gxe)
       is_valid <- FALSE
     }
   }
-  
+
   # Check trait variation
   trait_var <- var(data$trait_value, na.rm = TRUE)
   if (is.na(trait_var) || trait_var == 0) {
     warnings_list$no_trait_variation <- "Trait has zero variance"
     is_valid <- FALSE
   }
-  
+
   list(
     is_valid = is_valid,
     warnings = warnings_list
@@ -555,20 +619,24 @@ validate_variance_components <- function(result) {
 
 #' Orchestrate VivaSense Genetics Analysis
 #'
-#' @param data data frame with columns: genotype, rep, trait_value (+ environment if multi)
-#' @param mode character, "single" or "multi"
-#' @param trait_name character, name of the trait
+#' @param data              data frame with columns: genotype, rep, trait_value
+#'                          (+ environment if multi; + factor if factorial CRD)
+#' @param mode              character, "single" or "multi"
+#' @param trait_name        character, name of the trait
 #' @param random_environment logical (multi-mode only), treat environment as random
+#' @param crd_mode          logical; TRUE = CRD (no blocking), FALSE = RCBD
 #' @return list with computation result, validation warnings, interpretation
 #'
-genetics_analysis <- function(data, 
+genetics_analysis <- function(data,
                               mode = "single",
                               trait_name = "Trait",
-                              random_environment = FALSE) {
-  
+                              random_environment = FALSE,
+                              crd_mode = FALSE) {
+
   # Validate input data
-  data_validation <- validate_input_data(data, env_mode = mode)
-  
+  data_validation <- validate_input_data(data, env_mode = mode,
+                                         crd_mode = crd_mode)
+
   if (!data_validation$is_valid) {
     return(list(
       status = "ERROR",
@@ -578,13 +646,15 @@ genetics_analysis <- function(data,
       interpretation = NULL
     ))
   }
-  
+
   # Run computation
   if (mode == "single") {
     result <- tryCatch(
-      compute_single_environment(data, trait_name = trait_name),
+      compute_single_environment(data, trait_name = trait_name,
+                                 crd_mode = crd_mode),
       error = function(e) {
-        message(sprintf("[ERROR] single-env computation failed for %s: %s", trait_name, conditionMessage(e)))
+        message(sprintf("[ERROR] single-env computation failed for %s: %s",
+                        trait_name, conditionMessage(e)))
         return(list(.__error__ = conditionMessage(e)))
       }
     )

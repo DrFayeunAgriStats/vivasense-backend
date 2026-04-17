@@ -290,21 +290,25 @@ class RGeneticsEngine:
         data: List[Dict[str, Any]],
         mode: str,
         trait_name: str = "Trait",
-        random_environment: bool = False
+        random_environment: bool = False,
+        crd_mode: bool = False,
     ) -> Dict[str, Any]:
         """
-        Execute genetics analysis via R subprocess
-        
+        Execute genetics analysis via R subprocess.
+
         Args:
-            data: List of observation dicts
-            mode: 'single' or 'multi'
-            trait_name: Name of trait
-            random_environment: Include E in h² denominator (multi-mode)
-        
+            data: List of observation dicts.
+            mode: 'single' or 'multi'.
+            trait_name: Name of trait.
+            random_environment: Include E in h² denominator (multi-mode).
+            crd_mode: When True, use CRD model (trait ~ genotype or factorial)
+                      instead of RCBD model (trait ~ rep + genotype).
+                      Records must contain "rep" (synthetic) and optionally
+                      "factor" for factorial CRD.
         Returns:
-            Parsed JSON result from R
+            Parsed JSON result from R.
         """
-        
+
         try:
             # Serialize input data directly to a temporary JSON file (Memory Optimized)
             with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp_json:
@@ -317,11 +321,12 @@ class RGeneticsEngine:
                 suffix='.R',
                 delete=False
             ) as tmp_r:
-                
+
                 random_env_str = "TRUE" if random_environment else "FALSE"
+                crd_mode_str   = "TRUE" if crd_mode else "FALSE"
                 # Escape file path for R (converts Windows \ to /)
                 r_json_path = tmp_json_path.replace('\\', '/')
-                
+
                 r_code = f'''
 # VivaSense Genetics Analysis Execution
 .libPaths(c("C:/Users/user/.gemini/antigravity/scratch/R_libs", .libPaths()))
@@ -338,13 +343,18 @@ data$rep <- as.character(data$rep)
 if ("{mode}" == "multi") {{
   data$environment <- as.character(data$environment)
 }}
+# Factorial CRD: factor column present when crd_mode and env supplied
+if ("factor" %in% colnames(data)) {{
+  data$factor <- as.character(data$factor)
+}}
 
 # Run analysis
 result <- genetics_analysis(
     data = data,
     mode = "{mode}",
     trait_name = "{trait_name}",
-    random_environment = {random_env_str}
+    random_environment = {random_env_str},
+    crd_mode = {crd_mode_str}
 )
 
 # Export to JSON and output

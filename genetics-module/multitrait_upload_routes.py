@@ -186,7 +186,7 @@ def read_file(content: bytes, file_type: str) -> pd.DataFrame:
 def build_observations(
     df: pd.DataFrame,
     genotype_col: str,
-    rep_col: str,
+    rep_col: Optional[str],
     trait_col: str,
     env_col: Optional[str],
 ) -> List[Dict[str, Any]]:
@@ -194,19 +194,39 @@ def build_observations(
     Reshape a wide DataFrame into the flat observation-record format expected
     by RGeneticsEngine.run_analysis():
 
-        Single-env: [{"genotype": ..., "rep": ..., "trait_value": ...}, ...]
-        Multi-env:  [{"genotype": ..., "environment": ..., "rep": ..., "trait_value": ...}, ...]
+        RCBD (rep_col provided):
+            Single-env: [{"genotype": ..., "rep": ..., "trait_value": ...}, ...]
+            Multi-env:  [{"genotype": ..., "environment": ..., "rep": ...,
+                          "trait_value": ...}, ...]
+
+        CRD (rep_col is None):
+            Single-env: [{"genotype": ..., "rep": "<synthetic>",
+                          "crd": True, "trait_value": ...}, ...]
+            Factorial CRD (env_col provided in single mode):
+                        [{"genotype": ..., "rep": "<synthetic>", "crd": True,
+                          "factor": ..., "trait_value": ...}, ...]
+
+    For CRD datasets the rep field is a synthetic row-counter within each
+    genotype group (e.g. "R1", "R2", …).  The R engine uses the "crd" flag
+    to select the correct model formula instead of blocking on rep.
 
     Rows where trait_col is non-numeric or null are dropped.
     Raises ValueError if fewer than 6 valid observations remain.
 
-    NOTE: The R engine (vivasense_genetics.R) performs all ANOVA computations
-    (SS, MS, F-tests, variance component estimation). There is no Python-level
-    ANOVA derivation here. build_observations() is a pure data reshaping step.
+    NOTE: The R engine (vivasense_genetics.R) performs all ANOVA computations.
+    build_observations() is a pure data-reshaping step.
     """
-    keep_cols = [genotype_col, rep_col, trait_col]
-    if env_col:
-        keep_cols = [genotype_col, env_col, rep_col, trait_col]
+    crd_mode = rep_col is None
+
+    if crd_mode:
+        # Factorial CRD: env_col supplies the treatment factor (single mode only)
+        keep_cols = [genotype_col, trait_col]
+        if env_col:
+            keep_cols = [genotype_col, env_col, trait_col]
+    else:
+        keep_cols = [genotype_col, rep_col, trait_col]
+        if env_col:
+            keep_cols = [genotype_col, env_col, rep_col, trait_col]
 
     subset = df[keep_cols].copy()
     subset[trait_col] = pd.to_numeric(subset[trait_col], errors="coerce")
@@ -218,15 +238,31 @@ def build_observations(
             "dropping missing values (minimum 6 required)"
         )
 
+    if crd_mode:
+        # Assign synthetic replication numbers within each genotype group.
+        # R uses these for n_reps estimation only — they are NOT included in
+        # the CRD model formula.
+        subset = subset.copy()
+        subset["_synth_rep"] = (
+            subset.groupby(genotype_col).cumcount().add(1)
+            .astype(str).radd("R")
+        )
+
     records: List[Dict[str, Any]] = []
     for _, row in subset.iterrows():
         rec: Dict[str, Any] = {
             "genotype": str(row[genotype_col]),
-            "rep": str(row[rep_col]),
             "trait_value": float(row[trait_col]),
         }
-        if env_col:
-            rec["environment"] = str(row[env_col])
+        if crd_mode:
+            rec["rep"] = str(row["_synth_rep"])
+            rec["crd"] = True
+            if env_col:
+                rec["factor"] = str(row[env_col])
+        else:
+            rec["rep"] = str(row[rep_col])
+            if env_col:
+                rec["environment"] = str(row[env_col])
         records.append(rec)
 
     return records
@@ -239,7 +275,7 @@ def build_observations(
 def check_balance(
     df: pd.DataFrame,
     genotype_col: str,
-    rep_col: str,
+    rep_col: Optional[str],
     trait_col: str,
     env_col: Optional[str],
 ) -> List[str]:
@@ -248,9 +284,11 @@ def check_balance(
     structure relevant to the given trait.
 
     Checks performed:
-    - Single-env: whether all genotypes have the same number of observations.
-    - Multi-env:  whether each genotype appears in every environment
-                  (completeness) and whether cell sizes are equal (balance).
+    - CRD (rep_col is None): whether all genotypes have ≥ 2 observations and
+      equal replication (informational only — CRD can tolerate some imbalance).
+    - RCBD single-env: whether all genotypes have the same number of observations.
+    - Multi-env: whether each genotype appears in every environment (completeness)
+      and whether cell sizes are equal (balance).
 
     The R engine can still analyse unbalanced data, but results may be less
     reliable. Warnings are surfaced in TraitResult.data_warnings.
@@ -260,11 +298,12 @@ def check_balance(
     warnings: List[str] = []
 
     n_genotypes = sub[genotype_col].nunique()
+    crd_mode = rep_col is None
 
-    if env_col:
+    if env_col and not crd_mode:
+        # Multi-environment RCBD
         n_envs = sub[env_col].nunique()
 
-        # Completeness: each genotype should appear in every environment
         envs_per_geno = sub.groupby(genotype_col)[env_col].nunique()
         incomplete = int((envs_per_geno < n_envs).sum())
         if incomplete:
@@ -274,7 +313,6 @@ def check_balance(
                 f"(expected {n_envs} environments per genotype)"
             )
 
-        # Balance: all genotype×environment cells should have equal rep counts
         cell_sizes = sub.groupby([genotype_col, env_col]).size()
         min_cell = int(cell_sizes.min())
         max_cell = int(cell_sizes.max())
@@ -284,15 +322,27 @@ def check_balance(
                 f"{min_cell} to {max_cell} observations"
             )
     else:
-        # Single environment: all genotypes should have equal replication
+        # Single environment (RCBD or CRD) — check replication counts per genotype
         obs_per_geno = sub.groupby(genotype_col).size()
         min_obs = int(obs_per_geno.min())
         max_obs = int(obs_per_geno.max())
-        if min_obs != max_obs:
+
+        if min_obs < 2:
             warnings.append(
-                f"Unbalanced design: genotypes have between {min_obs} and "
-                f"{max_obs} observations (expected equal replication)"
+                f"At least one genotype has only {min_obs} observation(s); "
+                "a minimum of 2 replications per genotype is required for variance estimation."
             )
+        elif min_obs != max_obs:
+            if crd_mode:
+                warnings.append(
+                    f"Unbalanced CRD: genotypes have between {min_obs} and "
+                    f"{max_obs} observations — replication is inferred from data"
+                )
+            else:
+                warnings.append(
+                    f"Unbalanced design: genotypes have between {min_obs} and "
+                    f"{max_obs} observations (expected equal replication)"
+                )
 
     return warnings
 
@@ -368,7 +418,10 @@ async def upload_preview(file: UploadFile = File(...)):
     if detected.genotype is None:
         warn.append("Could not detect genotype column — please specify manually")
     if detected.rep is None:
-        warn.append("Could not detect replication column — please specify manually")
+        warn.append(
+            "No replication column detected — CRD assumed "
+            "(replication inferred from data)"
+        )
     if not detected.traits:
         warn.append(
             "No numeric trait columns detected. "
@@ -443,12 +496,13 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
     logger.info("analyze-upload columns: %s", list(df.columns))
     logger.info("analyze-upload head:\n%s", df.head())
 
-    # Validate that all named columns actually exist
-    required_cols = (
-        [request.genotype_column, request.rep_column]
-        + request.trait_columns
-        + ([request.environment_column] if request.environment_column else [])
-    )
+    # Validate that all named columns actually exist (rep_column is optional)
+    required_cols = [request.genotype_column]
+    if request.rep_column:
+        required_cols.append(request.rep_column)
+    required_cols += request.trait_columns
+    if request.environment_column:
+        required_cols.append(request.environment_column)
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         raise HTTPException(
@@ -458,7 +512,11 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
 
     # Dataset-level summary (whole file, not per-trait)
     n_genotypes = int(df[request.genotype_column].nunique())
-    n_reps = int(df[request.rep_column].nunique())
+    if request.rep_column:
+        n_reps = int(df[request.rep_column].nunique())
+    else:
+        # CRD: infer max observations per genotype as effective n_reps
+        n_reps = int(df.groupby(request.genotype_column).size().max())
     n_environments = (
         int(df[request.environment_column].nunique())
         if request.environment_column
@@ -483,10 +541,12 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
     MAX_CONCURRENT_R_PROCESSES = 4
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_R_PROCESSES)
 
+    crd_mode = request.rep_column is None and request.mode == "single"
+
     async def analyze_single_trait(trait: str):
         async with semaphore:
             print(f"[PIPELINE] Running {actual_module.upper()} pipeline for trait: {trait}", flush=True)
-            logger.info("Analyzing trait: %s (module=%s)", trait, actual_module)
+            logger.info("Analyzing trait: %s (module=%s, crd=%s)", trait, actual_module, crd_mode)
             try:
                 balance_warnings = check_balance(
                     df=df,
@@ -514,6 +574,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                     mode=request.mode,
                     trait_name=trait,
                     random_environment=request.random_environment,
+                    crd_mode=crd_mode,
                 )
 
                 # R returns status="ERROR" when computation fails

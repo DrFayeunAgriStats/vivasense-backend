@@ -154,8 +154,9 @@ async def analysis_genetic_parameters(request: ModuleRequest):
     mode       = ctx["mode"]
     env_col    = ctx["environment_column"] if mode == "multi" else None
     geno_col   = ctx["genotype_column"]
-    rep_col    = ctx["rep_column"]
+    rep_col    = ctx["rep_column"]          # may be None for CRD datasets
     random_env = ctx["random_environment"]
+    crd_mode   = (rep_col is None) and (mode == "single")
 
     trait_results: Dict[str, GeneticParametersTraitResult] = {}
     failed_traits: List[str] = []
@@ -181,6 +182,7 @@ async def analysis_genetic_parameters(request: ModuleRequest):
                         mode=mode,
                         trait_name=trait,
                         random_environment=random_env,
+                        crd_mode=crd_mode,
                     )
 
                 if result_dict.get("status") == "ERROR":
