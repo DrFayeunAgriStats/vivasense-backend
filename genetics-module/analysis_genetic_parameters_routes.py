@@ -29,8 +29,10 @@ from multitrait_upload_routes import build_observations, check_balance, read_fil
 from module_schemas import (
     GeneticParametersModuleResponse,
     GeneticParametersTraitResult,
+    DescriptiveStats,
     ModuleRequest,
 )
+from analysis_anova_routes import compute_descriptive_stats
 import dataset_cache
 from genetics_interpretation import generate_genetics_interpretation
 
@@ -200,6 +202,19 @@ async def analysis_genetic_parameters(request: ModuleRequest):
 
             gp = res.genetic_parameters if isinstance(res.genetic_parameters, dict) else {}
 
+            # Compute descriptive statistics from the trait data
+            trait_descriptive_stats = compute_descriptive_stats(df[trait])
+            desc_stats_obj = DescriptiveStats(
+                grand_mean=trait_descriptive_stats.get("grand_mean"),
+                standard_deviation=trait_descriptive_stats.get("standard_deviation"),
+                variance=trait_descriptive_stats.get("variance"),
+                standard_error=trait_descriptive_stats.get("standard_error"),
+                cv_percent=trait_descriptive_stats.get("cv_percent"),
+                min=trait_descriptive_stats.get("min"),
+                max=trait_descriptive_stats.get("max"),
+                range=trait_descriptive_stats.get("range"),
+            )
+
             # Build interpretation text (now returns ANOVA flags too)
             interp_text, breeding_text, env_sig, gxe_sig = _build_gp_text(trait, res)
 
@@ -207,6 +222,7 @@ async def analysis_genetic_parameters(request: ModuleRequest):
                 trait=trait,
                 status="success",
                 grand_mean=res.grand_mean,
+                descriptive_stats=desc_stats_obj,
                 variance_components=res.variance_components
                     if isinstance(res.variance_components, dict) else {},
                 heritability=res.heritability

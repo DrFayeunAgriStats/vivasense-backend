@@ -138,6 +138,7 @@ class GeneticParametersTraitResult(BaseModel):
     trait: str
     status: str
     grand_mean: Optional[float] = None
+    descriptive_stats: Optional[DescriptiveStats] = None
     variance_components: Optional[Dict[str, Any]] = None
     heritability: Optional[Dict[str, Any]] = None
     gcv: Optional[float] = None

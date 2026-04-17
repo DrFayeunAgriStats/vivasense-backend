@@ -534,10 +534,29 @@ async def export_anova_word(data: AnovaExportRequest):
                 rows.append(("No. Replications", str(tr.n_reps)))
             if tr.n_environments:
                 rows.append(("No. Environments", str(tr.n_environments)))
-            if tr.descriptive_stats and isinstance(tr.descriptive_stats, dict):
-                for k, v in tr.descriptive_stats.items():
-                    label = k.replace("_", " ").title()
-                    rows.append((label, _fmt(v) if isinstance(v, float) else str(v)))
+            if tr.descriptive_stats:
+                ds = tr.descriptive_stats
+                # Handle both dict and object forms
+                if isinstance(ds, dict):
+                    for k, v in ds.items():
+                        label = k.replace("_", " ").title()
+                        rows.append((label, _fmt(v) if isinstance(v, float) else str(v)))
+                else:
+                    # DescriptiveStats object
+                    if ds.standard_deviation is not None:
+                        rows.append(("Standard Deviation", _fmt(ds.standard_deviation)))
+                    if ds.standard_error is not None:
+                        rows.append(("Standard Error", _fmt(ds.standard_error)))
+                    if ds.min is not None:
+                        rows.append(("Minimum", _fmt(ds.min)))
+                    if ds.max is not None:
+                        rows.append(("Maximum", _fmt(ds.max)))
+                    if ds.range is not None:
+                        rows.append(("Range", _fmt(ds.range)))
+                    if ds.cv_percent is not None:
+                        rows.append(("Coefficient of Variation (%)", _fmt(ds.cv_percent, 2)))
+                    if ds.variance is not None:
+                        rows.append(("Variance", _fmt(ds.variance)))
             if rows:
                 _add_stat_table(doc, ["Parameter", "Value"], rows, numeric_cols={1})
             doc.add_paragraph()
@@ -658,6 +677,31 @@ async def export_genetic_parameters_word(data: GeneticParametersExportRequest):
                 for w in tr.data_warnings:
                     doc.add_paragraph(f"• {w}", style="List Bullet")
                 doc.add_paragraph()
+
+            # ── Descriptive Statistics ─────────────────────────────────────────
+            _add_heading(doc, "Descriptive Statistics", level=2)
+            ds_rows = []
+            if tr.grand_mean is not None:
+                ds_rows.append(("Grand Mean", _fmt(tr.grand_mean)))
+            if tr.descriptive_stats:
+                ds = tr.descriptive_stats
+                if ds.standard_deviation is not None:
+                    ds_rows.append(("Standard Deviation", _fmt(ds.standard_deviation)))
+                if ds.standard_error is not None:
+                    ds_rows.append(("Standard Error", _fmt(ds.standard_error)))
+                if ds.min is not None:
+                    ds_rows.append(("Minimum", _fmt(ds.min)))
+                if ds.max is not None:
+                    ds_rows.append(("Maximum", _fmt(ds.max)))
+                if ds.range is not None:
+                    ds_rows.append(("Range", _fmt(ds.range)))
+                if ds.cv_percent is not None:
+                    ds_rows.append(("Coefficient of Variation (%)", _fmt(ds.cv_percent, 2)))
+            if ds_rows:
+                _add_stat_table(doc, ["Parameter", "Value"], ds_rows, numeric_cols={1})
+            else:
+                _add_body(doc, "Descriptive statistics not available.", italic=True)
+            doc.add_paragraph()
 
             # ── 1–4. Variance components, heritability, GCV/PCV, GA/GAM ───────
             _add_gp_tables(doc, tr)
