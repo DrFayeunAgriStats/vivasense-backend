@@ -44,51 +44,65 @@ def generate_trait_association_interpretation(
 ) -> str:
     """
     Generate academic-grade trait association interpretation following VivaSense standards.
-    
+
     Rules enforced:
-    - If n_observations < 10 -> include "preliminary evidence"
-    - If "pairwise_n_not_tracked" in risk_flags -> explicitly state confidence is limited
-    - If gxe_significant -> explicitly warn that relationships may vary across environments
-    - Do not recommend indirect selection based on correlations alone
+    - strongest_positive / strongest_negative must be the strongest SIGNIFICANT pairs.
+      Callers are responsible for filtering to p <= alpha before passing them in.
+      Non-significant pairs must never be passed here — they will be described as
+      biologically meaningful, which is scientifically incorrect.
+    - If strongest_negative is None (no significant negative pair exists), the report
+      explicitly says so rather than omitting the topic.
+    - Trade-off language is only emitted when a significant negative pair is present.
+    - If n_observations < 10 -> include "preliminary evidence".
+    - If "pairwise_n_not_tracked" in risk_flags -> state confidence is limited.
+    - If gxe_significant -> warn that relationships may vary across environments.
+    - Do not recommend indirect selection based on correlations alone.
     """
     sections = []
-    
+
     # 1. Overview
     overview = []
     overview.append(f"This analysis examined trait associations among {n_traits} traits")
     if environment_context == "multi_environment":
-        overview.append(f"across multiple environments")
+        overview.append("across multiple environments")
     overview.append(f"using {n_observations} genotype mean(s).")
-    
+
     if n_observations < 10:
         overview.append("The sample size is limited, indicating preliminary evidence.")
-    
+
     sections.append(" ".join(overview))
-    
+
     # 2. Significant Associations
     if n_significant_pairs > 0:
         assoc = []
-        assoc.append(f"Significant trait associations (p < 0.05) were detected for {n_significant_pairs} pair(s).")
-        
+        assoc.append(
+            f"Significant trait associations (p < 0.05) were detected for "
+            f"{n_significant_pairs} pair(s)."
+        )
+
+        # Positive — only describe if a significant positive pair was found
         if strongest_positive:
             assoc.append(
-                f"The strongest positive association was between "
+                f"The strongest significant positive association was between "
                 f"{strongest_positive.get('trait_1')} and {strongest_positive.get('trait_2')} "
-                f"(r = {strongest_positive.get('r', 0):.2f})."
+                f"(r = {strongest_positive.get('r', 0):.2f}), "
+                "suggesting these traits may tend to improve together."
             )
-        
+        else:
+            assoc.append("No significant positive associations were detected.")
+
+        # Negative — only describe if a significant negative pair was found.
+        # Never describe a non-significant negative correlation as a trade-off.
         if strongest_negative:
             assoc.append(
-                f"The strongest negative association was between "
+                f"The strongest significant negative association was between "
                 f"{strongest_negative.get('trait_1')} and {strongest_negative.get('trait_2')} "
-                f"(r = {strongest_negative.get('r', 0):.2f})."
+                f"(r = {strongest_negative.get('r', 0):.2f}), "
+                "which may reflect a trade-off in genetic or physiological control."
             )
-        
-        assoc.append(
-            "Positive correlations suggest traits improving together, while negative correlations "
-            "may reflect trade-offs in genetic or physiological control."
-        )
-        
+        else:
+            assoc.append("No significant negative associations were detected.")
+
         sections.append(" ".join(assoc))
     else:
         sections.append(

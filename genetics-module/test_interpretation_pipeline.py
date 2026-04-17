@@ -15,7 +15,8 @@ import sys
 
 sys.path.insert(0, "/c:/Users/ADMIN/vivasense-backend/genetics-module")
 
-from analysis_trait_association_routes import generate_trait_association_interpretation
+from trait_association_interpretation import generate_trait_association_interpretation
+from trait_relationships_routes import _compute_significant_pairs_and_strongest
 from analysis_anova_routes import generate_anova_interpretation
 from module_schemas import (
     TraitAssociationModuleResponse,
@@ -291,6 +292,147 @@ class TestCorrelationLegacyPhraseAbsent(unittest.TestCase):
         text = self._gen()
         self.assertGreater(len(text.strip()), 50,
                            "Correlation interpretation must be substantive text")
+
+
+class TestSignificantPairFiltering(unittest.TestCase):
+    """
+    Prove that non-significant pairs never appear as trade-offs or meaningful
+    associations in the interpretation text.
+    """
+
+    # ── helpers ──────────────────────────────────────────────────────────────
+
+    def _interp(self, **overrides):
+        """Call generate_trait_association_interpretation with safe defaults."""
+        defaults = dict(
+            n_traits=4,
+            n_observations=20,
+            n_significant_pairs=0,
+            strongest_positive=None,
+            strongest_negative=None,
+            risk_flags=["pairwise_n_not_tracked"],
+            gxe_significant=False,
+            environment_context="single_environment",
+        )
+        defaults.update(overrides)
+        return generate_trait_association_interpretation(**defaults)
+
+    def _r_matrix(self, pairs):
+        """
+        Build a tiny 3-trait r/p matrix from a list of (i, j, r, p) tuples.
+        Traits are ["T1", "T2", "T3"].
+        """
+        n = 3
+        r = [[1.0 if i == j else None for j in range(n)] for i in range(n)]
+        p = [[0.0 if i == j else None for j in range(n)] for i in range(n)]
+        for i, j, rv, pv in pairs:
+            r[i][j] = r[j][i] = rv
+            p[i][j] = p[j][i] = pv
+        return r, p
+
+    # ── _compute_significant_pairs_and_strongest ──────────────────────────────
+
+    def test_non_significant_negative_excluded_from_strongest(self):
+        """r = -0.09, p = 0.85 must not become strongest_negative."""
+        traits = ["LW", "FL", "GY"]
+        r, p = self._r_matrix([
+            (0, 1, -0.09, 0.8489),   # LW–FL: NOT significant
+            (0, 2,  0.72, 0.02),     # LW–GY: significant positive
+        ])
+        n_sig, best_pos, best_neg = _compute_significant_pairs_and_strongest(traits, r, p)
+        self.assertEqual(n_sig, 1)
+        self.assertIsNotNone(best_pos)
+        self.assertIsNone(best_neg,
+            "Non-significant negative pair (p=0.85) must not appear as strongest_negative")
+
+    def test_significant_negative_is_returned(self):
+        """A pair with r < 0 and p <= 0.05 must be returned as strongest_negative."""
+        traits = ["T1", "T2", "T3"]
+        r, p = self._r_matrix([
+            (0, 1, -0.75, 0.01),
+            (0, 2,  0.60, 0.03),
+        ])
+        n_sig, best_pos, best_neg = _compute_significant_pairs_and_strongest(traits, r, p)
+        self.assertEqual(n_sig, 2)
+        self.assertIsNotNone(best_neg)
+        self.assertAlmostEqual(best_neg["r"], -0.75)
+
+    def test_no_significant_pairs_returns_none_for_both(self):
+        """When all pairs are non-significant both strongest slots are None."""
+        traits = ["T1", "T2", "T3"]
+        r, p = self._r_matrix([
+            (0, 1, -0.60, 0.30),
+            (0, 2,  0.55, 0.20),
+        ])
+        n_sig, best_pos, best_neg = _compute_significant_pairs_and_strongest(traits, r, p)
+        self.assertEqual(n_sig, 0)
+        self.assertIsNone(best_pos)
+        self.assertIsNone(best_neg)
+
+    def test_strongest_among_multiple_significant_negatives(self):
+        """When multiple significant negatives exist, the most-negative r wins."""
+        traits = ["T1", "T2", "T3"]
+        r, p = self._r_matrix([
+            (0, 1, -0.50, 0.04),
+            (0, 2, -0.80, 0.01),
+        ])
+        _, _, best_neg = _compute_significant_pairs_and_strongest(traits, r, p)
+        self.assertIsNotNone(best_neg)
+        self.assertAlmostEqual(best_neg["r"], -0.80,
+            msg="Most-negative significant r (-0.80) must win over -0.50")
+
+    # ── interpretation text ───────────────────────────────────────────────────
+
+    def test_non_significant_negative_not_called_trade_off(self):
+        """
+        If strongest_negative=None (caller filtered it out), the report must
+        say 'No significant negative associations' — not mention trade-offs.
+        """
+        text = self._interp(
+            n_significant_pairs=1,
+            strongest_positive={"trait_1": "LW", "trait_2": "GY", "r": 0.72},
+            strongest_negative=None,   # non-sig pair already dropped by caller
+        )
+        self.assertIn("No significant negative associations were detected", text)
+        self.assertNotIn("trade-off", text.lower())
+        self.assertNotIn("trade off", text.lower())
+
+    def test_significant_negative_described_as_trade_off(self):
+        """A genuinely significant negative pair may be described as a trade-off."""
+        text = self._interp(
+            n_significant_pairs=2,
+            strongest_positive={"trait_1": "T1", "trait_2": "T2", "r": 0.75},
+            strongest_negative={"trait_1": "T1", "trait_2": "T3", "r": -0.70},
+        )
+        self.assertIn("trade-off", text.lower())
+        self.assertNotIn("No significant negative", text)
+
+    def test_no_significant_pairs_at_all(self):
+        """Zero significant pairs: neither direction should mention a pair value."""
+        text = self._interp(n_significant_pairs=0)
+        self.assertIn("No significant trait associations were detected", text)
+        self.assertNotIn("r =", text)
+        self.assertNotIn("trade-off", text.lower())
+
+    def test_significant_positive_only(self):
+        """Only positive significant: positive is described, negative explicitly absent."""
+        text = self._interp(
+            n_significant_pairs=1,
+            strongest_positive={"trait_1": "A", "trait_2": "B", "r": 0.80},
+            strongest_negative=None,
+        )
+        self.assertIn("strongest significant positive", text.lower())
+        self.assertIn("No significant negative associations were detected", text)
+
+    def test_significant_negative_only(self):
+        """Only negative significant: negative is described, positive explicitly absent."""
+        text = self._interp(
+            n_significant_pairs=1,
+            strongest_positive=None,
+            strongest_negative={"trait_1": "A", "trait_2": "C", "r": -0.78},
+        )
+        self.assertIn("strongest significant negative", text.lower())
+        self.assertIn("No significant positive associations were detected", text)
 
 
 class TestAnovaModuleImportsClean(unittest.TestCase):

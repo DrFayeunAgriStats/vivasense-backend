@@ -164,45 +164,53 @@ def _compute_significant_pairs_and_strongest(
     alpha: float = 0.05
 ) -> tuple[int, Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
     """
-    Compute significant pairs count and strongest positive/negative pairs.
-    
+    Compute significant pairs count and the strongest SIGNIFICANT positive/negative pair.
+
+    Only pairs with p_value <= alpha are considered for strongest_positive and
+    strongest_negative.  Non-significant pairs — however large their r — are
+    excluded so the interpretation layer never describes them as biologically
+    meaningful.
+
     Returns:
-        n_significant_pairs: Number of significant pairs
-        strongest_positive: Dict with trait_1, trait_2, r for strongest positive correlation
-        strongest_negative: Dict with trait_1, trait_2, r for strongest negative correlation
+        n_significant_pairs:  count of pairs with p <= alpha
+        strongest_positive:   dict(trait_1, trait_2, r) for the largest r among
+                              significant positive pairs, or None
+        strongest_negative:   dict(trait_1, trait_2, r) for the most-negative r
+                              among significant negative pairs, or None
     """
     n_significant_pairs = 0
     strongest_positive = None
     strongest_negative = None
     max_positive_r = 0.0
     max_negative_r = 0.0
-    
+
     n = len(trait_names)
     for i in range(n):
         for j in range(i + 1, n):  # Upper triangle only
             r_val = r_matrix[i][j] if r_matrix and i < len(r_matrix) and j < len(r_matrix[i]) else None
             p_val = p_matrix[i][j] if p_matrix and i < len(p_matrix) and j < len(p_matrix[i]) else None
-            
-            if r_val is not None and p_val is not None and p_val <= alpha:
-                n_significant_pairs += 1
-            
-            # Track strongest pairs
-            if r_val is not None:
-                if r_val > 0 and r_val > max_positive_r:
-                    max_positive_r = r_val
-                    strongest_positive = {
-                        "trait_1": trait_names[i],
-                        "trait_2": trait_names[j],
-                        "r": r_val
-                    }
-                elif r_val < 0 and r_val < max_negative_r:
-                    max_negative_r = r_val
-                    strongest_negative = {
-                        "trait_1": trait_names[i],
-                        "trait_2": trait_names[j],
-                        "r": r_val
-                    }
-    
+
+            if r_val is None or p_val is None or p_val > alpha:
+                continue
+
+            # Pair is significant — count it and track strongest by direction
+            n_significant_pairs += 1
+
+            if r_val > 0 and r_val > max_positive_r:
+                max_positive_r = r_val
+                strongest_positive = {
+                    "trait_1": trait_names[i],
+                    "trait_2": trait_names[j],
+                    "r": r_val,
+                }
+            elif r_val < 0 and r_val < max_negative_r:
+                max_negative_r = r_val
+                strongest_negative = {
+                    "trait_1": trait_names[i],
+                    "trait_2": trait_names[j],
+                    "r": r_val,
+                }
+
     return n_significant_pairs, strongest_positive, strongest_negative
 
 

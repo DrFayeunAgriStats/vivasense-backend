@@ -264,13 +264,25 @@ async def analyze_trait_association(request: TraitAssociationModuleRequest):
         type="correlation_heatmap_ready"
     )
 
+    # Derive strongest SIGNIFICANT pairs for interpretation.
+    # strongest_positive / strongest_negative above track the overall strongest
+    # (used for the response summary label) but may be non-significant.
+    # The interpretation must only reference pairs whose p-value is significant.
+    sig_strongest_positive = None
+    sig_strongest_negative = None
+    for sp in significant_pairs:
+        if sp.r > 0 and (sig_strongest_positive is None or sp.r > sig_strongest_positive.r):
+            sig_strongest_positive = sp
+        elif sp.r < 0 and (sig_strongest_negative is None or sp.r < sig_strongest_negative.r):
+            sig_strongest_negative = sp
+
     # Generate actual interpretation (not placeholder)
     interpretation_text = generate_trait_association_interpretation(
         n_traits=len(trait_names),
         n_observations=n_observations,
         n_significant_pairs=len(significant_pairs),
-        strongest_positive=strongest_positive.dict() if strongest_positive else None,
-        strongest_negative=strongest_negative.dict() if strongest_negative else None,
+        strongest_positive=sig_strongest_positive.dict() if sig_strongest_positive else None,
+        strongest_negative=sig_strongest_negative.dict() if sig_strongest_negative else None,
         risk_flags=risk_flags,
         gxe_significant=request.gxe_significant,
         environment_context=request.environment_context
