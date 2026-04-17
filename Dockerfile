@@ -21,10 +21,9 @@ RUN R -e "install.packages(c('jsonlite','agricolae','dplyr','tidyr','readr','ggp
 # ── Python deps ───────────────────────────────────────────────────────────────
 WORKDIR /app
 COPY . .
-RUN pip install --no-cache-dir -r genetics-module/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # ── Start ─────────────────────────────────────────────────────────────────────
-WORKDIR /app/genetics-module
-ENV PYTHONPATH=/app/genetics-module
+ENV PYTHONPATH=/app
 EXPOSE 8000
-CMD ["sh", "-c", "uvicorn app_genetics:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
