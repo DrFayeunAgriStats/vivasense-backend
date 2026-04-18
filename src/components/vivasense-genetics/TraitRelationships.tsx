@@ -313,7 +313,7 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
           {selectedTraits.length !== 1 ? "s" : ""}…
         </p>
         <p className="text-xs text-gray-400">
-          Correlations are computed on per-genotype means
+          Running phenotypic, between-genotype, and genotypic VC analysis…
         </p>
       </div>
     );
@@ -339,10 +339,25 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
       genotypic:        "Genotypic (Variance-Component)",
     };
     const modeLabel = modeLabelMap[displayMode];
+
+    // stats is always defined: genotypic falls back to between_genotype
     const stats =
       displayMode === "phenotypic" ? results.phenotypic :
       displayMode === "between_genotype" ? results.between_genotype :
       (results.genotypic ?? results.between_genotype);
+
+    // Debug logs — active mode and matrix dimensions
+    const activeMatrix = stats.r_matrix;
+    console.log("[TraitRelationships] results rendered", {
+      activeMode: displayMode,
+      modeLabel,
+      n_traits: results.trait_names.length,
+      n_observations: stats.n_observations,
+      matrix_rows: activeMatrix.length,
+      matrix_cols: activeMatrix[0]?.length ?? 0,
+      genotypic_available: results.genotypic !== null,
+      inference_approximate: stats.inference_approximate,
+    });
 
     return (
       <div className="space-y-5">
@@ -379,9 +394,9 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
             <p className="text-xs font-semibold text-amber-700">
               Data warnings
             </p>
-            {results.warnings.map((w) => (
+            {results.warnings.map((w, idx) => (
               <p
-                key={w}
+                key={idx}
                 className="text-xs text-amber-600 flex items-start gap-1"
               >
                 <span className="mt-0.5 shrink-0">⚠</span> {w}
@@ -415,15 +430,6 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
             Analysis objective: {userObjective}
           </p>
         </div>
-
-        {/* Debug logging */}
-        {console.log("TraitRelationships: correlation response", {
-          phenotypic: results.phenotypic,
-          between_genotype: results.between_genotype,
-          genotypic: results.genotypic,
-          displayMode,
-          userObjective,
-        })}
 
         {/* Heatmap — below stats notes, above interpretation */}
         <div className="space-y-2">
