@@ -37,7 +37,15 @@ class UploadDatasetRequest(BaseModel):
     """
     base64_content: str = Field(..., description="Base64-encoded CSV or Excel file")
     file_type: str = Field(..., pattern="^(csv|xlsx|xls)$")
-    genotype_column: str
+    genotype_column: Optional[str] = Field(
+        default=None,
+        description=(
+            "Observation-unit column (e.g. variety, accession, line). "
+            "Required for CRD, RCBD, factorial RCBD, and multi-environment designs. "
+            "Optional for generic split_plot_rcbd — the design is defined entirely by "
+            "rep_column, main_plot_column, and sub_plot_column."
+        ),
+    )
     rep_column: Optional[str] = Field(
         default=None,
         description=(
@@ -76,7 +84,7 @@ class UploadDatasetRequest(BaseModel):
 class UploadDatasetResponse(BaseModel):
     """Returned by POST /upload/dataset."""
     dataset_token: str
-    n_genotypes: int
+    n_genotypes: Optional[int] = None   # None for generic split_plot_rcbd designs
     n_reps: int
     n_environments: Optional[int] = None
     n_rows: int

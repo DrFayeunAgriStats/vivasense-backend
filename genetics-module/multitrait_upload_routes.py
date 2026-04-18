@@ -240,7 +240,9 @@ def build_observations(
     if design_type == "split_plot_rcbd":
         if rep_col is None or main_plot_col is None or sub_plot_col is None:
             raise ValueError("Split-plot RCBD requires rep_column, main_plot_column, and sub_plot_column")
-        keep_cols = [genotype_col, rep_col, main_plot_col, sub_plot_col, trait_col]
+        # Genotype is NOT part of the generic split-plot model.
+        # Only structural role columns + trait are kept.
+        keep_cols = [rep_col, main_plot_col, sub_plot_col, trait_col]
     else:
         # Determine the effective factor column.
         # - factor_col is the explicit factorial RCBD / CRD treatment factor.
@@ -283,15 +285,24 @@ def build_observations(
 
     records: List[Dict[str, Any]] = []
     for _, row in subset.iterrows():
-        rec: Dict[str, Any] = {
-            "genotype": str(row[genotype_col]),
+        if design_type == "split_plot_rcbd":
+            # Generic split-plot: role-based record with no genotype term.
+            # R formula: trait_value ~ main_plot * sub_plot + Error(rep/main_plot)
+            rec: Dict[str, Any] = {
+                "rep":         str(row[rep_col]),
+                "main_plot":   str(row[main_plot_col]),
+                "sub_plot":    str(row[sub_plot_col]),
+                "trait_value": float(row[trait_col]),
+            }
+            records.append(rec)
+            continue
+
+        # All other designs carry the observation-unit identifier.
+        rec = {
+            "genotype":    str(row[genotype_col]),
             "trait_value": float(row[trait_col]),
         }
-        if design_type == "split_plot_rcbd":
-            rec["rep"] = str(row[rep_col])
-            rec["main_plot"] = str(row[main_plot_col])
-            rec["sub_plot"] = str(row[sub_plot_col])
-        elif crd_mode:
+        if crd_mode:
             rec["rep"] = str(row["_synth_rep"])
             rec["crd"] = True
             if eff_factor:
@@ -315,7 +326,7 @@ def build_observations(
 
 def check_balance(
     df: pd.DataFrame,
-    genotype_col: str,
+    genotype_col: Optional[str],
     rep_col: Optional[str],
     trait_col: str,
     env_col: Optional[str],
@@ -346,7 +357,7 @@ def check_balance(
     sub = df.loc[mask].copy()
     warnings: List[str] = []
 
-    n_genotypes = sub[genotype_col].nunique()
+    n_genotypes = sub[genotype_col].nunique() if genotype_col else 0
     crd_mode = rep_col is None
 
     if factor_col and not crd_mode:

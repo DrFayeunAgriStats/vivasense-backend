@@ -68,6 +68,169 @@ def compute_cv_from_anova(
     return None
 
 
+def _generate_split_plot_interpretation(
+    trait: str,
+    summary: Dict[str, Optional[float]],
+    precision_level: Optional[str],
+    cv_interpretation_flag: Optional[str],
+    main_plot_significant: Optional[bool],
+    subplot_significant: Optional[bool],
+    interaction_significant: Optional[bool],
+    n_reps: Optional[int],
+) -> str:
+    """
+    Domain-neutral ANOVA interpretation for generic split-plot RCBD.
+
+    Uses role-based language (main-plot factor, subplot factor) with no
+    reference to genotypes, breeding, or selection.
+    """
+    sections: List[tuple] = []
+
+    # ── 1. Overview ────────────────────────────────────────────────────────────
+    overview = [
+        "This analysis used a split-plot randomised complete block design (RCBD), "
+        "in which the main-plot factor was assigned to larger experimental units "
+        "within each replication and the subplot factor was assigned within main plots."
+    ]
+    if n_reps:
+        overview.append(f"The experiment had {n_reps} complete replication(s).")
+    if summary.get("grand_mean") is not None:
+        overview.append(
+            f"The overall mean of {trait} across all experimental units was "
+            f"{summary['grand_mean']:.2f}."
+        )
+    if cv_interpretation_flag == "cv_available" and summary.get("cv_percent") is not None:
+        cv = summary["cv_percent"]
+        precision_word = "good" if cv < 10 else "moderate" if cv <= 20 else "low"
+        overview.append(
+            f"The coefficient of variation (CV) was {cv:.1f}%, indicating "
+            f"{precision_word} experimental precision."
+        )
+    sections.append(("Overview", " ".join(overview)))
+
+    # ── 2. Descriptive Summary ─────────────────────────────────────────────────
+    desc = []
+    if (
+        summary.get("min") is not None
+        and summary.get("max") is not None
+        and summary.get("range") is not None
+        and summary.get("grand_mean") is not None
+    ):
+        variability = (
+            "substantial"
+            if summary["range"] > summary["grand_mean"] * 0.5
+            else "moderate"
+        )
+        desc.append(
+            f"{trait} ranged from {summary['min']:.2f} to {summary['max']:.2f} "
+            f"(range = {summary['range']:.2f}), indicating {variability} variability "
+            "across treatment combinations."
+        )
+    if precision_level == "good":
+        desc.append("Experimental precision was good, supporting reliable inference.")
+    elif precision_level == "moderate":
+        desc.append("Experimental precision was moderate; results should be interpreted with care.")
+    elif precision_level == "low":
+        desc.append(
+            "Experimental precision was low. High unexplained variability may reduce "
+            "confidence in treatment comparisons."
+        )
+    sections.append(("Descriptive Summary", " ".join(desc) if desc else "Descriptive statistics were not available."))
+
+    # ── 3. Main-Plot Factor Effect ─────────────────────────────────────────────
+    if main_plot_significant is True:
+        mp_text = (
+            f"The main-plot factor had a significant effect on {trait} (p < 0.05), "
+            "indicating that levels of the whole-plot treatment produced meaningfully "
+            "different responses."
+        )
+    elif main_plot_significant is False:
+        mp_text = (
+            f"The main-plot factor did not have a significant effect on {trait}, "
+            "suggesting that the whole-plot treatment levels produced similar responses."
+        )
+    else:
+        mp_text = f"The significance of the main-plot factor effect on {trait} could not be determined."
+    sections.append(("Main-Plot Factor Effect", mp_text))
+
+    # ── 4. Subplot Factor Effect ───────────────────────────────────────────────
+    if subplot_significant is True:
+        sub_text = (
+            f"The subplot factor had a significant effect on {trait} (p < 0.05), "
+            "indicating differential responses across subplot treatment levels."
+        )
+    elif subplot_significant is False:
+        sub_text = (
+            f"The subplot factor did not have a significant effect on {trait}, "
+            "suggesting that subplot treatment levels produced similar responses."
+        )
+    else:
+        sub_text = f"The significance of the subplot factor effect on {trait} could not be determined."
+    sections.append(("Subplot Factor Effect", sub_text))
+
+    # ── 5. Interaction Effect ──────────────────────────────────────────────────
+    if interaction_significant is True:
+        int_text = (
+            f"A significant main-plot × subplot interaction was detected for {trait} "
+            "(p < 0.05), indicating that the effect of the subplot factor depends on "
+            "which level of the main-plot factor is applied. Treatment combinations "
+            "should be evaluated jointly rather than interpreting main effects alone."
+        )
+    elif interaction_significant is False:
+        int_text = (
+            f"No significant main-plot × subplot interaction was detected for {trait}, "
+            "suggesting that the effects of the two treatment factors are additive "
+            "and can be interpreted independently."
+        )
+    else:
+        int_text = (
+            f"The main-plot × subplot interaction for {trait} could not be evaluated."
+        )
+    sections.append(("Main-Plot × Subplot Interaction", int_text))
+
+    # ── 6. Risk and Limitations ────────────────────────────────────────────────
+    risks = []
+    if precision_level == "low":
+        risks.append(
+            "The low experimental precision introduces uncertainty in comparisons "
+            "and may be due to heterogeneous experimental units or insufficient replication."
+        )
+    if interaction_significant is True:
+        risks.append(
+            "The significant interaction complicates interpretation of marginal "
+            "factor means; treatment-combination means should be used for conclusions."
+        )
+    if not risks:
+        risks.append("No major experimental limitations were identified.")
+    sections.append(("Risk and Limitations", " ".join(risks)))
+
+    # ── 7. Recommendation ─────────────────────────────────────────────────────
+    recs = []
+    if interaction_significant is True:
+        recs.append(
+            "Use treatment-combination means (main_plot × sub_plot cells) for "
+            "decision-making rather than marginal factor means."
+        )
+    if main_plot_significant is True or subplot_significant is True:
+        recs.append(
+            "Apply mean separation tests within the appropriate error stratum "
+            "(whole-plot error for main-plot comparisons, subplot error for "
+            "subplot and interaction comparisons)."
+        )
+    if precision_level == "low":
+        recs.append(
+            "Increase replication or improve experimental control to reduce "
+            "unexplained variability in future trials."
+        )
+    recs.append(
+        "Integrate these ANOVA results with treatment-level means and practical "
+        "relevance thresholds before drawing applied conclusions."
+    )
+    sections.append(("Recommendation", " ".join(recs)))
+
+    return "\n\n".join(f"{heading}\n{content}" for heading, content in sections)
+
+
 def generate_anova_interpretation(
     trait: str,
     summary: Dict[str, Optional[float]],
@@ -84,9 +247,17 @@ def generate_anova_interpretation(
     n_reps: Optional[int],
     environment_mode: str = "single",
     design_type: Optional[str] = None,
+    # Split-plot specific significance flags (only used when design_type == "split_plot_rcbd")
+    main_plot_significant: Optional[bool] = None,
+    subplot_significant: Optional[bool] = None,
+    interaction_significant: Optional[bool] = None,
 ) -> str:
     """
     Generate context-aware ANOVA interpretation following VivaSense standards.
+
+    For design_type="split_plot_rcbd" dispatches to a domain-neutral split-plot
+    interpretation using role-based language (main-plot factor / subplot factor).
+    All other designs use the genetics-aware interpretation path.
 
     environment_mode="single"
         Sections: Overview, Descriptive Interpretation, Genotype Effect,
@@ -98,6 +269,19 @@ def generate_anova_interpretation(
     environment_mode="multi"
         All nine sections including Environment Effect and G×E Interaction.
     """
+    # ── Dispatch: generic split-plot uses its own domain-neutral path ──────────
+    if design_type == "split_plot_rcbd":
+        return _generate_split_plot_interpretation(
+            trait=trait,
+            summary=summary,
+            precision_level=precision_level,
+            cv_interpretation_flag=cv_interpretation_flag,
+            main_plot_significant=main_plot_significant,
+            subplot_significant=subplot_significant,
+            interaction_significant=interaction_significant,
+            n_reps=n_reps,
+        )
+
     is_multi = environment_mode == "multi"
     # List of (heading, content) tuples built up below
     sections: List[tuple] = []
@@ -164,7 +348,7 @@ def generate_anova_interpretation(
         desc.append(
             f"Performance ranged from {summary['min']:.2f} to {summary['max']:.2f}, "
             f"with a total range of {summary['range']:.2f}, indicating {variability} "
-            "variability among genotypes."
+            "variability among experimental units."
         )
 
     if precision_level == "good":
@@ -485,6 +669,38 @@ def get_cv_interpretation_flag(cv_percent: Optional[float]) -> str:
     return "cv_available" if cv_percent is not None else "cv_unavailable"
 
 
+def _is_term_significant(anova_table, term: str) -> Optional[bool]:
+    """Return True/False if term is in the ANOVA table, else None."""
+    if not anova_table or not hasattr(anova_table, "source") or not hasattr(anova_table, "p_value"):
+        return None
+    try:
+        idx = anova_table.source.index(term)
+        p_val = anova_table.p_value[idx]
+        if p_val is None:
+            return None
+        return float(p_val) < 0.05
+    except (ValueError, IndexError):
+        return None
+
+
+def is_main_plot_significant(anova_table) -> Optional[bool]:
+    """Check if the main-plot factor effect is significant (split-plot ANOVA)."""
+    return _is_term_significant(anova_table, "main_plot")
+
+
+def is_subplot_significant(anova_table) -> Optional[bool]:
+    """Check if the subplot factor effect is significant (split-plot ANOVA)."""
+    return _is_term_significant(anova_table, "sub_plot")
+
+
+def is_interaction_significant(anova_table) -> Optional[bool]:
+    """Check if the main_plot × sub_plot interaction is significant."""
+    result = _is_term_significant(anova_table, "main_plot:sub_plot")
+    if result is None:
+        result = _is_term_significant(anova_table, "sub_plot:main_plot")
+    return result
+
+
 def is_genotype_effect_significant(anova_table) -> bool:
     """Check if genotype effect is significant (p < 0.05)."""
     if not anova_table or not hasattr(anova_table, "source") or not hasattr(anova_table, "p_value"):
@@ -647,7 +863,12 @@ async def analysis_anova(request: ModuleRequest):
                 raise RuntimeError("R returned status OK but result object is empty")
 
             trait_descriptive_stats = compute_descriptive_stats(df[trait])
-            per_genotype_stats = compute_per_genotype_stats(df, trait, geno_col)
+            # Per-genotype stats only make sense when a genotype column exists
+            per_genotype_stats = (
+                compute_per_genotype_stats(df, trait, geno_col)
+                if geno_col and design_type != "split_plot_rcbd"
+                else []
+            )
 
             # Prefer ANOVA-derived CV (sqrt(MSE)/grand_mean*100) over the
             # raw-observation SD-based CV when the ANOVA table is available.
@@ -675,7 +896,12 @@ async def analysis_anova(request: ModuleRequest):
             ranking_caution = gxe_significant
             selection_feasible = genotype_significant
 
-            # Generate ANOVA interpretation — mode-aware (single vs multi)
+            # Split-plot specific significance flags (only populated for split_plot_rcbd)
+            mp_significant  = is_main_plot_significant(res.anova_table)  if design_type == "split_plot_rcbd" else None
+            sub_significant = is_subplot_significant(res.anova_table)    if design_type == "split_plot_rcbd" else None
+            int_significant = is_interaction_significant(res.anova_table) if design_type == "split_plot_rcbd" else None
+
+            # Generate ANOVA interpretation — design-type-aware
             anova_interpretation = generate_anova_interpretation(
                 trait=trait,
                 summary=summary,
@@ -692,6 +918,9 @@ async def analysis_anova(request: ModuleRequest):
                 n_reps=res.n_reps,
                 environment_mode=mode,
                 design_type=design_type,
+                main_plot_significant=mp_significant,
+                subplot_significant=sub_significant,
+                interaction_significant=int_significant,
             )
             logger.info(
                 "ANOVA interpretation generated for trait '%s': %d characters",

@@ -143,7 +143,10 @@ async def upload_dataset(request: UploadDatasetRequest):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # Validate column mapping selections for the chosen design type.
-    mapped_columns = [request.genotype_column]
+    # Build the list of mapped structural columns (only those provided).
+    mapped_columns: List[str] = []
+    if request.genotype_column:
+        mapped_columns.append(request.genotype_column)
     if request.rep_column:
         mapped_columns.append(request.rep_column)
     if request.environment_column:
@@ -162,6 +165,11 @@ async def upload_dataset(request: UploadDatasetRequest):
         )
 
     if request.design_type == "split_plot_rcbd":
+        # ── Generic split-plot RCBD validation ────────────────────────────────
+        # The design is defined entirely by rep / main_plot / sub_plot roles.
+        # genotype_column is NOT required. If supplied, it must not duplicate a
+        # structural role column and must not be treated as a third treatment
+        # factor in the model formula.
         if request.mode != "single":
             raise HTTPException(
                 status_code=400,
@@ -170,28 +178,83 @@ async def upload_dataset(request: UploadDatasetRequest):
         if request.environment_column is not None:
             raise HTTPException(
                 status_code=400,
-                detail="split_plot_rcbd design must not include environment_column.",
+                detail="split_plot_rcbd design does not accept environment_column.",
             )
         if request.factor_column is not None:
             raise HTTPException(
                 status_code=400,
-                detail="split_plot_rcbd design must not include factor_column.",
+                detail=(
+                    "split_plot_rcbd design does not accept factor_column. "
+                    "The two treatment factors are specified via main_plot_column "
+                    "and sub_plot_column."
+                ),
             )
         if not request.rep_column or not request.main_plot_column or not request.sub_plot_column:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "For split_plot_rcbd design, rep_column, main_plot_column, and "
-                    "sub_plot_column are all required."
+                    "split_plot_rcbd design requires rep_column, main_plot_column, "
+                    "and sub_plot_column."
                 ),
             )
+        if request.main_plot_column == request.sub_plot_column:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "main_plot_column and sub_plot_column must be different columns. "
+                    f"Both are currently set to '{request.main_plot_column}'."
+                ),
+            )
+        if request.rep_column in (request.main_plot_column, request.sub_plot_column):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "rep_column must be distinct from main_plot_column and sub_plot_column."
+                ),
+            )
+        # If genotype_column is supplied for split_plot_rcbd, validate its role.
+        if request.genotype_column:
+            if request.genotype_column in (
+                request.main_plot_column, request.sub_plot_column
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"genotype_column '{request.genotype_column}' duplicates a "
+                        "treatment factor column. Map genotypes as main_plot_column "
+                        "(whole-plot factor) or sub_plot_column (subplot factor), "
+                        "not as a separate additional term."
+                    ),
+                )
+            # genotype_column is a distinct third column — not valid in the
+            # standard two-factor split-plot model.
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"genotype_column '{request.genotype_column}' is a third "
+                    "independent column separate from main_plot_column and "
+                    "sub_plot_column. The generic split_plot_rcbd module supports "
+                    "exactly two treatment factors (main_plot × sub_plot). "
+                    "If genotype is one of your treatment factors, assign it as "
+                    "main_plot_column or sub_plot_column."
+                ),
+            )
+
         required = [
-            request.genotype_column,
             request.rep_column,
             request.main_plot_column,
             request.sub_plot_column,
         ]
     else:
+        # All other designs require genotype_column
+        if not request.genotype_column:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "genotype_column is required for this design type. "
+                    "It may be omitted only for split_plot_rcbd."
+                ),
+            )
         required = [request.genotype_column]
         if request.rep_column:
             required.append(request.rep_column)
@@ -208,12 +271,20 @@ async def upload_dataset(request: UploadDatasetRequest):
         )
 
     # Gather dataset-level stats
-    n_genotypes = int(df[request.genotype_column].nunique())
-    if request.rep_column:
+    if request.design_type == "split_plot_rcbd":
+        # No genotype column for generic split_plot_rcbd
+        n_genotypes: Optional[int] = None
         n_reps = int(df[request.rep_column].nunique())
+    elif request.genotype_column:
+        n_genotypes = int(df[request.genotype_column].nunique())
+        if request.rep_column:
+            n_reps = int(df[request.rep_column].nunique())
+        else:
+            # CRD: infer n_reps as maximum observations per genotype
+            n_reps = int(df.groupby(request.genotype_column).size().max())
     else:
-        # CRD: infer n_reps as maximum observations per genotype
-        n_reps = int(df.groupby(request.genotype_column).size().max())
+        n_genotypes = None
+        n_reps = int(df[request.rep_column].nunique()) if request.rep_column else 1
     n_envs: Optional[int] = (
         int(df[request.environment_column].nunique())
         if request.environment_column
@@ -238,13 +309,13 @@ async def upload_dataset(request: UploadDatasetRequest):
     })
 
     logger.info(
-        "upload/dataset: token=%s n_genotypes=%d n_reps=%d mode=%s",
-        token, n_genotypes, n_reps, request.mode,
+        "upload/dataset: token=%s n_genotypes=%s n_reps=%d mode=%s design=%s",
+        token, n_genotypes, n_reps, request.mode, request.design_type,
     )
 
     return UploadDatasetResponse(
         dataset_token=token,
-        n_genotypes=n_genotypes,
+        n_genotypes=n_genotypes,   # None for generic split_plot_rcbd
         n_reps=n_reps,
         n_environments=n_envs,
         n_rows=len(df),

@@ -100,20 +100,26 @@ compute_mean_separation <- function(model, trait_name = "Trait",
 compute_single_environment <- function(data, trait_name = "Trait",
                                        crd_mode = FALSE) {
 
-  # Ensure factors
-  data$genotype <- factor(data$genotype)
-  data$rep      <- factor(data$rep)
+  has_splitplot <- all(c("main_plot", "sub_plot") %in% colnames(data))
 
-  n_genotypes <- nlevels(data$genotype)
+  # For generic split-plot RCBD there is no genotype column in the data.
+  # All other designs carry a genotype column.
+  if (!has_splitplot) {
+    data$genotype <- factor(data$genotype)
+  }
+  data$rep <- factor(data$rep)
+
+  n_genotypes <- if (!has_splitplot) nlevels(data$genotype) else NA_integer_
 
   # ── Model selection ──────────────────────────────────────────────────────────
   # CRD (no blocking):      trait_value ~ genotype
   # Factorial CRD:          trait_value ~ genotype * factor
   # RCBD (blocking):        trait_value ~ rep + genotype
   # Factorial RCBD:         trait_value ~ rep + genotype * factor
-  # Split-plot RCBD:        trait_value ~ rep + main_plot * sub_plot + genotype + Error(rep/main_plot)
+  # Split-plot RCBD:        trait_value ~ main_plot * sub_plot + Error(rep/main_plot)
+  #   (rep is NOT a fixed term outside Error(); it enters only through the
+  #    whole-plot error stratum.  genotype is NOT part of the generic formula.)
   has_factor <- "factor" %in% colnames(data)
-  has_splitplot <- all(c("main_plot", "sub_plot") %in% colnames(data))
   n_factor_levels <- if (has_factor) {
     data$factor <- factor(data$factor)
     nlevels(data$factor)
@@ -126,10 +132,10 @@ compute_single_environment <- function(data, trait_name = "Trait",
     data$sub_plot  <- factor(data$sub_plot)
     n_reps <- nlevels(data$rep)
     message(sprintf(
-      "[INFO] Split-plot RCBD model for %s: trait_value ~ rep + main_plot * sub_plot + genotype + Error(rep/main_plot)",
+      "[INFO] Split-plot RCBD model for %s: trait_value ~ main_plot * sub_plot + Error(rep/main_plot)",
       trait_name
     ))
-    model <- aov(trait_value ~ rep + main_plot * sub_plot + genotype + Error(rep/main_plot), data = data)
+    model <- aov(trait_value ~ main_plot * sub_plot + Error(rep/main_plot), data = data)
   } else if (crd_mode) {
     # n_reps = average observations per genotype (inferred from data)
     obs_per_geno <- table(data$genotype)
@@ -162,23 +168,57 @@ compute_single_environment <- function(data, trait_name = "Trait",
     }
   }
 
-  anova_table <- anova(model)
+  # ── ANOVA table extraction ───────────────────────────────────────────────────
+  # Split-plot models fitted with aov(...+Error(...)) require summary() to
+  # get correct per-stratum F-tests.  All other models use anova() directly.
+  if (has_splitplot) {
+    sp_summ <- summary(model)
+    strata_names <- names(sp_summ)
 
-  # Extract mean squares
-  ms_genotype <- if ("genotype" %in% rownames(anova_table)) {
-    anova_table["genotype", "Mean Sq"]
-  } else {
-    NA_real_
-  }
+    # Find the whole-plot stratum (contains "main_plot" as a treatment row)
+    wp_table <- NULL
+    # Find the subplot stratum (contains "sub_plot" as a treatment row)
+    sub_table <- NULL
+    for (nm in strata_names) {
+      tbl <- sp_summ[[nm]][[1]]
+      if ("main_plot" %in% rownames(tbl)) wp_table  <- tbl
+      if ("sub_plot"  %in% rownames(tbl)) sub_table <- tbl
+    }
+    if (is.null(wp_table) || is.null(sub_table)) {
+      stop(paste(
+        "Split-plot summary missing expected strata. Available:",
+        paste(strata_names, collapse = ", ")
+      ))
+    }
 
-  if ("Residuals" %in% rownames(anova_table)) {
-    ms_error <- anova_table["Residuals", "Mean Sq"]
+    # Rename the whole-plot Residuals row so the combined table is unambiguous
+    wp_res <- wp_table[rownames(wp_table) == "Residuals", , drop = FALSE]
+    rownames(wp_res) <- "whole_plot_error"
+    wp_treat <- wp_table[rownames(wp_table) != "Residuals", , drop = FALSE]
+
+    anova_table <- rbind(wp_treat, wp_res, sub_table)
+
+    ms_genotype <- NA_real_   # not applicable for generic split-plot
+    # Subplot residual is the canonical error term for CV and mean separation
+    ms_error <- sub_table["Residuals", "Mean Sq"]
   } else {
-    residual_rows <- grep("Residuals|Within", rownames(anova_table), ignore.case = TRUE)
-    if (length(residual_rows) > 0) {
-      ms_error <- anova_table[residual_rows[length(residual_rows)], "Mean Sq"]
+    anova_table <- anova(model)
+
+    ms_genotype <- if ("genotype" %in% rownames(anova_table)) {
+      anova_table["genotype", "Mean Sq"]
     } else {
-      stop("ANOVA table missing residual term")
+      NA_real_
+    }
+
+    if ("Residuals" %in% rownames(anova_table)) {
+      ms_error <- anova_table["Residuals", "Mean Sq"]
+    } else {
+      residual_rows <- grep("Residuals|Within", rownames(anova_table), ignore.case = TRUE)
+      if (length(residual_rows) > 0) {
+        ms_error <- anova_table[residual_rows[length(residual_rows)], "Mean Sq"]
+      } else {
+        stop("ANOVA table missing residual term")
+      }
     }
   }
 
@@ -220,15 +260,22 @@ compute_single_environment <- function(data, trait_name = "Trait",
   if (mean_is_valid && !is.na(sigma2_genotype) && !is.na(sigma2_phenotypic)) {
     gcv <- (sqrt(max(0, sigma2_genotype)) / grand_mean) * 100
     pcv <- (sqrt(sigma2_phenotypic) / grand_mean) * 100
-    
+
     # Genetic Advance at Mean (assuming selection intensity i = 1.4 for ~30% selection)
     gam <- 1.4 * sqrt(max(0, sigma2_genotype))
     gam_percent <- (gam / grand_mean) * 100
   }
-  
-  df_err   <- anova_table["Residuals", "Df"]
-  mean_sep <- compute_mean_separation(model, trait_name,
-                                      df_error = df_err, ms_error = ms_error)
+
+  # Mean separation and residual df — only available when there is a genotype column.
+  # For generic split-plot designs (no genotype), these are not applicable.
+  if (has_splitplot) {
+    df_err   <- NA_integer_
+    mean_sep <- NULL
+  } else {
+    df_err   <- anova_table["Residuals", "Df"]
+    mean_sep <- compute_mean_separation(model, trait_name,
+                                        df_error = df_err, ms_error = ms_error)
+  }
 
   design_label <- if (has_splitplot) {
     "split_plot_rcbd"
@@ -484,14 +531,21 @@ validate_input_data <- function(data, env_mode = "single", crd_mode = FALSE) {
   warnings_list <- list()
   is_valid      <- TRUE
 
-  # Required columns vary by mode.
+  # Required columns vary by design.
+  # Generic split-plot RCBD: rep + main_plot + sub_plot + trait_value (no genotype).
+  # All other designs: genotype + rep + trait_value.
   # CRD: "rep" is synthetic (present) but not a true blocking factor.
-  # We still require it in data because Python always injects a synthetic rep.
-  required_cols <- c("genotype", "rep", "trait_value")
-  if (env_mode == "multi") required_cols <- c(required_cols, "environment")
-  if (all(c("main_plot", "sub_plot") %in% colnames(data))) {
-    required_cols <- c(required_cols, "main_plot", "sub_plot")
-  } else if (xor("main_plot" %in% colnames(data), "sub_plot" %in% colnames(data))) {
+  is_splitplot <- all(c("main_plot", "sub_plot") %in% colnames(data))
+
+  if (is_splitplot) {
+    required_cols <- c("rep", "main_plot", "sub_plot", "trait_value")
+  } else {
+    required_cols <- c("genotype", "rep", "trait_value")
+    if (env_mode == "multi") required_cols <- c(required_cols, "environment")
+  }
+
+  if (!is_splitplot &&
+      xor("main_plot" %in% colnames(data), "sub_plot" %in% colnames(data))) {
     warnings_list$missing_split_plot_columns <-
       "Split-plot design requires both main_plot and sub_plot columns."
     is_valid <- FALSE
@@ -531,8 +585,22 @@ validate_input_data <- function(data, env_mode = "single", crd_mode = FALSE) {
     warnings_list$missing_trait_values <- na_trait
   }
 
-  # Check minimum replication
-  if (env_mode == "single") {
+  # Check minimum replication (design-aware)
+  if (is_splitplot) {
+    # For generic split-plot: check that each main_plot × sub_plot cell
+    # appears in at least 2 reps.
+    min_reps <- data %>%
+      group_by(main_plot, sub_plot) %>%
+      summarise(n_reps = n_distinct(rep), .groups = "drop") %>%
+      pull(n_reps) %>%
+      min()
+    if (min_reps < 2) {
+      warnings_list$insufficient_replication <-
+        paste("Minimum reps per main_plot × sub_plot cell:", min_reps,
+              "(minimum 2 required)")
+      is_valid <- FALSE
+    }
+  } else if (env_mode == "single") {
     min_reps <- data %>%
       group_by(genotype) %>%
       summarise(n = n(), .groups = "drop") %>%
