@@ -249,6 +249,14 @@ try:
 except Exception as _e:
     logger.warning("analysis-trait-association router not loaded — %s", _e)
 
+# Step 9.6 — Regression analysis module (/analysis/regression)
+try:
+    from analysis_regression_routes import router as regression_router
+    app.include_router(regression_router)
+    logger.info("analysis-regression router loaded (/analysis/regression)")
+except Exception as _e:
+    logger.warning("analysis-regression router not loaded — %s", _e)
+
 # Step 10 — Module-specific Word/report export (/export/*)
 try:
     from export_module_routes import router as export_mod_router

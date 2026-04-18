@@ -183,6 +183,16 @@ try:
 except Exception as _e:
     print(f"WARN: analysis-trait-association router not loaded — {_e}", flush=True)
 
+# Step 9.6 — Regression analysis module (/analysis/regression)
+_an_reg_ok = False
+try:
+    from analysis_regression_routes import router as regression_router  # noqa: E402
+    app.include_router(regression_router)
+    _an_reg_ok = True
+    print("Router registered: analysis-regression (/analysis/regression)", flush=True)
+except Exception as _e:
+    print(f"WARN: analysis-regression router not loaded — {_e}", flush=True)
+
 # Step 10 — Module-specific export endpoints (/export/*)
 _ex_mod_ok = False
 try:
@@ -221,6 +231,7 @@ async def startup_event() -> None:
     logger.info("analysis-genetic-parameters router loaded: %s", _an_gp_ok)
     logger.info("analysis-correlation router loaded: %s", _an_corr_ok)
     logger.info("analysis-heatmap router loaded: %s", _an_hm_ok)
+    logger.info("analysis-regression router loaded: %s", _an_reg_ok)
     logger.info("export-modules router loaded: %s", _ex_mod_ok)
     logger.info("academic-mentor router loaded: %s", _ac_ok)
 
