@@ -210,11 +210,12 @@ async def analysis_regression(request: RegressionRequest):
         else:
             summary_interpretation = "A statistically reliable linear relationship is present, and the model captures a meaningful proportion of the variation in the response."
 
-    # Bug 1 fix: standard "Y = a + bX" form — no Unicode × character that can corrupt
-    # in JSON consumers.  sign embedded as explicit + / - so hyphenated variable names
-    # (e.g. vine-length) cannot be mistaken for a subtraction operator.
+    # Publication-ready equation: "{outcome} = {intercept} + {slope} × {predictor}"
+    # U+00D7 (×) is safe in UTF-8 JSON responses and python-docx (UTF-8 XML).
+    # The earlier removal was only needed for the cp1252 Windows console demo.
+    # Spaces around × prevent hyphenated variable names from being read as subtraction.
     _sign = "+" if slope >= 0 else "-"
-    equation = f"{request.y_variable} = {intercept:.4f} {_sign} {abs(slope):.4f}{request.x_variable}"
+    equation = f"{request.y_variable} = {intercept:.4f} {_sign} {abs(slope):.4f} \u00d7 {request.x_variable}"
 
     # Reliability checks
     warnings = []
