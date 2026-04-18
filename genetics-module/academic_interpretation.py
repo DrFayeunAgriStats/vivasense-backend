@@ -56,7 +56,7 @@ ANTHROPIC_API_KEY: Optional[str] = os.environ.get("ANTHROPIC_API_KEY")
 _SCOPE_STATEMENT = (
     "These results apply to this experiment and should be interpreted "
     "within this context. Single-experiment results cannot support general "
-    "management or breeding recommendations."
+    "management recommendations."
 )
 _CLOSING = (
     "Discuss these findings with your supervisor before finalising your "
@@ -1130,7 +1130,17 @@ async def interpret_module(
         guided = build_guided_writing(module_type, trait, flat)
 
     # ── Fixed sections ────────────────────────────────────────────────────────
+    _is_split_plot = (
+        module_type == "anova"
+        and flat.get("design_type") == "split_plot_rcbd"
+    )
     examiner_checkpoint = [
+        "F-values reported for main-plot factor, subplot factor, and interaction",
+        "Correct error stratum stated for each F-test (whole-plot vs. subplot residual)",
+        "Design identified as split-plot RCBD with restricted randomisation",
+        "CV% reported and classified",
+        "At least one scope phrase present: 'in this experiment' or 'among the levels tested'",
+    ] if _is_split_plot else [
         "F-value and p-value reported for the genotype effect",
         "Tukey group letters cited for all genotypes discussed",
         "η² effect size reported alongside p-value",
