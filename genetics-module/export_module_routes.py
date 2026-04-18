@@ -6,6 +6,7 @@ POST /export/anova-word              → ANOVA + mean separation per trait
 POST /export/genetic-parameters-word → Variance components + parameters per trait
 POST /export/correlation-word        → Pairwise table + co-selection advice
 POST /export/heatmap-report          → Heatmap image + numeric matrix
+POST /export/regression-word         → Regression equation + statistics + interpretation
 
 Design principles (VivaSense standard):
   • Each report contains ONLY the content for its module — no cross-mixing.
@@ -48,6 +49,7 @@ from genetics_export import (
     _sig_label,
     _HEADER_BG,
 )
+from analysis_regression_routes import RegressionResponse
 from genetics_schemas import GeneticsResult
 from trait_relationships_schemas import CorrelationResponse
 from module_schemas import (
@@ -966,4 +968,92 @@ async def export_heatmap_report(data: HeatmapExportRequest):
         return JSONResponse(
             status_code=500,
             content={"detail": f"Heatmap export failed: {exc}"},
+        )
+
+
+# ============================================================================
+# POST /export/regression-word
+# ============================================================================
+
+@router.post(
+    "/export/regression-word",
+    summary="Export Regression results as a Word document",
+    tags=["Export"],
+)
+async def export_regression_word(data: RegressionResponse):
+    """
+    VivaSense Regression report — one self-contained Word document:
+      1. Fitted Equation  (publication-ready, with × operator)
+      2. Model Statistics  (n, R², r, slope, intercept, SE, 95% CI, p)
+      3. Interpretation    (plain-language effect + summary)
+      4. Reliability Notes (flags + warnings)
+      5. Academic Writing Support (Layer C guided-writing starters)
+      6. Scope note
+    """
+    try:
+        doc = _new_document(
+            title="Regression Analysis",
+            subtitle=f"{data.y_variable} ~ {data.x_variable}",
+        )
+
+        # ── 1. Fitted Equation ─────────────────────────────────────────────────
+        _add_heading(doc, "Fitted Equation", level=1)
+        eq_para = doc.add_paragraph()
+        run = eq_para.add_run(data.equation)
+        run.bold = True
+        run.font.size = Pt(13)
+        doc.add_paragraph()
+
+        # ── 2. Model Statistics ────────────────────────────────────────────────
+        _add_heading(doc, "Model Statistics", level=1)
+        ci = data.confidence_interval_slope
+        stat_rows = [
+            ("Sample size (n)",                str(data.n)),
+            ("Intercept (a)",                  _fmt(data.intercept, 4)),
+            ("Slope (b)",                      _fmt(data.slope, 6)),
+            ("Standard Error of slope",        _fmt(data.standard_error_slope, 6)),
+            ("95% CI for slope",               f"[{_fmt(ci.lower, 4)}, {_fmt(ci.upper, 4)}]"),
+            ("p-value (slope coefficient)",    _fmt_p(data.p_value_slope)),
+            ("R\u00b2 (coefficient of determination)", _fmt(data.r_squared, 4)),
+            ("r (Pearson, derived from R\u00b2)",       _fmt(data.correlation_coefficient, 4)),
+            ("Adjusted R\u00b2",               _fmt(data.adjusted_r_squared, 4)),
+            ("Direction",                      data.direction.replace("_", " ")),
+            ("Relationship strength",          data.strength_class.replace("_", " ")),
+            ("Significance",                   data.significance_class.replace("_", " ")),
+        ]
+        _add_stat_table(doc, ["Parameter", "Value"], stat_rows, numeric_cols={1})
+        doc.add_paragraph()
+
+        # ── 3. Interpretation ──────────────────────────────────────────────────
+        _add_heading(doc, "Interpretation", level=1)
+        _add_body(doc, data.plain_language_effect)
+        doc.add_paragraph()
+        _add_body(doc, data.summary_interpretation)
+        doc.add_paragraph()
+
+        # ── 4. Reliability Notes ───────────────────────────────────────────────
+        if data.warnings or data.reliability_flags:
+            _add_heading(doc, "Reliability Notes", level=1)
+            if data.reliability_flags:
+                flag_text = ", ".join(data.reliability_flags)
+                _add_body(doc, f"Flags: {flag_text}", italic=True)
+            for w in data.warnings:
+                doc.add_paragraph(f"\u26a0\ufe0e  {w}", style="List Bullet")
+            doc.add_paragraph()
+
+        # ── 5. Academic Writing Support ────────────────────────────────────────
+        result_dict = data.model_dump()
+        _add_writing_support_section(doc, "regression", None, result_dict)
+        doc.add_paragraph()
+
+        # ── 6. Scope note ──────────────────────────────────────────────────────
+        _scope_paragraph(doc)
+        _add_footer(doc)
+        return _docx_response(doc, "vivasense_regression_report.docx")
+
+    except Exception as exc:
+        logger.error("Regression export failed: %s", exc, exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Regression export failed: {exc}"},
         )
