@@ -222,52 +222,95 @@ compute_single_environment <- function(data, trait_name = "Trait",
     }
   }
 
-  # Variance components
-  # σ²e = MSE
-  # σ²g = (MS_g - MS_e) / (n_reps * n_factor_levels)
-  # For simple designs n_factor_levels == 1 so the formula reduces to
-  # the standard (MS_g - MS_e) / n_reps.
-  sigma2_error <- ms_error
-
-  # CRITICAL FIX: Clamp negative variance to zero + flag warning
-  sigma2_genotype_raw <- (ms_genotype - ms_error) / (n_reps * n_factor_levels)
-  sigma2_genotype     <- max(0, sigma2_genotype_raw)
-  negative_sigma2g    <- sigma2_genotype_raw < -0.001
-
-  # Phenotypic variance (entry-mean basis)
-  sigma2_phenotypic <- sigma2_genotype + (sigma2_error / n_reps)
-  
-  # CRITICAL FIX: Handle edge case where phenotypic variance is invalid
-  if (is.na(sigma2_phenotypic) || sigma2_phenotypic <= 0 || is.na(sigma2_genotype)) {
-    h2 <- NA_real_
-    h2_is_valid <- FALSE
-  } else {
-    # Broad-sense heritability (h²) on entry-mean basis
-    h2 <- sigma2_genotype / sigma2_phenotypic
-    h2 <- max(0, min(1, h2)) # Clamp to [0, 1]
-    h2_is_valid <- TRUE
-  }
-  
-  # Genotypic CV and Phenotypic CV
-  grand_mean <- mean(data$trait_value, na.rm = TRUE)
-  
-  gcv <- NA_real_
-  pcv <- NA_real_
-  gam <- NA_real_
-  gam_percent <- NA_real_
+  # Grand mean — needed for both split-plot and genotype-based paths
+  grand_mean    <- mean(data$trait_value, na.rm = TRUE)
   mean_is_valid <- !is.na(grand_mean) && grand_mean != 0
-  
-  if (mean_is_valid && !is.na(sigma2_genotype) && !is.na(sigma2_phenotypic)) {
-    gcv <- (sqrt(max(0, sigma2_genotype)) / grand_mean) * 100
-    pcv <- (sqrt(sigma2_phenotypic) / grand_mean) * 100
 
-    # Genetic Advance at Mean (assuming selection intensity i = 1.4 for ~30% selection)
-    gam <- 1.4 * sqrt(max(0, sigma2_genotype))
-    gam_percent <- (gam / grand_mean) * 100
+  # Variance components, heritability, and genetic parameters are only
+  # meaningful for genotype-based designs.  For generic split-plot RCBD the
+  # only relevant error terms are the subplot error and the whole-plot error;
+  # genetics-specific blocks are explicitly omitted.
+  if (has_splitplot) {
+    # Whole-plot error MS is in the renamed "whole_plot_error" row
+    wp_error_ms <- tryCatch(
+      as.numeric(anova_table["whole_plot_error", "Mean Sq"]),
+      error = function(e) NA_real_
+    )
+    variance_components_out <- list(
+      sigma2_subplot_error    = ms_error,
+      sigma2_whole_plot_error = wp_error_ms
+    )
+    heritability_out   <- list(not_applicable = TRUE)
+    genetic_params_out <- list(not_applicable = TRUE)
+    flags_out <- list(
+      mean_valid      = mean_is_valid,
+      crd_mode        = crd_mode,
+      factorial       = has_factor,
+      n_factor_levels = n_factor_levels
+    )
+    negative_sigma2g    <- FALSE
+    sigma2_genotype_raw <- NA_real_
+  } else {
+    # Genotype-based designs: full variance decomposition
+    # σ²e = MSE
+    # σ²g = (MS_g - MS_e) / (n_reps * n_factor_levels)
+    # For simple designs n_factor_levels == 1 so the formula reduces to
+    # the standard (MS_g - MS_e) / n_reps.
+    sigma2_error        <- ms_error
+    sigma2_genotype_raw <- (ms_genotype - ms_error) / (n_reps * n_factor_levels)
+    sigma2_genotype     <- max(0, sigma2_genotype_raw)
+    negative_sigma2g    <- sigma2_genotype_raw < -0.001
+
+    # Phenotypic variance (entry-mean basis)
+    sigma2_phenotypic <- sigma2_genotype + (sigma2_error / n_reps)
+
+    # Broad-sense heritability (h²) on entry-mean basis — clamp to [0, 1]
+    if (is.na(sigma2_phenotypic) || sigma2_phenotypic <= 0 || is.na(sigma2_genotype)) {
+      h2          <- NA_real_
+      h2_is_valid <- FALSE
+    } else {
+      h2          <- max(0, min(1, sigma2_genotype / sigma2_phenotypic))
+      h2_is_valid <- TRUE
+    }
+
+    # Genotypic CV, Phenotypic CV, and Genetic Advance at Mean
+    gcv <- NA_real_; pcv <- NA_real_; gam <- NA_real_; gam_percent <- NA_real_
+    if (mean_is_valid && !is.na(sigma2_genotype) && !is.na(sigma2_phenotypic)) {
+      gcv         <- (sqrt(max(0, sigma2_genotype)) / grand_mean) * 100
+      pcv         <- (sqrt(sigma2_phenotypic) / grand_mean) * 100
+      # Genetic Advance at Mean (i = 1.4 for ~30% selection intensity)
+      gam         <- 1.4 * sqrt(max(0, sigma2_genotype))
+      gam_percent <- (gam / grand_mean) * 100
+    }
+
+    variance_components_out <- list(
+      sigma2_genotype   = sigma2_genotype,
+      sigma2_error      = sigma2_error,
+      sigma2_phenotypic = sigma2_phenotypic
+    )
+    heritability_out <- list(
+      h2_broad_sense       = h2,
+      h2_is_valid          = h2_is_valid,
+      interpretation_basis = "entry-mean (single environment)"
+    )
+    genetic_params_out <- list(
+      GCV                = gcv,
+      PCV                = pcv,
+      GAM                = gam,
+      GAM_percent        = gam_percent,
+      selection_intensity = 1.4
+    )
+    flags_out <- list(
+      negative_sigma2_genotype = negative_sigma2g,
+      sigma2_g_raw             = sigma2_genotype_raw,
+      mean_valid               = mean_is_valid,
+      crd_mode                 = crd_mode,
+      factorial                = has_factor,
+      n_factor_levels          = n_factor_levels
+    )
   }
 
-  # Mean separation and residual df — only available when there is a genotype column.
-  # For generic split-plot designs (no genotype), these are not applicable.
+  # Mean separation — only available for genotype-based designs
   if (has_splitplot) {
     df_err   <- NA_integer_
     mean_sep <- NULL
@@ -286,40 +329,19 @@ compute_single_environment <- function(data, trait_name = "Trait",
   }
 
   list(
-    environment_mode = "single_environment",
-    design           = design_label,
-    n_genotypes      = n_genotypes,
-    n_reps           = n_reps,
-    grand_mean       = grand_mean,
-    variance_components = list(
-      sigma2_genotype  = sigma2_genotype,
-      sigma2_error     = sigma2_error,
-      sigma2_phenotypic = sigma2_phenotypic
-    ),
-    heritability = list(
-      h2_broad_sense      = h2,
-      h2_is_valid         = h2_is_valid,
-      interpretation_basis = "entry-mean (single environment)"
-    ),
-    genetic_parameters = list(
-      GCV             = gcv,
-      PCV             = pcv,
-      GAM             = gam,
-      GAM_percent     = gam_percent,
-      selection_intensity = 1.4
-    ),
-    flags = list(
-      negative_sigma2_genotype = negative_sigma2g,
-      sigma2_g_raw             = sigma2_genotype_raw,
-      mean_valid               = mean_is_valid,
-      crd_mode                 = crd_mode,
-      factorial                = has_factor,
-      n_factor_levels          = n_factor_levels
-    ),
-    anova_table    = as.data.frame(anova_table),
-    mean_separation = mean_sep,
-    ms_genotype    = ms_genotype,
-    ms_error       = ms_error
+    environment_mode    = "single_environment",
+    design              = design_label,
+    n_genotypes         = n_genotypes,
+    n_reps              = n_reps,
+    grand_mean          = grand_mean,
+    variance_components = variance_components_out,
+    heritability        = heritability_out,
+    genetic_parameters  = genetic_params_out,
+    flags               = flags_out,
+    anova_table         = as.data.frame(anova_table),
+    mean_separation     = mean_sep,
+    ms_genotype         = ms_genotype,
+    ms_error            = ms_error
   )
 }
 

@@ -383,6 +383,27 @@ class TestSplitPlotInterpretationNeutral(unittest.TestCase):
         text = self._run_interpretation(False, False, False)
         self.assertNotIn("{trait}", text)
 
+    def test_mentions_restricted_randomisation(self):
+        """Overview must explain the restricted-randomisation structure."""
+        text = self._run_interpretation(True, False, False)
+        self.assertIn("restricted randomis", text.lower())
+
+    def test_mentions_error_strata(self):
+        """Recommendation must always mention both error strata."""
+        text = self._run_interpretation(False, False, False)
+        self.assertIn("whole-plot error", text.lower())
+        self.assertIn("subplot", text.lower())
+
+    def test_error_strata_emitted_when_nothing_significant(self):
+        """Error-strata guidance appears even when all effects are non-significant."""
+        text = self._run_interpretation(False, False, False)
+        self.assertIn("whole-plot error", text.lower())
+
+    def test_interaction_significant_uses_cell_means_language(self):
+        """When interaction is significant, recommendation uses cell-means language."""
+        text = self._run_interpretation(True, True, True)
+        self.assertIn("cell", text.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

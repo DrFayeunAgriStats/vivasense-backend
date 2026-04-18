@@ -89,14 +89,18 @@ def _generate_split_plot_interpretation(
     # ── 1. Overview ────────────────────────────────────────────────────────────
     overview = [
         "This analysis used a split-plot randomised complete block design (RCBD), "
-        "in which the main-plot factor was assigned to larger experimental units "
-        "within each replication and the subplot factor was assigned within main plots."
+        "which applies two levels of restricted randomisation: "
+        "main-plot factor levels are randomised to whole plots within each block, "
+        "and subplot factor levels are independently randomised within each whole plot. "
+        "Consequently, the main-plot factor is tested against whole-plot error "
+        "(between-whole-plot residual) and the subplot factor and their interaction "
+        "are tested against subplot error (within-whole-plot residual)."
     ]
     if n_reps:
-        overview.append(f"The experiment had {n_reps} complete replication(s).")
+        overview.append(f"The experiment comprised {n_reps} complete block(s).")
     if summary.get("grand_mean") is not None:
         overview.append(
-            f"The overall mean of {trait} across all experimental units was "
+            f"The overall mean of {trait} across all treatment combinations was "
             f"{summary['grand_mean']:.2f}."
         )
     if cv_interpretation_flag == "cv_available" and summary.get("cv_percent") is not None:
@@ -208,15 +212,18 @@ def _generate_split_plot_interpretation(
     recs = []
     if interaction_significant is True:
         recs.append(
-            "Use treatment-combination means (main_plot × sub_plot cells) for "
-            "decision-making rather than marginal factor means."
+            "Because the main-plot × subplot interaction is significant, "
+            "evaluate treatment-combination cell means rather than marginal "
+            "factor means — main effects alone are not sufficient for conclusions."
         )
-    if main_plot_significant is True or subplot_significant is True:
-        recs.append(
-            "Apply mean separation tests within the appropriate error stratum "
-            "(whole-plot error for main-plot comparisons, subplot error for "
-            "subplot and interaction comparisons)."
-        )
+    # Always state the error-strata rule: it reflects the design structure
+    # regardless of which effects were significant.
+    recs.append(
+        "Use whole-plot error for pairwise comparisons among main-plot factor "
+        "levels and subplot (residual) error for comparisons among subplot "
+        "factor levels and treatment-combination means, consistent with the "
+        "two-error structure of this design."
+    )
     if precision_level == "low":
         recs.append(
             "Increase replication or improve experimental control to reduce "

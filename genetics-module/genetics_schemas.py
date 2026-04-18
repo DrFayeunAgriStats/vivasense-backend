@@ -60,7 +60,7 @@ class MeanSeparation(BaseModel):
 class GeneticsResult(BaseModel):
     """Core analysis result"""
     environment_mode: str
-    n_genotypes: int
+    n_genotypes: Optional[int] = None   # None for generic split_plot_rcbd (no genotype column)
     n_reps: int
     n_environments: Optional[int] = None
     grand_mean: float

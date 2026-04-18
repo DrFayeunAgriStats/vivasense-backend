@@ -162,6 +162,20 @@ async def analysis_genetic_parameters(request: ModuleRequest):
     random_env    = ctx["random_environment"]
     crd_mode      = (rep_col is None) and (mode == "single")
 
+    # Genetic parameters (heritability, GCV, PCV, GAM) require a genotype column
+    # and a genotype-based model.  Split-plot RCBD has no genotype column and no
+    # genotype mean square, so these statistics are not estimable.
+    if design_type == "split_plot_rcbd":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Genetic parameters (heritability, GCV, PCV, GAM) are not "
+                "applicable for generic split-plot RCBD designs, which have no "
+                "genotype column and no genotype mean square. "
+                "To analyse split-plot treatment effects, use POST /analysis/anova."
+            ),
+        )
+
     trait_results: Dict[str, GeneticParametersTraitResult] = {}
     failed_traits: List[str] = []
 
