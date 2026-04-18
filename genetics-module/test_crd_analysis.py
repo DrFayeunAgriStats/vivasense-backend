@@ -161,6 +161,92 @@ class TestBuildObservationsFactorialCRD(unittest.TestCase):
             self.assertNotIn("factor", rec)
 
 
+def _split_plot_df() -> pd.DataFrame:
+    """Balanced single-environment split-plot RCBD dataset."""
+    rows = []
+    for rep in ["R1", "R2"]:
+        for main in ["M1", "M2"]:
+            for sub in ["S1", "S2"]:
+                rows.append({
+                    "genotype": "G1",
+                    "rep": rep,
+                    "main_plot": main,
+                    "sub_plot": sub,
+                    "trait": float((rep == "R1") + (main == "M2") + (sub == "S2"))
+                })
+    return pd.DataFrame(rows)
+
+
+class TestBuildObservationsSplitPlot(unittest.TestCase):
+
+    def test_split_plot_records_include_main_and_sub_plot(self):
+        df = _split_plot_df()
+        records = build_observations(
+            df,
+            genotype_col="genotype",
+            rep_col="rep",
+            trait_col="trait",
+            env_col=None,
+            design_type="split_plot_rcbd",
+            main_plot_col="main_plot",
+            sub_plot_col="sub_plot",
+        )
+        for rec in records:
+            self.assertEqual(rec["rep"], rec["rep"])
+            self.assertIn("main_plot", rec)
+            self.assertIn("sub_plot", rec)
+            self.assertEqual(rec["main_plot"], rec["main_plot"])
+            self.assertEqual(rec["sub_plot"], rec["sub_plot"])
+            self.assertEqual(rec["trait_value"], float(rec["trait_value"]))
+
+    def test_split_plot_requires_main_and_sub_plot_columns(self):
+        df = _split_plot_df()
+        with self.assertRaises(ValueError):
+            build_observations(
+                df,
+                genotype_col="genotype",
+                rep_col="rep",
+                trait_col="trait",
+                env_col=None,
+                design_type="split_plot_rcbd",
+                main_plot_col=None,
+                sub_plot_col="sub_plot",
+            )
+
+
+class TestCheckBalanceSplitPlot(unittest.TestCase):
+
+    def test_balanced_split_plot_no_warnings(self):
+        df = _split_plot_df()
+        warnings = check_balance(
+            df,
+            genotype_col="genotype",
+            rep_col="rep",
+            trait_col="trait",
+            env_col=None,
+            design_type="split_plot_rcbd",
+            main_plot_col="main_plot",
+            sub_plot_col="sub_plot",
+        )
+        self.assertEqual(warnings, [])
+
+    def test_unbalanced_split_plot_warns(self):
+        df = _split_plot_df()
+        # Remove one subplot observation to create imbalance
+        df = df.iloc[:-1]
+        warnings = check_balance(
+            df,
+            genotype_col="genotype",
+            rep_col="rep",
+            trait_col="trait",
+            env_col=None,
+            design_type="split_plot_rcbd",
+            main_plot_col="main_plot",
+            sub_plot_col="sub_plot",
+        )
+        self.assertTrue(any("split-plot" in w.lower() or "incomplete" in w.lower() for w in warnings))
+
+
 # ============================================================================
 # check_balance — CRD path
 # ============================================================================

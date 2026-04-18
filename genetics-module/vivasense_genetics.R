@@ -107,21 +107,38 @@ compute_single_environment <- function(data, trait_name = "Trait",
   n_genotypes <- nlevels(data$genotype)
 
   # ── Model selection ──────────────────────────────────────────────────────────
-  # CRD (no blocking):   trait_value ~ genotype
-  # Factorial CRD:       trait_value ~ genotype * factor
-  # RCBD (blocking):     trait_value ~ rep + genotype
-  has_factor <- crd_mode && ("factor" %in% colnames(data))
+  # CRD (no blocking):      trait_value ~ genotype
+  # Factorial CRD:          trait_value ~ genotype * factor
+  # RCBD (blocking):        trait_value ~ rep + genotype
+  # Factorial RCBD:         trait_value ~ rep + genotype * factor
+  # Split-plot RCBD:        trait_value ~ rep + main_plot * sub_plot + genotype + Error(rep/main_plot)
+  has_factor <- "factor" %in% colnames(data)
+  has_splitplot <- all(c("main_plot", "sub_plot") %in% colnames(data))
+  n_factor_levels <- if (has_factor) {
+    data$factor <- factor(data$factor)
+    nlevels(data$factor)
+  } else {
+    1L
+  }
 
-  if (crd_mode) {
+  if (has_splitplot) {
+    data$main_plot <- factor(data$main_plot)
+    data$sub_plot  <- factor(data$sub_plot)
+    n_reps <- nlevels(data$rep)
+    message(sprintf(
+      "[INFO] Split-plot RCBD model for %s: trait_value ~ rep + main_plot * sub_plot + genotype + Error(rep/main_plot)",
+      trait_name
+    ))
+    model <- aov(trait_value ~ rep + main_plot * sub_plot + genotype + Error(rep/main_plot), data = data)
+  } else if (crd_mode) {
     # n_reps = average observations per genotype (inferred from data)
     obs_per_geno <- table(data$genotype)
     n_reps <- round(mean(obs_per_geno))
 
     if (has_factor) {
-      data$factor <- factor(data$factor)
       message(sprintf(
         "[INFO] Factorial CRD model for %s: trait_value ~ genotype * factor (%d factor levels)",
-        trait_name, nlevels(data$factor)
+        trait_name, n_factor_levels
       ))
       model <- aov(trait_value ~ genotype * factor, data = data)
     } else {
@@ -134,31 +151,54 @@ compute_single_environment <- function(data, trait_name = "Trait",
   } else {
     # RCBD: rep is a fixed blocking factor
     n_reps <- nlevels(data$rep)
-    model  <- aov(trait_value ~ rep + genotype, data = data)
+    if (has_factor) {
+      message(sprintf(
+        "[INFO] Factorial RCBD model for %s: trait_value ~ rep + genotype * factor (%d factor levels)",
+        trait_name, n_factor_levels
+      ))
+      model <- aov(trait_value ~ rep + genotype * factor, data = data)
+    } else {
+      model <- aov(trait_value ~ rep + genotype, data = data)
+    }
   }
 
   anova_table <- anova(model)
-  
+
   # Extract mean squares
-  # "genotype" row exists in all three model variants (CRD, factorial CRD, RCBD)
-  ms_genotype <- anova_table["genotype", "Mean Sq"]
-  ms_error    <- anova_table["Residuals", "Mean Sq"]
+  ms_genotype <- if ("genotype" %in% rownames(anova_table)) {
+    anova_table["genotype", "Mean Sq"]
+  } else {
+    NA_real_
+  }
+
+  if ("Residuals" %in% rownames(anova_table)) {
+    ms_error <- anova_table["Residuals", "Mean Sq"]
+  } else {
+    residual_rows <- grep("Residuals|Within", rownames(anova_table), ignore.case = TRUE)
+    if (length(residual_rows) > 0) {
+      ms_error <- anova_table[residual_rows[length(residual_rows)], "Mean Sq"]
+    } else {
+      stop("ANOVA table missing residual term")
+    }
+  }
 
   # Variance components
   # σ²e = MSE
-  # σ²g = (MS_g - MS_e) / n_reps   [same formula for CRD and RCBD]
+  # σ²g = (MS_g - MS_e) / (n_reps * n_factor_levels)
+  # For simple designs n_factor_levels == 1 so the formula reduces to
+  # the standard (MS_g - MS_e) / n_reps.
   sigma2_error <- ms_error
 
   # CRITICAL FIX: Clamp negative variance to zero + flag warning
-  sigma2_genotype_raw <- (ms_genotype - ms_error) / n_reps
+  sigma2_genotype_raw <- (ms_genotype - ms_error) / (n_reps * n_factor_levels)
   sigma2_genotype     <- max(0, sigma2_genotype_raw)
   negative_sigma2g    <- sigma2_genotype_raw < -0.001
 
   # Phenotypic variance (entry-mean basis)
   sigma2_phenotypic <- sigma2_genotype + (sigma2_error / n_reps)
   
-  # CRITICAL FIX: Handle edge case where phenotypic variance ≤ 0
-  if (sigma2_phenotypic <= 0) {
+  # CRITICAL FIX: Handle edge case where phenotypic variance is invalid
+  if (is.na(sigma2_phenotypic) || sigma2_phenotypic <= 0 || is.na(sigma2_genotype)) {
     h2 <- NA_real_
     h2_is_valid <- FALSE
   } else {
@@ -177,7 +217,7 @@ compute_single_environment <- function(data, trait_name = "Trait",
   gam_percent <- NA_real_
   mean_is_valid <- !is.na(grand_mean) && grand_mean != 0
   
-  if (mean_is_valid) {
+  if (mean_is_valid && !is.na(sigma2_genotype) && !is.na(sigma2_phenotypic)) {
     gcv <- (sqrt(max(0, sigma2_genotype)) / grand_mean) * 100
     pcv <- (sqrt(sigma2_phenotypic) / grand_mean) * 100
     
@@ -190,10 +230,12 @@ compute_single_environment <- function(data, trait_name = "Trait",
   mean_sep <- compute_mean_separation(model, trait_name,
                                       df_error = df_err, ms_error = ms_error)
 
-  design_label <- if (crd_mode) {
+  design_label <- if (has_splitplot) {
+    "split_plot_rcbd"
+  } else if (crd_mode) {
     if (has_factor) "factorial_crd" else "crd"
   } else {
-    "rcbd"
+    if (has_factor) "factorial_rcbd" else "rcbd"
   }
 
   list(
@@ -224,7 +266,8 @@ compute_single_environment <- function(data, trait_name = "Trait",
       sigma2_g_raw             = sigma2_genotype_raw,
       mean_valid               = mean_is_valid,
       crd_mode                 = crd_mode,
-      factorial_crd            = has_factor
+      factorial                = has_factor,
+      n_factor_levels          = n_factor_levels
     ),
     anova_table    = as.data.frame(anova_table),
     mean_separation = mean_sep,
@@ -446,6 +489,13 @@ validate_input_data <- function(data, env_mode = "single", crd_mode = FALSE) {
   # We still require it in data because Python always injects a synthetic rep.
   required_cols <- c("genotype", "rep", "trait_value")
   if (env_mode == "multi") required_cols <- c(required_cols, "environment")
+  if (all(c("main_plot", "sub_plot") %in% colnames(data))) {
+    required_cols <- c(required_cols, "main_plot", "sub_plot")
+  } else if (xor("main_plot" %in% colnames(data), "sub_plot" %in% colnames(data))) {
+    warnings_list$missing_split_plot_columns <-
+      "Split-plot design requires both main_plot and sub_plot columns."
+    is_valid <- FALSE
+  }
 
   missing_cols <- setdiff(required_cols, colnames(data))
   if (length(missing_cols) > 0) {

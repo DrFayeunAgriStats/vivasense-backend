@@ -83,6 +83,7 @@ def generate_anova_interpretation(
     n_environments: Optional[int],
     n_reps: Optional[int],
     environment_mode: str = "single",
+    design_type: Optional[str] = None,
 ) -> str:
     """
     Generate context-aware ANOVA interpretation following VivaSense standards.
@@ -119,6 +120,12 @@ def generate_anova_interpretation(
     if summary.get("grand_mean") is not None:
         overview.append(
             f"The overall mean performance for {trait} was {summary['grand_mean']:.2f}."
+        )
+
+    if design_type == "split_plot_rcbd":
+        overview.append(
+            "The experiment was analysed using a split-plot RCBD structure, "
+            "with whole plots and subplots accounted for in the model."
         )
 
     if cv_interpretation_flag == "cv_available" and summary.get("cv_percent") is not None:
@@ -563,13 +570,17 @@ async def analysis_anova(request: ModuleRequest):
             status_code=400, detail=f"Trait columns not found in dataset: {missing}"
         )
 
-    mode         = ctx["mode"]
-    env_col      = ctx["environment_column"] if mode == "multi" else None
-    geno_col     = ctx["genotype_column"]
-    rep_col      = ctx["rep_column"]        # may be None for CRD datasets
-    random_env   = ctx["random_environment"]
+    mode           = ctx["mode"]
+    env_col        = ctx["environment_column"] if mode == "multi" else None
+    geno_col       = ctx["genotype_column"]
+    rep_col        = ctx["rep_column"]        # may be None for CRD datasets
+    factor_col     = ctx.get("factor_column") if mode == "single" else None
+    main_plot_col  = ctx.get("main_plot_column")
+    sub_plot_col   = ctx.get("sub_plot_column")
+    design_type    = ctx.get("design_type")
+    random_env     = ctx["random_environment"]
     # CRD: no explicit rep column AND single-environment mode
-    crd_mode     = (rep_col is None) and (mode == "single")
+    crd_mode       = (rep_col is None) and (mode == "single")
 
     trait_results: Dict[str, AnovaTraitResult] = {}
     failed_traits: List[str] = []
@@ -586,8 +597,28 @@ async def analysis_anova(request: ModuleRequest):
 
             if cached is None:
                 async with semaphore:
-                    balance_warnings = check_balance(df, geno_col, rep_col, trait, env_col)
-                    observations     = build_observations(df, geno_col, rep_col, trait, env_col)
+                    balance_warnings = check_balance(
+                        df,
+                        geno_col,
+                        rep_col,
+                        trait,
+                        env_col,
+                        factor_col=factor_col,
+                        design_type=design_type,
+                        main_plot_col=main_plot_col,
+                        sub_plot_col=sub_plot_col,
+                    )
+                    observations = build_observations(
+                        df,
+                        geno_col,
+                        rep_col,
+                        trait,
+                        env_col,
+                        factor_col=factor_col,
+                        design_type=design_type,
+                        main_plot_col=main_plot_col,
+                        sub_plot_col=sub_plot_col,
+                    )
 
                     result_dict = await asyncio.to_thread(
                         r_engine.run_analysis,
@@ -660,6 +691,7 @@ async def analysis_anova(request: ModuleRequest):
                 n_environments=res.n_environments,
                 n_reps=res.n_reps,
                 environment_mode=mode,
+                design_type=design_type,
             )
             logger.info(
                 "ANOVA interpretation generated for trait '%s': %d characters",

@@ -189,22 +189,41 @@ def build_observations(
     rep_col: Optional[str],
     trait_col: str,
     env_col: Optional[str],
+    factor_col: Optional[str] = None,
+    design_type: Optional[str] = None,
+    main_plot_col: Optional[str] = None,
+    sub_plot_col: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Reshape a wide DataFrame into the flat observation-record format expected
-    by RGeneticsEngine.run_analysis():
+    by RGeneticsEngine.run_analysis().
 
-        RCBD (rep_col provided):
+        Simple RCBD (rep_col provided, no factor_col):
             Single-env: [{"genotype": ..., "rep": ..., "trait_value": ...}, ...]
             Multi-env:  [{"genotype": ..., "environment": ..., "rep": ...,
                           "trait_value": ...}, ...]
 
-        CRD (rep_col is None):
-            Single-env: [{"genotype": ..., "rep": "<synthetic>",
-                          "crd": True, "trait_value": ...}, ...]
-            Factorial CRD (env_col provided in single mode):
-                        [{"genotype": ..., "rep": "<synthetic>", "crd": True,
-                          "factor": ..., "trait_value": ...}, ...]
+        Factorial RCBD (rep_col + factor_col provided):
+            [{"genotype": ..., "rep": ..., "factor": ..., "trait_value": ...}, ...]
+
+        Split-Plot RCBD (design_type == split_plot_rcbd):
+            [{"genotype": ..., "rep": ..., "main_plot": ..., "sub_plot": ..., "trait_value": ...}, ...]
+
+        Simple CRD (rep_col is None, no factor_col):
+            [{"genotype": ..., "rep": "<synthetic>",
+              "crd": True, "trait_value": ...}, ...]
+
+        Factorial CRD (rep_col is None, factor_col or legacy env_col provided):
+            [{"genotype": ..., "rep": "<synthetic>", "crd": True,
+              "factor": ..., "trait_value": ...}, ...]
+
+    factor_col takes explicit priority.  For CRD datasets, if factor_col is
+    None but env_col is provided, env_col is used as the treatment factor
+    (legacy factorial CRD path).  For RCBD datasets env_col always means
+    multi-environment, never a treatment factor.
+
+    For split-plot RCBD the build process includes main_plot and sub_plot
+    fields for the R engine.
 
     For CRD datasets the rep field is a synthetic row-counter within each
     genotype group (e.g. "R1", "R2", …).  The R engine uses the "crd" flag
@@ -218,15 +237,29 @@ def build_observations(
     """
     crd_mode = rep_col is None
 
-    if crd_mode:
-        # Factorial CRD: env_col supplies the treatment factor (single mode only)
-        keep_cols = [genotype_col, trait_col]
-        if env_col:
-            keep_cols = [genotype_col, env_col, trait_col]
+    if design_type == "split_plot_rcbd":
+        if rep_col is None or main_plot_col is None or sub_plot_col is None:
+            raise ValueError("Split-plot RCBD requires rep_column, main_plot_column, and sub_plot_column")
+        keep_cols = [genotype_col, rep_col, main_plot_col, sub_plot_col, trait_col]
     else:
-        keep_cols = [genotype_col, rep_col, trait_col]
-        if env_col:
-            keep_cols = [genotype_col, env_col, rep_col, trait_col]
+        # Determine the effective factor column.
+        # - factor_col is the explicit factorial RCBD / CRD treatment factor.
+        # - For CRD datasets, env_col is the legacy path for factorial CRD.
+        # - For RCBD datasets, env_col means multi-environment (never a factor here).
+        eff_factor = factor_col or (env_col if crd_mode else None)
+
+        if crd_mode:
+            keep_cols = [genotype_col, trait_col]
+            if eff_factor:
+                keep_cols = [genotype_col, eff_factor, trait_col]
+        else:
+            keep_cols = [genotype_col, rep_col, trait_col]
+            if env_col and not factor_col:
+                # Multi-environment RCBD
+                keep_cols = [genotype_col, env_col, rep_col, trait_col]
+            elif factor_col:
+                # Factorial RCBD
+                keep_cols = [genotype_col, rep_col, factor_col, trait_col]
 
     subset = df[keep_cols].copy()
     subset[trait_col] = pd.to_numeric(subset[trait_col], errors="coerce")
@@ -254,14 +287,22 @@ def build_observations(
             "genotype": str(row[genotype_col]),
             "trait_value": float(row[trait_col]),
         }
-        if crd_mode:
+        if design_type == "split_plot_rcbd":
+            rec["rep"] = str(row[rep_col])
+            rec["main_plot"] = str(row[main_plot_col])
+            rec["sub_plot"] = str(row[sub_plot_col])
+        elif crd_mode:
             rec["rep"] = str(row["_synth_rep"])
             rec["crd"] = True
-            if env_col:
-                rec["factor"] = str(row[env_col])
+            if eff_factor:
+                rec["factor"] = str(row[eff_factor])
         else:
             rec["rep"] = str(row[rep_col])
-            if env_col:
+            if factor_col:
+                # Factorial RCBD: factor key signals R to use factorial model
+                rec["factor"] = str(row[factor_col])
+            elif env_col:
+                # Multi-environment RCBD
                 rec["environment"] = str(row[env_col])
         records.append(rec)
 
@@ -278,6 +319,10 @@ def check_balance(
     rep_col: Optional[str],
     trait_col: str,
     env_col: Optional[str],
+    factor_col: Optional[str] = None,
+    design_type: Optional[str] = None,
+    main_plot_col: Optional[str] = None,
+    sub_plot_col: Optional[str] = None,
 ) -> List[str]:
     """
     Return human-readable warnings for unbalanced or incomplete experimental
@@ -287,8 +332,12 @@ def check_balance(
     - CRD (rep_col is None): whether all genotypes have ≥ 2 observations and
       equal replication (informational only — CRD can tolerate some imbalance).
     - RCBD single-env: whether all genotypes have the same number of observations.
+    - Factorial RCBD (rep_col + factor_col): whether each genotype×factor cell
+      has the same number of replications.
     - Multi-env: whether each genotype appears in every environment (completeness)
       and whether cell sizes are equal (balance).
+    - Split-plot RCBD: whether rep × main_plot × sub_plot cells are complete
+      and balanced.
 
     The R engine can still analyse unbalanced data, but results may be less
     reliable. Warnings are surfaced in TraitResult.data_warnings.
@@ -300,7 +349,59 @@ def check_balance(
     n_genotypes = sub[genotype_col].nunique()
     crd_mode = rep_col is None
 
-    if env_col and not crd_mode:
+    if factor_col and not crd_mode:
+        # Factorial RCBD — check balance within genotype×factor cells
+        n_factors = sub[factor_col].nunique()
+
+        factors_per_geno = sub.groupby(genotype_col)[factor_col].nunique()
+        incomplete = int((factors_per_geno < n_factors).sum())
+        if incomplete:
+            warnings.append(
+                f"{incomplete} of {n_genotypes} genotype(s) missing from at least one "
+                f"factor level — incomplete factorial structure "
+                f"(expected {n_factors} factor levels per genotype)"
+            )
+
+        cell_sizes = sub.groupby([genotype_col, factor_col]).size()
+        min_cell = int(cell_sizes.min())
+        max_cell = int(cell_sizes.max())
+        if min_cell != max_cell:
+            warnings.append(
+                f"Unbalanced factorial RCBD: genotype×factor cells range from "
+                f"{min_cell} to {max_cell} replications"
+            )
+    elif design_type == "split_plot_rcbd" and main_plot_col and sub_plot_col:
+        # Split-plot RCBD — check balance of rep × main_plot × sub_plot cells
+        reps = sorted(sub[rep_col].dropna().unique())
+        main_levels = sorted(sub[main_plot_col].dropna().unique())
+        sub_levels = sorted(sub[sub_plot_col].dropna().unique())
+
+        observed_pairs = {
+            (str(r), str(m))
+            for r, m in sub[[rep_col, main_plot_col]].drop_duplicates().itertuples(index=False, name=None)
+        }
+        expected_pairs = {(str(r), str(m)) for r in reps for m in main_levels}
+        missing_pairs = expected_pairs - observed_pairs
+        if missing_pairs:
+            warnings.append(
+                f"Incomplete split-plot layout: {len(missing_pairs)} missing rep × main_plot combinations."
+            )
+
+        subplot_cells = sub.groupby([rep_col, main_plot_col, sub_plot_col]).size()
+        if len(subplot_cells) < len(reps) * len(main_levels) * len(sub_levels):
+            warnings.append(
+                "Incomplete split-plot structure: not all rep × main_plot × sub_plot cells are present."
+            )
+
+        if len(subplot_cells) > 0:
+            min_cell = int(subplot_cells.min())
+            max_cell = int(subplot_cells.max())
+            if min_cell != max_cell:
+                warnings.append(
+                    f"Unbalanced split-plot RCBD: rep × main_plot × sub_plot cells range from "
+                    f"{min_cell} to {max_cell} observations"
+                )
+    elif env_col and not crd_mode:
         # Multi-environment RCBD
         n_envs = sub[env_col].nunique()
 
@@ -535,8 +636,10 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
     failed_traits: List[str] = []
 
     env_col_for_mode = request.environment_column if request.mode == "multi" else None
+    # factor_column is only applicable in single-env mode
+    factor_col = getattr(request, "factor_column", None) if request.mode == "single" else None
 
-    # Bounded concurrency: Limit active R subprocesses to prevent Out-Of-Memory (OOM) 
+    # Bounded concurrency: Limit active R subprocesses to prevent Out-Of-Memory (OOM)
     # errors when processing massive datasets with 50+ traits.
     MAX_CONCURRENT_R_PROCESSES = 4
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_R_PROCESSES)
@@ -554,6 +657,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                     rep_col=request.rep_column,
                     trait_col=trait,
                     env_col=env_col_for_mode,
+                    factor_col=factor_col,
                 )
                 if balance_warnings:
                     for w in balance_warnings:
@@ -565,6 +669,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                     rep_col=request.rep_column,
                     trait_col=trait,
                     env_col=env_col_for_mode,
+                    factor_col=factor_col,
                 )
 
                 # Execute blocking R subprocess concurrently via ThreadPool

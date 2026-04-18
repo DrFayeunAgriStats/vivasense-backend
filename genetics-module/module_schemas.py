@@ -28,11 +28,12 @@ class UploadDatasetRequest(BaseModel):
     POST /upload/dataset — confirm column mapping and register a reusable
     dataset context.  Returns dataset_token used by all analysis modules.
 
-    rep_column is optional.  When absent the system assumes a Completely
-    Randomised Design (CRD) and infers replication from repeated observations
-    per genotype.  When an environment_column is also provided in single-env
-    mode the analysis uses a factorial CRD model
-    (trait ~ genotype + factor + genotype:factor).
+    rep_column is optional for standard designs.  When absent the system
+    assumes a Completely Randomised Design (CRD) and infers replication from
+    repeated observations per genotype.
+
+    For split-plot RCBD the dataset must provide rep_column, main_plot_column,
+    and sub_plot_column, and design_type must be set to "split_plot_rcbd".
     """
     base64_content: str = Field(..., description="Base64-encoded CSV or Excel file")
     file_type: str = Field(..., pattern="^(csv|xlsx|xls)$")
@@ -44,7 +45,29 @@ class UploadDatasetRequest(BaseModel):
             "replication will be inferred from repeated observations."
         ),
     )
+    main_plot_column: Optional[str] = Field(
+        default=None,
+        description="Main plot factor column for split-plot RCBD designs.",
+    )
+    sub_plot_column: Optional[str] = Field(
+        default=None,
+        description="Subplot factor column for split-plot RCBD designs.",
+    )
     environment_column: Optional[str] = None
+    factor_column: Optional[str] = Field(
+        default=None,
+        description=(
+            "Second treatment factor for factorial designs (single-env only). "
+            "When provided with rep_column the analysis uses a factorial RCBD model "
+            "(trait ~ rep + genotype * factor). "
+            "When provided without rep_column a factorial CRD model is used."
+        ),
+    )
+    design_type: str = Field(
+        default="single",
+        pattern="^(single|multi|split_plot_rcbd)$",
+        description="Experimental design type for the dataset.",
+    )
     mode: str = Field(default="single", pattern="^(single|multi)$")
     random_environment: bool = False
     selection_intensity: float = Field(default=2.06, ge=0.0)
@@ -59,6 +82,7 @@ class UploadDatasetResponse(BaseModel):
     n_rows: int
     column_names: List[str]
     mode: str
+    design_type: str
 
 
 # ============================================================================

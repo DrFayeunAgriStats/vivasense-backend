@@ -142,12 +142,64 @@ async def upload_dataset(request: UploadDatasetRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # Validate required columns exist (rep_column is optional — CRD allowed)
-    required = [request.genotype_column]
+    # Validate column mapping selections for the chosen design type.
+    mapped_columns = [request.genotype_column]
     if request.rep_column:
-        required.append(request.rep_column)
+        mapped_columns.append(request.rep_column)
     if request.environment_column:
-        required.append(request.environment_column)
+        mapped_columns.append(request.environment_column)
+    if request.factor_column:
+        mapped_columns.append(request.factor_column)
+    if request.main_plot_column:
+        mapped_columns.append(request.main_plot_column)
+    if request.sub_plot_column:
+        mapped_columns.append(request.sub_plot_column)
+
+    if len(set(mapped_columns)) != len(mapped_columns):
+        raise HTTPException(
+            status_code=400,
+            detail="Duplicate column mappings are not allowed.",
+        )
+
+    if request.design_type == "split_plot_rcbd":
+        if request.mode != "single":
+            raise HTTPException(
+                status_code=400,
+                detail="split_plot_rcbd design must use single-environment mode.",
+            )
+        if request.environment_column is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="split_plot_rcbd design must not include environment_column.",
+            )
+        if request.factor_column is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="split_plot_rcbd design must not include factor_column.",
+            )
+        if not request.rep_column or not request.main_plot_column or not request.sub_plot_column:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "For split_plot_rcbd design, rep_column, main_plot_column, and "
+                    "sub_plot_column are all required."
+                ),
+            )
+        required = [
+            request.genotype_column,
+            request.rep_column,
+            request.main_plot_column,
+            request.sub_plot_column,
+        ]
+    else:
+        required = [request.genotype_column]
+        if request.rep_column:
+            required.append(request.rep_column)
+        if request.environment_column:
+            required.append(request.environment_column)
+        if request.factor_column:
+            required.append(request.factor_column)
+
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise HTTPException(
@@ -175,8 +227,12 @@ async def upload_dataset(request: UploadDatasetRequest):
         "file_type":         request.file_type,
         "genotype_column":   request.genotype_column,
         "rep_column":        request.rep_column,       # may be None for CRD
+        "main_plot_column":  request.main_plot_column,
+        "sub_plot_column":   request.sub_plot_column,
         "environment_column": request.environment_column,
+        "factor_column":     request.factor_column,    # may be None; factorial RCBD/CRD
         "mode":              request.mode,
+        "design_type":       request.design_type,
         "random_environment": request.random_environment,
         "selection_intensity": request.selection_intensity,
     })
@@ -194,4 +250,5 @@ async def upload_dataset(request: UploadDatasetRequest):
         n_rows=len(df),
         column_names=list(df.columns),
         mode=request.mode,
+        design_type=request.design_type,
     )

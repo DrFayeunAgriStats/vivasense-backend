@@ -151,12 +151,16 @@ async def analysis_genetic_parameters(request: ModuleRequest):
             status_code=400, detail=f"Trait columns not found in dataset: {missing}"
         )
 
-    mode       = ctx["mode"]
-    env_col    = ctx["environment_column"] if mode == "multi" else None
-    geno_col   = ctx["genotype_column"]
-    rep_col    = ctx["rep_column"]          # may be None for CRD datasets
-    random_env = ctx["random_environment"]
-    crd_mode   = (rep_col is None) and (mode == "single")
+    mode          = ctx["mode"]
+    env_col       = ctx["environment_column"] if mode == "multi" else None
+    geno_col      = ctx["genotype_column"]
+    rep_col       = ctx["rep_column"]          # may be None for CRD datasets
+    factor_col    = ctx.get("factor_column") if mode == "single" else None
+    main_plot_col = ctx.get("main_plot_column")
+    sub_plot_col  = ctx.get("sub_plot_column")
+    design_type   = ctx.get("design_type")
+    random_env    = ctx["random_environment"]
+    crd_mode      = (rep_col is None) and (mode == "single")
 
     trait_results: Dict[str, GeneticParametersTraitResult] = {}
     failed_traits: List[str] = []
@@ -173,8 +177,28 @@ async def analysis_genetic_parameters(request: ModuleRequest):
 
             if cached is None:
                 async with semaphore:
-                    balance_warnings = check_balance(df, geno_col, rep_col, trait, env_col)
-                    observations     = build_observations(df, geno_col, rep_col, trait, env_col)
+                    balance_warnings = check_balance(
+                        df,
+                        geno_col,
+                        rep_col,
+                        trait,
+                        env_col,
+                        factor_col=factor_col,
+                        design_type=design_type,
+                        main_plot_col=main_plot_col,
+                        sub_plot_col=sub_plot_col,
+                    )
+                    observations = build_observations(
+                        df,
+                        geno_col,
+                        rep_col,
+                        trait,
+                        env_col,
+                        factor_col=factor_col,
+                        design_type=design_type,
+                        main_plot_col=main_plot_col,
+                        sub_plot_col=sub_plot_col,
+                    )
 
                     result_dict = await asyncio.to_thread(
                         r_engine.run_analysis,

@@ -78,6 +78,15 @@ class UploadAnalysisRequest(BaseModel):
         ),
     )
     environment_column: Optional[str] = None
+    factor_column: Optional[str] = Field(
+        default=None,
+        description=(
+            "Second treatment factor for factorial designs (single-env only). "
+            "When provided with rep_column a factorial RCBD model is used "
+            "(trait ~ rep + genotype * factor). "
+            "When provided without rep_column a factorial CRD model is used."
+        ),
+    )
     trait_columns: List[str] = Field(..., min_length=1)
     mode: str = Field(..., pattern="^(single|multi)$")
     random_environment: bool = False
