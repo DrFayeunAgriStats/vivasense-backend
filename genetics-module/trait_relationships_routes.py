@@ -116,7 +116,7 @@ cat(jsonlite::toJSON(result, auto_unbox = TRUE, na = "null"))
                 ["Rscript", tmp_path],
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=300,
             )
 
             if proc.returncode != 0:
@@ -126,7 +126,14 @@ cat(jsonlite::toJSON(result, auto_unbox = TRUE, na = "null"))
             return json.loads(proc.stdout.strip())
 
         except subprocess.TimeoutExpired:
-            raise RuntimeError("Correlation analysis timed out (120 s exceeded)")
+            n_traits = len(trait_cols)
+            n_pairs = n_traits * (n_traits - 1) // 2
+            raise RuntimeError(
+                f"Correlation analysis timed out (300 s exceeded). "
+                f"Computing genotypic correlations for {n_traits} variables "
+                f"({n_pairs} pairs) via bivariate REML is computationally intensive. "
+                f"Consider reducing the number of traits."
+            )
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"Invalid JSON from R: {exc}")
         finally:
