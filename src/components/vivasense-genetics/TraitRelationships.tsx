@@ -20,8 +20,12 @@ import { UploadDatasetContext } from "@/services/geneticsUploadApi";
 import {
   computeCorrelation,
   CorrelationResponse,
+  CorrelationStats,
 } from "@/services/traitRelationshipsApi";
 import { CorrelationHeatmap } from "./CorrelationHeatmap";
+import { WordExportPreviewModal } from "@/components/export/WordExportPreviewModal";
+import { logDebug } from "@/utils/normalizeModuleData";
+import type { PreviewSection } from "@/utils/normalizeModuleData";
 
 interface TraitRelationshipsProps {
   /**
@@ -32,6 +36,84 @@ interface TraitRelationshipsProps {
 }
 
 type TRStep = "setup" | "correlating" | "results";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Preview builder
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildCorrelationPreview(
+  results: CorrelationResponse,
+  displayMode: "phenotypic" | "between_genotype" | "genotypic",
+  stats: CorrelationStats,
+  method: "pearson" | "spearman",
+  userObjective: string
+): { sections: PreviewSection[]; warnings: string[]; notes: string[] } {
+  const sections: PreviewSection[] = [];
+  const warnings: string[] = [...results.warnings];
+
+  const modeDesc: Record<string, string> = {
+    phenotypic:       "Phenotypic (all observations)",
+    between_genotype: "Between-Genotype Association (genotype means)",
+    genotypic:        "Genotypic VC (bivariate REML)",
+  };
+
+  sections.push({
+    title: "Analysis Settings",
+    rows: [
+      { label: "Method", value: method === "spearman" ? "Spearman ρ" : "Pearson r" },
+      { label: "Objective", value: userObjective },
+      { label: "Mode shown", value: modeDesc[displayMode] ?? displayMode },
+      { label: "Traits", value: results.trait_names.join(", ") },
+    ],
+  });
+
+  const buildModeRow = (label: string, s: CorrelationStats | null) => ({
+    label,
+    value: s
+      ? `${s.n_observations} obs · matrix ${s.r_matrix.length}×${s.r_matrix[0]?.length ?? 0}`
+      : "Not available",
+  });
+
+  sections.push({
+    title: "Mode Availability",
+    rows: [
+      buildModeRow("Phenotypic", results.phenotypic),
+      buildModeRow("Between-Genotype", results.between_genotype),
+      buildModeRow("Genotypic VC", results.genotypic),
+    ],
+  });
+
+  if (results.genotypic === null && userObjective === "Breeding decision") {
+    warnings.push(
+      "Genotypic VC unavailable — showing between-genotype association as fallback. " +
+      "Ensure sommer is installed on the server and ≥ 3 genotypes per trait pair have complete data."
+    );
+  }
+
+  if (stats.inference_approximate) {
+    warnings.push(
+      stats.inference_note ??
+        "Genotypic VC p-values and CIs are approximate (Fisher z approximation). Interpret cautiously."
+    );
+  }
+
+  const notes = [
+    "Use SVG or PNG export from the heatmap for publication-quality figures.",
+    "For a combined Word report (ANOVA + correlation), run the analysis from the Upload File tab.",
+    results.statistical_note,
+  ].filter(Boolean) as string[];
+
+  logDebug("TraitRelationships:preview", {
+    mode: displayMode,
+    n_traits: results.trait_names.length,
+    n_warnings: warnings.length,
+    genotypic_available: results.genotypic !== null,
+  });
+
+  return { sections, warnings, notes };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) {
   const [step, setStep] = useState<TRStep>("setup");

@@ -8,6 +8,10 @@ import {
   exportWordReport,
 } from "@/services/geneticsUploadApi";
 import { AcademicInterpretationPanel } from "./AcademicInterpretationPanel";
+import { WordExportPreviewModal } from "@/components/export/WordExportPreviewModal";
+import { safeArray, logDebug, safeNumber } from "@/utils/normalizeModuleData";
+import type { PreviewSection } from "@/utils/normalizeModuleData";
+import { buildAnovaPreview, buildGeneticParametersPreview } from "@/utils/previewBuilders";
 
 interface ResultsDisplayProps {
   results: UploadAnalysisResponse;
@@ -32,11 +36,107 @@ function fmtP(p: number | null): { text: string; stars: string } {
   return { text: p.toFixed(4), stars: "ns" };
 }
 
+function buildReportPreview(results: UploadAnalysisResponse): {
+  sections: PreviewSection[];
+  warnings: string[];
+  notes: string[];
+} {
+  const { summary_table, dataset_summary, failed_traits, trait_results } = results;
+  const sections: PreviewSection[] = [];
+  const warnings: string[] = [];
+
+  // Defensive: ensure summary_table is array
+  const safeSummary = safeArray<SummaryTableRow>(summary_table);
+  const successRows = safeSummary.filter((r) => r?.status === "success");
+  const failedTraits = safeArray<string>(failed_traits);
+
+  logDebug("ResultsDisplay:preview", {
+    total_traits: safeSummary.length,
+    success_traits: successRows.length,
+    failed_traits: failedTraits.length,
+    has_dataset_summary: !!dataset_summary,
+  });
+
+  // Dataset overview section — defensive number formatting
+  const nGenotypes = safeNumber(dataset_summary?.n_genotypes);
+  const nReps = safeNumber(dataset_summary?.n_reps);
+  const nEnvironments = safeNumber(dataset_summary?.n_environments);
+  const nTraits = safeNumber(dataset_summary?.n_traits);
+
+  sections.push({
+    title: "Dataset Overview",
+    rows: [
+      { label: "Genotypes", value: String(nGenotypes || "—") },
+      { label: "Replicates", value: String(nReps || "—") },
+      ...(nEnvironments > 0
+        ? [{ label: "Environments", value: String(nEnvironments) }]
+        : []),
+      { label: "Traits analysed", value: String(nTraits || "—") },
+      { label: "Mode", value: String(dataset_summary?.mode ?? "single") },
+    ],
+  });
+
+  // Per-trait summary — defensive property access
+  if (successRows.length > 0) {
+    sections.push({
+      title: "Trait Summary (Genetic Parameters)",
+      rows: successRows.map((r) => ({
+        label: String(r?.trait ?? "Unknown"),
+        value: [
+          r?.grand_mean != null ? `Mean: ${(r.grand_mean as number).toFixed(2)}` : null,
+          r?.h2 != null ? `H²: ${(r.h2 as number).toFixed(3)}` : null,
+          r?.heritability_class ? `(${r.heritability_class})` : null,
+          r?.gcv != null ? `GCV: ${(r.gcv as number).toFixed(1)}%` : null,
+          r?.gam_percent != null ? `GAM: ${(r.gam_percent as number).toFixed(1)}%` : null,
+        ]
+          .filter(Boolean)
+          .join("  ·  "),
+      })),
+      note: "H² = broad-sense heritability; GCV = genotypic coefficient of variation; GAM = genetic advance as % of mean",
+    });
+  }
+
+  // ANOVA availability per trait — defensive access
+  const anovaRows: { label: string; value: string }[] = [];
+  for (const row of successRows) {
+    if (!row || !row.trait) continue;
+    const tr = trait_results?.[row.trait] as any;
+    const at = tr?.analysis_result?.result?.anova_table;
+    const sources = safeArray<string>(at?.source);
+    anovaRows.push({
+      label: row.trait,
+      value: sources.length > 0 ? `${sources.length} sources (${sources.join(", ")})` : "Not available",
+    });
+  }
+  if (anovaRows.length > 0) {
+    sections.push({ title: "ANOVA Table Availability", rows: anovaRows });
+  }
+
+  // Warnings
+  if (failedTraits.length > 0) {
+    warnings.push(`Failed traits (excluded from report): ${failedTraits.join(", ")}`);
+  }
+
+  const notes = [
+    "The Word report includes full ANOVA tables, mean separation (Tukey HSD), variance components, and interpretation for each trait.",
+    "Figures and significance stars follow standard agricultural biometrics conventions.",
+  ];
+
+  logDebug("ResultsDisplay:preview", {
+    n_sections: sections.length,
+    n_warnings: warnings.length,
+    success_traits: successRows.length,
+  });
+
+  return { sections, warnings, notes };
+}
+
 export function ResultsDisplay({ results, onReset }: ResultsDisplayProps) {
   const { summary_table, dataset_summary, failed_traits } = results;
   const successCount = summary_table.filter((r) => r.status === "success").length;
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
 
   const handleDownload = async () => {
     setDownloading(true);
@@ -67,6 +167,14 @@ export function ResultsDisplay({ results, onReset }: ResultsDisplayProps) {
           </p>
         </div>
         <div className="flex gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => setShowPreview(true)}
+            disabled={successCount === 0}
+            className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            Preview Report
+          </button>
           <button
             type="button"
             onClick={handleDownload}
@@ -112,6 +220,24 @@ export function ResultsDisplay({ results, onReset }: ResultsDisplayProps) {
           </p>
         </div>
       )}
+
+      {/* ── Word Export Preview Modal ──────────────────────────────────────── */}
+      {showPreview && (() => {
+        const { sections, warnings, notes } = buildReportPreview(results);
+        return (
+          <WordExportPreviewModal
+            moduleName="ANOVA & Genetic Parameters"
+            reportTitle="Multi-Trait Genetics Report"
+            datasetSummary={`${dataset_summary.n_genotypes} genotypes · ${dataset_summary.n_traits} traits · ${dataset_summary.mode} environment`}
+            sections={sections}
+            warnings={warnings}
+            notes={notes}
+            canExport={successCount > 0}
+            onExport={handleDownload}
+            onClose={() => setShowPreview(false)}
+          />
+        );
+      })()}
 
       {/* ── SECTION: Trait Summary ─────────────────────────────────────────── */}
       <div>
