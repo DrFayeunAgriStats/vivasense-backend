@@ -3,12 +3,16 @@ VivaSense – Heatmap Analysis Module
 
 POST /analysis/heatmap
 
-Returns heatmap-ready data derived from the phenotypic correlation matrix:
+Returns heatmap-ready data derived from correlation analysis:
 
-  • matrix  — n×n correlation values (same as r_matrix from /analysis/correlation)
+  • matrix  — n×n correlation values (phenotypic or genotypic based on user objective)
   • labels  — ordered trait names (axis labels)
   • min_val, max_val — global range for colour-scale normalisation
   • method, interpretation, warnings
+
+The heatmap mode is selected based on user objective:
+- "Field understanding": Uses phenotypic correlations (all observations)
+- "Genotype comparison"/"Breeding decision": Uses genotypic correlations (genotype means)
 
 The frontend renders this directly as a correlation heatmap (e.g. via a
 charting library).  No separate R computation is performed — the heatmap
@@ -34,8 +38,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Analysis"])
 
 _STATISTICAL_NOTE = (
-    "Heatmap values are Pearson/Spearman r coefficients computed on "
-    "genotype-level means.  Diagonal = 1.0 (self-correlation)."
+    "Heatmap values are Pearson/Spearman r coefficients. Mode selection "
+    "follows agricultural biometrics principles: phenotypic correlations for "
+    "field understanding, genotypic correlations for genotype comparison. "
+    "Diagonal = 1.0 (self-correlation)."
 )
 
 
@@ -46,7 +52,13 @@ _STATISTICAL_NOTE = (
 )
 async def analysis_heatmap(request: CorrelationModuleRequest):
     """
-    Compute the phenotypic correlation matrix and reformat it as heatmap data.
+    Compute the genotypic correlation matrix and reformat it as heatmap data.
+
+    Genotypic correlations (computed on genotype means) are used here because
+    they reduce environmental noise and are more appropriate for visualizing
+    genotype-level trait relationships. For field-level co-variation patterns,
+    use the full dual-mode correlation analysis at /analysis/correlation.
+    """
 
     The returned `matrix` is the n×n r-value grid; `labels` gives the trait
     names for each row/column; `min_val`/`max_val` give the observed range
@@ -112,7 +124,17 @@ async def analysis_heatmap(request: CorrelationModuleRequest):
         ) from exc
 
     labels    = raw.get("trait_names", request.trait_columns)
-    r_matrix  = raw.get("r_matrix", [])
+    
+    # Choose correlation mode based on user objective
+    if request.user_objective == "Field understanding":
+        # Use phenotypic correlations for field-level understanding
+        r_matrix  = raw.get("phenotypic", {}).get("r_matrix", [])
+        mode_used = "phenotypic"
+    else:
+        # Use genotypic correlations for genotype comparison or breeding decisions
+        r_matrix  = raw.get("genotypic", {}).get("r_matrix", [])
+        mode_used = "genotypic"
+    
     warnings  = raw.get("warnings", [])
 
     # Compute statistics over off-diagonal values for interpretation
@@ -134,9 +156,13 @@ async def analysis_heatmap(request: CorrelationModuleRequest):
     n_traits = len(labels)
     strong_pos = sum(1 for v in off_diag if v >= 0.7)
     strong_neg = sum(1 for v in off_diag if v <= -0.7)
+    mode_desc = {
+        "phenotypic": "all observations (reflecting field-level co-variation)",
+        "genotypic": "genotype means (reflecting genotype-level relationships)"
+    }
     interp_parts = [
         f"Heatmap shows {request.method.capitalize()} r-values for "
-        f"{n_traits} trait(s) based on genotype-level means."
+        f"{n_traits} trait(s) based on {mode_desc[mode_used]}."
     ]
     if strong_pos:
         interp_parts.append(

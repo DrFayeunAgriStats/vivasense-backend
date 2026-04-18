@@ -95,106 +95,86 @@ run_correlation_analysis <- function(data, trait_cols, method = "pearson") {
     }
   }
 
-  # ── Correlation matrix (pairwise complete obs) ────────────────────────────
-  r_mat <- cor(means_df, method = method, use = "pairwise.complete.obs")
+  # ── Dual-Mode Computation Helper ──────────────────────────────────────────
+  compute_mode_stats <- function(df_in) {
+    nt <- length(trait_cols)
+    n <- nrow(df_in)
+    df_deg <- if(n >= 3) n - 2 else NA
+    crit_r <- if(n >= 3) qt(0.975, df_deg) / sqrt(df_deg + qt(0.975, df_deg)^2) else NA
 
-  # ── P-value matrix ────────────────────────────────────────────────────────
-  nt    <- length(trait_cols)
-  p_mat <- matrix(0.0, nrow = nt, ncol = nt)
+    r_mat <- matrix(NA_real_, nrow = nt, ncol = nt)
+    p_mat <- matrix(NA_real_, nrow = nt, ncol = nt)
+    ci_lower <- matrix(NA_real_, nrow = nt, ncol = nt)
+    ci_upper <- matrix(NA_real_, nrow = nt, ncol = nt)
 
-  for (i in seq_len(nt)) {
-    for (j in seq_len(nt)) {
-      if (i == j) next  # diagonal stays 0.0
-
-      x    <- means_df[[trait_cols[i]]]
-      y    <- means_df[[trait_cols[j]]]
-      ok   <- complete.cases(x, y)
-      n_ok <- sum(ok)
-
-      if (n_ok < 3) {
-        p_mat[i, j] <- NA_real_
-        msg <- paste0(
-          "Insufficient paired observations for ",
-          trait_cols[i], " vs ", trait_cols[j],
-          " (n = ", n_ok, ") — p-value set to null"
-        )
-        if (!msg %in% warnings_vec) {
-          warnings_vec <- c(warnings_vec, msg)
+    for (i in seq_len(nt)) {
+      for (j in seq_len(nt)) {
+        if (i == j) {
+          r_mat[i, j] <- 1.0
+          p_mat[i, j] <- 0.0
+          next
         }
-      } else {
-        p_mat[i, j] <- tryCatch(
-          cor.test(x[ok], y[ok], method = method)$p.value,
-          error = function(e) NA_real_
-        )
+        x <- df_in[[trait_cols[i]]]
+        y <- df_in[[trait_cols[j]]]
+        ok <- complete.cases(x, y)
+        n_ok <- sum(ok)
+
+        if (n_ok >= 3) {
+          ct <- tryCatch(cor.test(x[ok], y[ok], method = method), error = function(e) NULL)
+          if (!is.null(ct)) {
+            r_mat[i, j] <- ct$estimate
+            p_mat[i, j] <- ct$p.value
+            if (!is.null(ct$conf.int)) {
+              ci_lower[i, j] <- ct$conf.int[1]
+              ci_upper[i, j] <- ct$conf.int[2]
+            }
+          }
+        }
       }
     }
-  }
 
-  # ── Interpretation text ───────────────────────────────────────────────────
-  method_label <- if (method == "spearman") "Spearman rank" else "Pearson"
-
-  sig_pairs <- list()
-  for (i in seq_len(nt - 1)) {
-    for (j in seq(i + 1, nt)) {
-      r_val <- r_mat[i, j]
-      p_val <- p_mat[i, j]
-      if (!is.na(r_val) && !is.na(p_val) && p_val < 0.05) {
-        sig_pairs <- c(sig_pairs, list(list(
-          a         = trait_cols[i],
-          b         = trait_cols[j],
-          r         = round(r_val, 3),
-          direction = if (r_val > 0) "positive" else "negative"
-        )))
+    p_adj_mat <- matrix(NA_real_, nrow = nt, ncol = nt)
+    p_vals <- numeric(0)
+    if (nt > 1) {
+      for(i in seq_len(nt - 1)) {
+        for(j in seq(i + 1, nt)) {
+          p_vals <- c(p_vals, p_mat[i, j])
+        }
+      }
+      p_adj <- p.adjust(p_vals, method="fdr")
+      idx <- 1
+      for(i in seq_len(nt - 1)) {
+        for(j in seq(i + 1, nt)) {
+          p_adj_mat[i, j] <- p_adj[idx]
+          p_adj_mat[j, i] <- p_adj[idx]
+          idx <- idx + 1
+        }
       }
     }
-  }
 
-  if (length(sig_pairs) == 0) {
-    interp <- paste0(
-      method_label, " correlation analysis on ", n, " genotype means ",
-      "revealed no statistically significant trait pairs (p < 0.05). ",
-      "Consider increasing genotype sample size or checking trait variability."
-    )
-  } else {
-    pair_strs <- vapply(sig_pairs, function(p) {
-      paste0(p$a, " \u2013 ", p$b, " (r = ", p$r, ")")
-    }, character(1))
-
-    r_vals    <- sapply(sig_pairs, `[[`, "r")
-    strongest <- sig_pairs[[which.max(abs(r_vals))]]
-
-    pos_count <- sum(sapply(sig_pairs, function(p) p$direction == "positive"))
-    neg_count <- length(sig_pairs) - pos_count
-
-    pos_note <- if (pos_count > 0)
-      "Positive correlations indicate traits that tend to improve together, facilitating indirect selection. "
-    else ""
-
-    neg_note <- if (neg_count > 0)
-      "Negative correlations suggest trade-offs that may complicate simultaneous improvement."
-    else ""
-
-    interp <- paste0(
-      method_label, " correlation analysis on ", n, " genotype means ",
-      "identified ", length(sig_pairs), " significant pair",
-      if (length(sig_pairs) > 1) "s" else "",
-      ": ", paste(pair_strs, collapse = "; "), ". ",
-      "The strongest association was between ", strongest$a,
-      " and ", strongest$b, " (r = ", strongest$r, "). ",
-      pos_note, neg_note
+    list(
+      n_observations = n,
+      df = if(is.na(df_deg)) NULL else df_deg,
+      critical_r = if(is.na(crit_r)) NULL else crit_r,
+      r_matrix = unname(r_mat),
+      p_matrix = unname(p_mat),
+      p_adj_matrix = unname(p_adj_mat),
+      ci_lower_matrix = unname(ci_lower),
+      ci_upper_matrix = unname(ci_upper)
     )
   }
+
+  phenotypic <- compute_mode_stats(data)
+  genotypic  <- compute_mode_stats(means_df)
 
   # ── Return ────────────────────────────────────────────────────────────────
   # unname() strips row/column names from matrices so jsonlite serialises
   # them as plain arrays-of-arrays (not named objects).
   list(
     trait_names    = trait_cols,
-    n_observations = n,
     method         = method,
-    r_matrix       = unname(r_mat),
-    p_matrix       = unname(p_mat),
-    interpretation = interp,
+    phenotypic     = phenotypic,
+    genotypic      = genotypic,
     warnings       = warnings_vec   # character vector — always serialised as JSON array by jsonlite
   )
 }

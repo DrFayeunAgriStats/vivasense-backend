@@ -212,14 +212,28 @@ class GeneticParametersModuleResponse(BaseModel):
 # CORRELATION MODULE
 # ============================================================================
 
+class CorrelationStats(BaseModel):
+    n_observations: int
+    df: Optional[int] = None
+    critical_r: Optional[float] = None
+    r_matrix: List[List[Optional[float]]]
+    p_matrix: List[List[Optional[float]]]
+    p_adj_matrix: List[List[Optional[float]]]
+    ci_lower_matrix: List[List[Optional[float]]]
+    ci_upper_matrix: List[List[Optional[float]]]
+
+class CorrelationModuleRequest(ModuleRequest):
+    """Extends ModuleRequest with correlation-specific options."""
+    method: str = Field(default="pearson", pattern="^(pearson|spearman)$")
+    user_objective: str = Field(default="Field understanding", pattern="^(Field understanding|Genotype comparison|Breeding decision)$")
+
 class CorrelationModuleResponse(BaseModel):
     """Response from POST /analysis/correlation."""
     dataset_token: str
     trait_names: List[str]
-    r_matrix: List[List[Optional[float]]]
-    p_matrix: List[List[Optional[float]]]
-    n_observations: int
     method: str
+    phenotypic: CorrelationStats
+    genotypic: CorrelationStats
     statistical_note: Optional[str] = None
     interpretation: Optional[str] = None
     warnings: List[str] = Field(default_factory=list)

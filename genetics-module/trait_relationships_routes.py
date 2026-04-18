@@ -34,8 +34,7 @@ from trait_relationships_schemas import CorrelationRequest, CorrelationResponse
 
 # Import interpretation helpers (no circular dependencies — this module is a leaf)
 from trait_association_interpretation import (
-    generate_trait_association_interpretation,
-    _compute_risk_flags,
+    generate_dual_mode_correlation_interpretation,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,8 +45,8 @@ _R_SCRIPT = "vivasense_trait_relationships.R"
 # Included in every CorrelationResponse so consumers always know the
 # statistical basis without having to read the documentation.
 _STATISTICAL_NOTE = (
-    "Correlations were computed using genotype-level means; "
-    "significance levels are based on the number of genotypes."
+    "Dual-mode analysis evaluates both phenotypic (all observations) "
+    "and genotypic (genotype means) correlations."
 )
 
 
@@ -157,63 +156,6 @@ def init_trait_relationships_engine() -> None:
         logger.error("TraitRelationshipsEngine unavailable: %s", exc)
 
 
-def _compute_significant_pairs_and_strongest(
-    trait_names: List[str],
-    r_matrix: List[List[Optional[float]]],
-    p_matrix: List[List[Optional[float]]],
-    alpha: float = 0.05
-) -> tuple[int, Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    """
-    Compute significant pairs count and the strongest SIGNIFICANT positive/negative pair.
-
-    Only pairs with p_value <= alpha are considered for strongest_positive and
-    strongest_negative.  Non-significant pairs — however large their r — are
-    excluded so the interpretation layer never describes them as biologically
-    meaningful.
-
-    Returns:
-        n_significant_pairs:  count of pairs with p <= alpha
-        strongest_positive:   dict(trait_1, trait_2, r) for the largest r among
-                              significant positive pairs, or None
-        strongest_negative:   dict(trait_1, trait_2, r) for the most-negative r
-                              among significant negative pairs, or None
-    """
-    n_significant_pairs = 0
-    strongest_positive = None
-    strongest_negative = None
-    max_positive_r = 0.0
-    max_negative_r = 0.0
-
-    n = len(trait_names)
-    for i in range(n):
-        for j in range(i + 1, n):  # Upper triangle only
-            r_val = r_matrix[i][j] if r_matrix and i < len(r_matrix) and j < len(r_matrix[i]) else None
-            p_val = p_matrix[i][j] if p_matrix and i < len(p_matrix) and j < len(p_matrix[i]) else None
-
-            if r_val is None or p_val is None or p_val > alpha:
-                continue
-
-            # Pair is significant — count it and track strongest by direction
-            n_significant_pairs += 1
-
-            if r_val > 0 and r_val > max_positive_r:
-                max_positive_r = r_val
-                strongest_positive = {
-                    "trait_1": trait_names[i],
-                    "trait_2": trait_names[j],
-                    "r": r_val,
-                }
-            elif r_val < 0 and r_val < max_negative_r:
-                max_negative_r = r_val
-                strongest_negative = {
-                    "trait_1": trait_names[i],
-                    "trait_2": trait_names[j],
-                    "r": r_val,
-                }
-
-    return n_significant_pairs, strongest_positive, strongest_negative
-
-
 # ============================================================================
 # DATA HELPERS
 # ============================================================================
@@ -275,21 +217,22 @@ def _build_wide_records(
 @router.post(
     "/genetics/correlation",
     response_model=CorrelationResponse,
-    summary="Compute phenotypic correlations between trait pairs",
+    summary="Compute dual-mode correlations between trait pairs",
     tags=["Trait Relationships"],
 )
 async def compute_correlation(request: CorrelationRequest):
     """
-    Compute Pearson or Spearman phenotypic correlation coefficients and
-    p-values for all pairs of the specified trait columns.
+    Compute Pearson or Spearman correlation coefficients and p-values for all 
+    pairs of the specified trait columns in both phenotypic and genotypic modes.
 
-    Correlations are computed on per-genotype means (averaged across reps
-    and environments).  This is the standard agronomic approach: it separates
-    genetic signal from replication noise and avoids inflating r with
-    repeated-measures structure.
+    Phenotypic mode: Correlations computed on all observations (reflecting 
+    field-level co-variation including environmental effects).
 
-    One trait pair with insufficient data does not abort the others; it
-    produces a null entry in r_matrix/p_matrix and a warning in the response.
+    Genotypic mode: Correlations computed on per-genotype means (reflecting
+    genotype-level relationships with reduced environmental noise).
+
+    The appropriate mode depends on the biological question: use phenotypic
+    for field understanding, genotypic for genotype comparison or breeding decisions.
 
     Requires ≥ 2 trait columns and ≥ 6 valid observations (≥ 3 unique
     genotypes after mean aggregation).
@@ -355,29 +298,16 @@ async def compute_correlation(request: CorrelationRequest):
 
     # Extract data from R result
     trait_names = result.get("trait_names", request.trait_columns)
-    n_observations = result.get("n_observations", 0)
-    r_matrix = result.get("r_matrix", [])
-    p_matrix = result.get("p_matrix", [])
     warnings = result.get("warnings", [])
-    
-    # Compute significant pairs and strongest correlations for interpretation
-    n_significant_pairs, strongest_positive, strongest_negative = _compute_significant_pairs_and_strongest(
-        trait_names, r_matrix, p_matrix
-    )
-    
-    # Compute risk flags (assume single environment, no GxE for correlation endpoint)
-    risk_flags = _compute_risk_flags(n_observations, "genotype_mean", False)
+    phenotypic = result.get("phenotypic", {})
+    genotypic = result.get("genotypic", {})
     
     # Generate new academic-grade interpretation instead of using R script's legacy text
-    interpretation_text = generate_trait_association_interpretation(
-        n_traits=len(trait_names),
-        n_observations=n_observations,
-        n_significant_pairs=n_significant_pairs,
-        strongest_positive=strongest_positive,
-        strongest_negative=strongest_negative,
-        risk_flags=risk_flags,
-        gxe_significant=False,  # Correlation endpoint doesn't handle GxE
-        environment_context="single_environment"  # Default for correlation endpoint
+    interpretation_text = generate_dual_mode_correlation_interpretation(
+        trait_names=trait_names,
+        genotypic=genotypic,
+        phenotypic=phenotypic,
+        user_objective=request.user_objective
     )
     
     # Override the R script's interpretation with the new validated interpretation
@@ -387,10 +317,6 @@ async def compute_correlation(request: CorrelationRequest):
     import json as _json
     logger.info("[correlation] response keys: %s", list(result.keys()))
     logger.info("[correlation] trait_names: %s", result.get("trait_names"))
-    logger.info("[correlation] n_observations: %s", result.get("n_observations"))
-    logger.info("[correlation] r_matrix shape: %s×%s",
-                len(result.get("r_matrix", [])),
-                len(result["r_matrix"][0]) if result.get("r_matrix") else 0)
     logger.info("[correlation] warnings: %s", result.get("warnings"))
     logger.info("[correlation] new interpretation generated: %s", bool(interpretation_text))
     
