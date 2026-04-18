@@ -21,6 +21,7 @@ import {
   computeCorrelation,
   CorrelationResponse,
   CorrelationStats,
+  exportCorrelationWord,
 } from "@/services/traitRelationshipsApi";
 import { CorrelationHeatmap } from "./CorrelationHeatmap";
 import { WordExportPreviewModal } from "@/components/export/WordExportPreviewModal";
@@ -123,6 +124,8 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
   const [results, setResults] = useState<CorrelationResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [displayMode, setDisplayMode] = useState<"phenotypic" | "between_genotype" | "genotypic">("phenotypic");
+  const [showPreview, setShowPreview] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   // When a new (or first) dataset context arrives, reset the trait selection
   // and discard any previous results.
@@ -169,6 +172,7 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
         user_objective: userObjective,
       });
 
+      console.log("DEBUG: Raw correlation response:", data);
       console.log("[TraitRelationships] API response received successfully", {
         trait_names: data.trait_names,
         method: data.method,
@@ -194,6 +198,8 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
         initialMode = data.genotypic ? "genotypic" : "between_genotype";
       }
       setDisplayMode(initialMode);
+      
+      console.log("DEBUG: State transitioning to results view. activeMode:", initialMode);
 
       console.log("[TraitRelationships] State updated", {
         step: "results",
@@ -218,6 +224,21 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
     setStep("setup");
     setDisplayMode("phenotypic");
     // Keep selectedTraits and method as-is — user tweaks then re-runs
+  };
+
+  const handleDownload = async () => {
+    if (!results) return;
+    setDownloading(true);
+    try {
+      // Client-side docx export flow
+      if (typeof exportCorrelationWord === "function") {
+        await exportCorrelationWord(results);
+      }
+    } catch (err) {
+      console.error("Export failed", err);
+    } finally {
+      setDownloading(false);
+    }
   };
 
   // ── No context ─────────────────────────────────────────────────────────────
@@ -450,6 +471,10 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
 
   if (step === "results" && results) {
     // Debug: log that we're in results view with current displayMode
+    console.log("DEBUG: Results view is ACTIVE.");
+    console.log("DEBUG: Selected mode:", displayMode);
+    console.log("DEBUG: Rendering temporary marker '3-mode selector mounted'");
+
     console.log("[TraitRelationships] Rendering results view", {
       displayMode,
       results_available: !!results,
@@ -471,6 +496,46 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
     if (!stats) {
       console.warn("[TraitRelationships] No stats available for mode:", displayMode);
       stats = results.phenotypic ?? results.between_genotype;
+    }
+
+    // ── Mode availability logic ─────────────────────────────────────────────────
+    const n = results.trait_names.length;
+
+    const hasValidMatrix = (modeData: any) => {
+      if (!modeData || !Array.isArray(modeData.r_matrix)) return false;
+      return modeData.r_matrix.length === n && modeData.r_matrix[0]?.length === n;
+    };
+
+    const hasValidPairwiseResults = (modeData: any) => {
+      if (modeData?.pairs && Array.isArray(modeData.pairs) && modeData.pairs.length > 0) return true;
+      if (results.interpretation && results.interpretation.length > 0) return true;
+      return false;
+    };
+
+    const hasValidStats = (modeData: any) => {
+      if (!modeData) return false;
+      if (typeof modeData.n_observations === "number" && modeData.n_observations > 0) return true;
+      if (Array.isArray(modeData.r_matrix) && modeData.r_matrix.length > 0) return true;
+      return false;
+    };
+
+    const checkModeAvailable = (modeData: any, isGenotypic: boolean) => {
+      if (isGenotypic && !modeData) return false;
+      if (!isGenotypic && results.interpretation) return true; // Phenotypic/between_genotype NEVER show unavailable if interpretation exists
+      return hasValidMatrix(modeData) || hasValidPairwiseResults(modeData) || hasValidStats(modeData);
+    };
+
+    const phenoAvail = checkModeAvailable(results.phenotypic, false);
+    const betweenAvail = checkModeAvailable(results.between_genotype, false);
+    const genoAvail = checkModeAvailable(results.genotypic, true);
+
+    const hasMatrix = hasValidMatrix(stats);
+    const hasPairwise = hasValidPairwiseResults(stats);
+    const hasStats = hasValidStats(stats);
+    
+    const canExport = !!results.interpretation && (phenoAvail || betweenAvail || genoAvail);
+    if (!canExport) {
+      console.log("DEBUG: Export disabled. Interpretation missing or no modes have valid data.");
     }
 
     const modeLabelMap: Record<"phenotypic" | "between_genotype" | "genotypic", string> = {
@@ -500,6 +565,9 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
           <div>
             <h3 className="text-lg font-semibold text-gray-800">
               Three-Mode Correlation Analysis
+              <span className="ml-3 inline-block rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-mono font-medium text-blue-700">
+                3-mode selector mounted
+              </span>
             </h3>
             <p className="text-sm text-gray-500">
               {results.trait_names.length} traits ·{" "}
@@ -513,13 +581,31 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
               </p>
             )}
           </div>
+        <div className="flex gap-2 shrink-0">
           <button
             type="button"
             onClick={handleAdjust}
-            className="shrink-0 rounded-lg border border-gray-300 px-4 py-1.5 text-sm text-gray-600 hover:bg-gray-50"
+            className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm text-gray-600 hover:bg-gray-50"
           >
             Adjust Selection
           </button>
+          <button
+            type="button"
+            onClick={() => setShowPreview(true)}
+            disabled={!canExport}
+            className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Preview Report
+          </button>
+          <button
+            type="button"
+            onClick={handleDownload}
+            disabled={!canExport || downloading}
+            className="rounded-lg border border-emerald-600 bg-emerald-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {downloading ? "Generating…" : "Download Report (.docx)"}
+          </button>
+        </div>
         </div>
 
         {/* Mode selector — NEW */}
@@ -529,9 +615,9 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
           </label>
           <div className="grid gap-2 sm:grid-cols-3">
             {[
-              { value: "phenotypic", label: "Phenotypic", desc: "All observations" },
-              { value: "between_genotype", label: "Between-Genotype", desc: "Genotype means", available: true },
-              { value: "genotypic", label: "Genotypic VC", desc: "Variance component", available: results.genotypic !== null },
+            { value: "phenotypic", label: "Phenotypic correlation", desc: "field-level", available: phenoAvail },
+            { value: "between_genotype", label: "Between-genotype association", desc: "from genotype means", available: betweenAvail },
+            { value: "genotypic", label: "Genotypic correlation", desc: "variance-component based", available: genoAvail },
             ] as const).map((mode) => (
               <button
                 key={mode.value}
@@ -616,6 +702,18 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
           <CorrelationHeatmap data={results} mode={displayMode} />
         </div>
 
+      {/* Debug panel */}
+      <div className="rounded-lg bg-gray-900 text-green-400 p-4 font-mono text-xs space-y-1 mt-4">
+        <p>activeMode: {displayMode}</p>
+        <p>phenotypic available: {String(phenoAvail)}</p>
+        <p>between_genotype available: {String(betweenAvail)}</p>
+        <p>genotypic available: {String(genoAvail)}</p>
+        <p>hasMatrix: {String(hasMatrix)}</p>
+        <p>hasPairwise: {String(hasPairwise)}</p>
+        <p>hasStats: {String(hasStats)}</p>
+        <p>canExport: {String(canExport)}</p>
+      </div>
+
         {/* Interpretation */}
         <div className="rounded-lg bg-emerald-50 border border-emerald-100 p-4">
           <p className="text-xs font-semibold text-emerald-700 mb-1">
@@ -625,6 +723,21 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
             {results.interpretation}
           </p>
         </div>
+
+      {/* Word Export Modal */}
+      {showPreview && (
+        <WordExportPreviewModal
+          moduleName="Correlation Analysis"
+          reportTitle="Multi-Trait Correlation Report"
+          datasetSummary={`${stats?.n_observations ?? 0} observations · ${results.trait_names.length} traits`}
+          sections={buildCorrelationPreview(results, displayMode, stats!, results.method, userObjective).sections}
+          warnings={buildCorrelationPreview(results, displayMode, stats!, results.method, userObjective).warnings}
+          notes={buildCorrelationPreview(results, displayMode, stats!, results.method, userObjective).notes}
+          canExport={canExport}
+          onExport={handleDownload}
+          onClose={() => setShowPreview(false)}
+        />
+      )}
       </div>
     );
   }

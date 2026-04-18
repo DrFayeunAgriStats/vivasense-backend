@@ -297,88 +297,146 @@ export function CorrelationHeatmap({ data, mode = "phenotypic" }: CorrelationHea
               <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
               <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
             </svg>
-            <p className="font-medium text-gray-500">No heatmap data available</p>
+            <p className="font-medium text-gray-500">No data available for {mode}</p>
             <p className="text-xs mt-1 max-w-xs">
               {n === 0
                 ? "No trait names returned from the analysis."
-                : `Matrix data is missing or malformed for the "${mode}" mode.`}
+                : `Matrix and pairwise data are missing for the "${mode}" mode.`}
             </p>
           </div>
         ) : (
-          <svg
-            ref={svgRef}
-            width={totalW + 16}
-            height={totalH + 16}
-            viewBox={`0 0 ${totalW + 16} ${totalH + 16}`}
-            xmlns="http://www.w3.org/2000/svg"
-            style={{ fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif" }}
-            onMouseMove={handleMouseMove}
-            onMouseLeave={handleMouseLeave}
-          >
-            <rect x="0" y="0" width={totalW + 16} height={totalH + 16} fill="#ffffff" />
+          <div className="flex flex-col gap-6">
+            {hasMatrix && (
+              <div className="overflow-x-auto pb-4">
+                <svg
+                  ref={svgRef}
+                  width={totalW + 16}
+                  height={totalH + 16}
+                  viewBox={`0 0 ${totalW + 16} ${totalH + 16}`}
+                  xmlns="http://www.w3.org/2000/svg"
+                  style={{ fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif" }}
+                  onMouseMove={handleMouseMove}
+                  onMouseLeave={handleMouseLeave}
+                >
+                  <rect x="0" y="0" width={totalW + 16} height={totalH + 16} fill="#ffffff" />
 
-            {/* Column headers */}
-            {traitNames.map((trait, j) => (
-              <g key={`col-${j}`} transform={`translate(${labelW + j * cellSize + cellSize / 2}, ${headerH})`}>
-                <text transform="rotate(-55)" textAnchor="start" dominantBaseline="middle"
-                  fontSize={11} fill="#374151" fontWeight="500">
-                  {shortName(trait)}
-                </text>
-              </g>
-            ))}
-
-            {/* Rows */}
-            {traitNames.map((rowTrait, i) => (
-              <g key={`row-${i}`} transform={`translate(0, ${headerH + i * cellSize})`}>
-                <text x={labelW - 8} y={cellSize / 2} textAnchor="end"
-                  dominantBaseline="middle" fontSize={11} fill="#374151" fontWeight="500">
-                  {shortName(rowTrait)}
-                </text>
-
-                {traitNames.map((_colTrait, j) => {
-                  const cell = cells[i * n + j];
-                  // Guard: skip undefined cell (should not happen when hasData=true)
-                  if (!cell) return null;
-
-                  const bg    = rToRgb(cell.isDiagonal ? null : cell.value, cell.isDiagonal);
-                  const fg    = labelColor(cell.isDiagonal ? null : cell.value, cell.isDiagonal);
-                  const stars = sigStars(cell.pValue, cell.isDiagonal, isApprox);
-                  const cx    = labelW + j * cellSize;
-
-                  return (
-                    <g
-                      key={`cell-${i}-${j}`}
-                      transform={`translate(${cx}, 0)`}
-                      onMouseEnter={(e) => handleMouseEnter(cell, e)}
-                      onMouseLeave={handleMouseLeave}
-                      style={{ cursor: cell.isDiagonal ? "default" : "pointer" }}
-                    >
-                      <rect x={1} y={1} width={cellSize - 2} height={cellSize - 2}
-                        fill={bg} rx={3} ry={3} />
-                      {cell.isDiagonal ? (
-                        <text x={cellSize / 2} y={cellSize / 2} textAnchor="middle"
-                          dominantBaseline="middle" fontSize={10} fill="#9CA3AF" fontStyle="italic">
-                          {rowTrait.charAt(0)}
-                        </text>
-                      ) : (
-                        <>
-                          <text x={cellSize / 2} y={cellSize / 2 - 5} textAnchor="middle"
-                            dominantBaseline="middle" fontSize={cellSize < 55 ? 9 : 11}
-                            fontWeight="600" fill={fg}>
-                            {cell.value !== null ? cell.value.toFixed(2) : "?"}
-                          </text>
-                          <text x={cellSize / 2} y={cellSize / 2 + 8} textAnchor="middle"
-                            dominantBaseline="middle" fontSize={8} fill={fg} opacity={0.85}>
-                            {stars}
-                          </text>
-                        </>
-                      )}
+                  {/* Column headers */}
+                  {traitNames.map((trait, j) => (
+                    <g key={`col-${j}`} transform={`translate(${labelW + j * cellSize + cellSize / 2}, ${headerH})`}>
+                      <text transform="rotate(-55)" textAnchor="start" dominantBaseline="middle"
+                        fontSize={11} fill="#374151" fontWeight="500">
+                        {shortName(trait)}
+                      </text>
                     </g>
-                  );
-                })}
-              </g>
-            ))}
-          </svg>
+                  ))}
+
+                  {/* Rows */}
+                  {traitNames.map((rowTrait, i) => (
+                    <g key={`row-${i}`} transform={`translate(0, ${headerH + i * cellSize})`}>
+                      <text x={labelW - 8} y={cellSize / 2} textAnchor="end"
+                        dominantBaseline="middle" fontSize={11} fill="#374151" fontWeight="500">
+                        {shortName(rowTrait)}
+                      </text>
+
+                      {traitNames.map((_colTrait, j) => {
+                        const cell = cells[i * n + j];
+                        // Guard: skip undefined cell
+                        if (!cell) return null;
+
+                        const bg    = rToRgb(cell.isDiagonal ? null : cell.value, cell.isDiagonal);
+                        const fg    = labelColor(cell.isDiagonal ? null : cell.value, cell.isDiagonal);
+                        const stars = sigStars(cell.pValue, cell.isDiagonal, isApprox);
+                        const cx    = labelW + j * cellSize;
+
+                        return (
+                          <g
+                            key={`cell-${i}-${j}`}
+                            transform={`translate(${cx}, 0)`}
+                            onMouseEnter={(e) => handleMouseEnter(cell, e)}
+                            onMouseLeave={handleMouseLeave}
+                            style={{ cursor: cell.isDiagonal ? "default" : "pointer" }}
+                          >
+                            <rect x={1} y={1} width={cellSize - 2} height={cellSize - 2}
+                              fill={bg} rx={3} ry={3} />
+                            {cell.isDiagonal ? (
+                              <text x={cellSize / 2} y={cellSize / 2} textAnchor="middle"
+                                dominantBaseline="middle" fontSize={10} fill="#9CA3AF" fontStyle="italic">
+                                {rowTrait.charAt(0)}
+                              </text>
+                            ) : (
+                              <>
+                                <text x={cellSize / 2} y={cellSize / 2 - 5} textAnchor="middle"
+                                  dominantBaseline="middle" fontSize={cellSize < 55 ? 9 : 11}
+                                  fontWeight="600" fill={fg}>
+                                  {cell.value !== null ? cell.value.toFixed(2) : "?"}
+                                </text>
+                                <text x={cellSize / 2} y={cellSize / 2 + 8} textAnchor="middle"
+                                  dominantBaseline="middle" fontSize={8} fill={fg} opacity={0.85}>
+                                  {stars}
+                                </text>
+                              </>
+                            )}
+                          </g>
+                        );
+                      })}
+                    </g>
+                  ))}
+                </svg>
+              </div>
+            )}
+
+            {/* TABLE RENDERER FALLBACK */}
+            {hasMatrix ? (
+              <div className="overflow-x-auto rounded-lg border border-gray-200">
+                <table className="min-w-full text-xs text-left">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="px-3 py-2 font-semibold text-gray-500">Trait</th>
+                      {traitNames.map(t => <th key={t} className="px-3 py-2 font-semibold text-gray-500">{shortName(t)}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {traitNames.map((rowTrait, i) => (
+                      <tr key={`tbl-row-${i}`} className="bg-white">
+                        <td className="px-3 py-2 font-medium text-gray-700">{rowTrait}</td>
+                        {traitNames.map((colTrait, j) => {
+                          const cell = cells[i * n + j];
+                          return (
+                            <td key={`tbl-col-${j}`} className="px-3 py-2 text-gray-600">
+                              {cell?.value !== null && cell?.value !== undefined ? cell.value.toFixed(3) : "—"}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : hasPairwise ? (
+              <div className="overflow-x-auto rounded-lg border border-gray-200">
+                <table className="min-w-full text-xs text-left">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="px-3 py-2 font-semibold text-gray-500">Trait 1</th>
+                      <th className="px-3 py-2 font-semibold text-gray-500">Trait 2</th>
+                      <th className="px-3 py-2 font-semibold text-gray-500">r</th>
+                      <th className="px-3 py-2 font-semibold text-gray-500">p-value</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {(stats as any).pairs.map((pair: any, idx: number) => (
+                      <tr key={`pair-${idx}`} className={idx % 2 === 0 ? "bg-white" : "bg-gray-50"}>
+                        <td className="px-3 py-2 text-gray-700">{pair.trait1 || pair.trait_1}</td>
+                        <td className="px-3 py-2 text-gray-700">{pair.trait2 || pair.trait_2}</td>
+                        <td className="px-3 py-2 font-mono text-gray-800">{pair.r != null ? Number(pair.r).toFixed(4) : "—"}</td>
+                        <td className="px-3 py-2 font-mono text-gray-600">{pair.p != null ? (pair.p < 0.001 ? "<0.001" : Number(pair.p).toFixed(4)) : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+          </div>
         )}
 
         {/* Colour legend — shown regardless of data presence */}
