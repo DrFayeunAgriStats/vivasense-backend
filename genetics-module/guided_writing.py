@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 _SCOPE_STATEMENT = (
     "These results apply to this experiment and should be interpreted "
     "within this context. Single-experiment results cannot support general "
-    "management or breeding recommendations."
+    "management recommendations."
 )
 
 _SUPERVISOR_PROMPT = (
@@ -89,6 +89,10 @@ def _build_anova_writing(
     result: Dict[str, Any],
 ) -> GuidedWritingBlock:
     """Sentence starters and examiner checkpoint for the ANOVA module."""
+
+    # Dispatch to design-specific builder when appropriate
+    if result.get("design_type") == "split_plot_rcbd":
+        return _build_split_plot_anova_writing(trait, result)
 
     starters: List[SentenceStarter] = []
 
@@ -212,10 +216,10 @@ def _build_anova_caution(result: Dict[str, Any]) -> Optional[str]:
     n_reps = result.get("n_reps")
     n_genos = result.get("n_genotypes")
 
-    if n_reps is not None and n_reps < 3:
-        n_pairs = (n_genos * (n_genos - 1)) // 2 if n_genos else "?"
+    if n_reps is not None and n_reps < 3 and n_genos is not None:
+        n_pairs = (n_genos * (n_genos - 1)) // 2
         notes.append(
-            f"⚠ Low-replication note: This experiment has {n_genos or '?'} genotypes "
+            f"⚠ Low-replication note: This experiment has {n_genos} genotypes "
             f"with only {n_reps} replicate(s) each. The post-hoc test evaluates "
             f"{n_pairs} pairwise comparisons under these conditions and has limited "
             "power to detect individual differences even when the overall F-test is "
@@ -242,6 +246,150 @@ def _build_anova_caution(result: Dict[str, Any]) -> Optional[str]:
                     "write-up and consulting your supervisor about a non-parametric "
                     "alternative (Kruskal-Wallis test)."
                 )
+
+    data_warnings = result.get("data_warnings") or []
+    for w in data_warnings:
+        notes.append(f"⚠ Design note: {w}")
+
+    return "\n\n".join(notes) if notes else None
+
+
+# ============================================================================
+# SPLIT-PLOT RCBD — domain-neutral ANOVA writing support
+# ============================================================================
+
+def _build_split_plot_anova_writing(
+    trait: str,
+    result: Dict[str, Any],
+) -> GuidedWritingBlock:
+    """
+    Sentence starters and examiner checkpoint for split-plot RCBD ANOVA.
+    Uses domain-neutral language (main-plot factor / subplot factor).
+    No genotype, breeding, Tukey, or mean-separation language.
+    """
+    starters: List[SentenceStarter] = []
+
+    # ── Starter 1: Design and testing structure ──────────────────────────────
+    starters.append(SentenceStarter(
+        purpose="Design and error-strata description",
+        template=(
+            "A split-plot RCBD was used with ___ replicate blocks. "
+            "The main-plot factor (___ levels) was randomised within blocks "
+            "and tested against the whole-plot error; the subplot factor "
+            "(___ levels) and the main-plot × subplot interaction were "
+            "tested against the subplot residual."
+        ),
+        values_to_fill=[
+            "number of replicates (n_reps from Descriptive Statistics)",
+            "name and number of levels for the main-plot factor",
+            "name and number of levels for the subplot factor",
+        ],
+        hint="Design section of the ANOVA output — two error strata shown",
+    ))
+
+    # ── Starter 2: Main-plot factor effect ───────────────────────────────────
+    starters.append(SentenceStarter(
+        purpose="Main-plot factor significance statement",
+        template=(
+            "The main-plot factor had a ___ effect on {trait} "
+            "(F₁ = ___, df = ___, p = ___), indicating that ___ differed "
+            "___ among the main-plot treatment levels tested."
+        ).format(trait=trait),
+        values_to_fill=[
+            "write 'significant' (p < 0.05) or 'non-significant' (p ≥ 0.05)",
+            "F-value for main-plot factor (whole-plot error stratum of ANOVA table)",
+            "numerator degrees of freedom for main-plot factor",
+            "p-value for main-plot factor",
+            "trait name",
+            "write 'significantly' or 'non-significantly' — matching significance above",
+        ],
+        hint="ANOVA table → main-plot row (whole-plot error stratum)",
+    ))
+
+    # ── Starter 3: Subplot factor effect ─────────────────────────────────────
+    starters.append(SentenceStarter(
+        purpose="Subplot factor significance statement",
+        template=(
+            "The subplot factor had a ___ effect on {trait} "
+            "(F₂ = ___, df = ___, p = ___), based on the subplot residual "
+            "as the error term."
+        ).format(trait=trait),
+        values_to_fill=[
+            "write 'significant' (p < 0.05) or 'non-significant' (p ≥ 0.05)",
+            "F-value for subplot factor (subplot error stratum)",
+            "numerator degrees of freedom for subplot factor",
+            "p-value for subplot factor",
+        ],
+        hint="ANOVA table → subplot row (subplot residual stratum)",
+    ))
+
+    # ── Starter 4: Interaction ────────────────────────────────────────────────
+    starters.append(SentenceStarter(
+        purpose="Main-plot × subplot interaction statement",
+        template=(
+            "The main-plot × subplot interaction ___ significant for {trait} "
+            "(F = ___, p = ___). "
+            "This ___ that the effect of the subplot factor depended on "
+            "the level of the main-plot factor."
+        ).format(trait=trait),
+        values_to_fill=[
+            "write 'was' or 'was not'",
+            "F-value for interaction (subplot residual stratum)",
+            "p-value for interaction",
+            "write 'indicates' (significant) or 'does not indicate' (non-significant)",
+        ],
+        hint="ANOVA table → interaction row (subplot residual stratum)",
+    ))
+
+    # ── Starter 5: Experimental precision ────────────────────────────────────
+    starters.append(SentenceStarter(
+        purpose="Experimental precision (CV%)",
+        template=(
+            "The coefficient of variation was ___%, reflecting ___ experimental "
+            "precision for {trait} under the conditions of this study."
+        ).format(trait=trait),
+        values_to_fill=[
+            "CV% from Descriptive Statistics",
+            "write 'good' (CV ≤ 10%), 'moderate' (10–20%), or 'low' (> 20%)",
+        ],
+        hint="Descriptive Statistics → CV% row",
+    ))
+
+    checkpoint = [
+        "F-values reported for main-plot factor, subplot factor, and their interaction",
+        "Correct error stratum stated for each F-test (whole-plot error vs. subplot residual)",
+        "Design identified as split-plot RCBD with restricted randomisation",
+        "Number of replicates stated",
+        "CV% reported and classified",
+        "No Tukey group letters or mean-separation table cited — not applicable here",
+        "At least one scope phrase present: 'in this experiment' or 'among the levels tested'",
+    ]
+
+    caution = _build_split_plot_caution(result)
+
+    return GuidedWritingBlock(
+        module_type="anova",
+        trait=trait,
+        sentence_starters=starters,
+        examiner_checkpoint=checkpoint,
+        scope_statement=_SCOPE_STATEMENT,
+        caution_note=caution,
+        supervisor_prompt=_SUPERVISOR_PROMPT,
+    )
+
+
+def _build_split_plot_caution(result: Dict[str, Any]) -> Optional[str]:
+    """Contextual caution notes for split-plot RCBD."""
+    notes: List[str] = []
+
+    n_reps = result.get("n_reps")
+    if n_reps is not None and n_reps < 3:
+        notes.append(
+            f"⚠ Low-replication note: This experiment uses only {n_reps} replicate "
+            "block(s). With few blocks, the whole-plot error has limited degrees of "
+            "freedom, reducing power to detect main-plot factor differences. "
+            "Interpret the whole-plot F-test cautiously."
+        )
 
     data_warnings = result.get("data_warnings") or []
     for w in data_warnings:

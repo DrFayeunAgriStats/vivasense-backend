@@ -72,7 +72,7 @@ _DOCX_MIME = (
 _SCOPE_NOTE = (
     "Note: These results apply to this experiment and should be interpreted "
     "within this context. Single-experiment results cannot support general "
-    "management or breeding recommendations."
+    "management recommendations."
 )
 
 
@@ -571,8 +571,13 @@ async def export_anova_word(data: AnovaExportRequest):
                 doc.add_paragraph()
 
             # ── 4. Mean Separation (table + embedded chart) ────────────────────
-            if tr.mean_separation:
+            # Skip entirely for split-plot RCBD — mean separation over a single
+            # factor is not meaningful when effects are estimated in two strata.
+            if tr.design_type == "split_plot_rcbd":
+                pass  # section omitted — not applicable for this design
+            elif tr.mean_separation:
                 _add_mean_separation_section(doc, trait, tr.mean_separation)
+                doc.add_paragraph()
             else:
                 _add_heading(doc, "Mean Separation", level=2)
                 _add_body(
@@ -581,7 +586,7 @@ async def export_anova_word(data: AnovaExportRequest):
                     "insufficient degrees of freedom or a singular model.",
                     italic=True,
                 )
-            doc.add_paragraph()
+                doc.add_paragraph()
 
             # ── 5. Interpretation ──────────────────────────────────────────────
             logger.info("ANOVA export: processing interpretation for trait '%s'", trait)

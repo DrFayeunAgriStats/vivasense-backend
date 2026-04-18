@@ -163,6 +163,7 @@ class AnovaTraitResult(BaseModel):
     interpretation: Optional[str] = None
     data_warnings: List[str] = Field(default_factory=list)
     error: Optional[str] = None
+    design_type: Optional[str] = None   # e.g. "split_plot_rcbd"; used by export to skip inapplicable sections
 
 
 class AnovaModuleResponse(BaseModel):

@@ -956,6 +956,7 @@ async def analysis_anova(request: ModuleRequest):
                 mean_separation=res.mean_separation,
                 interpretation=anova_interpretation,
                 data_warnings=balance_warnings,
+                design_type=design_type,
             )
             return trait, "success", result_obj
 

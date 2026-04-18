@@ -405,5 +405,127 @@ class TestSplitPlotInterpretationNeutral(unittest.TestCase):
         self.assertIn("cell", text.lower())
 
 
+# ============================================================================
+# Snapshot: banned / required terms across all significance variants
+# ============================================================================
+
+class TestSplitPlotSnapshotReport(unittest.TestCase):
+    """
+    Consistency validator for split-plot RCBD interpretation text.
+
+    BANNED  — terms that must never appear in split-plot output
+    REQUIRED — terms that must always appear regardless of significance
+    """
+
+    BANNED = [
+        r"\bgenotype\b",
+        r"\bGGE\b",
+        r"\bheritability\b",
+        r"\bGCV\b",
+        r"\bPCV\b",
+        r"\bbreeding\b",
+        r"\bgermplasm\b",
+        r"\bselection\b",
+        r"\bAMMI\b",
+        r"\bbiplot\b",
+    ]
+
+    REQUIRED = [
+        "main-plot",
+        "subplot",
+        "restricted randomis",
+        "whole-plot error",
+    ]
+
+    def _interp(self, mp_sig, sub_sig, int_sig):
+        from analysis_anova_routes import generate_anova_interpretation
+        return generate_anova_interpretation(
+            trait="TestTrait",
+            summary={"grand_mean": 5.0, "cv_percent": 15.0, "min": 2.0,
+                     "max": 8.0, "range": 6.0, "standard_error": 0.4},
+            precision_level="moderate",
+            cv_interpretation_flag="cv_available",
+            genotype_significant=None,
+            environment_significant=None,
+            gxe_significant=None,
+            ranking_caution=None,
+            selection_feasible=None,
+            mean_separation=None,
+            n_genotypes=None,
+            n_environments=None,
+            n_reps=3,
+            environment_mode="single",
+            design_type="split_plot_rcbd",
+            main_plot_significant=mp_sig,
+            subplot_significant=sub_sig,
+            interaction_significant=int_sig,
+        )
+
+    def _variants(self):
+        """All four significance combinations."""
+        return [
+            (True,  True,  True),
+            (True,  True,  False),
+            (True,  False, False),
+            (False, False, False),
+        ]
+
+    def test_snapshot_all_significant(self):
+        """All significant: required terms present, banned absent, interaction + cell mentioned."""
+        import re
+        text = self._interp(True, True, True)
+        for term in self.REQUIRED:
+            self.assertIn(term.lower(), text.lower(),
+                          f"Required term '{term}' missing (all-sig variant)")
+        for pattern in self.BANNED:
+            self.assertEqual(
+                re.findall(pattern, text, re.IGNORECASE), [],
+                f"Banned pattern '{pattern}' found (all-sig variant)",
+            )
+        self.assertIn("interaction", text.lower())
+        self.assertIn("cell", text.lower())
+
+    def test_snapshot_main_only_significant(self):
+        """Main-plot only: required terms present, banned absent, additive mentioned."""
+        import re
+        text = self._interp(True, False, False)
+        for term in self.REQUIRED:
+            self.assertIn(term.lower(), text.lower(),
+                          f"Required term '{term}' missing (main-only variant)")
+        for pattern in self.BANNED:
+            self.assertEqual(
+                re.findall(pattern, text, re.IGNORECASE), [],
+                f"Banned pattern '{pattern}' found (main-only variant)",
+            )
+        self.assertIn("additive", text.lower())
+
+    def test_snapshot_nothing_significant(self):
+        """Nothing significant: required terms still present, banned still absent."""
+        import re
+        text = self._interp(False, False, False)
+        for term in self.REQUIRED:
+            self.assertIn(term.lower(), text.lower(),
+                          f"Required term '{term}' missing (nothing-sig variant)")
+        for pattern in self.BANNED:
+            self.assertEqual(
+                re.findall(pattern, text, re.IGNORECASE), [],
+                f"Banned pattern '{pattern}' found (nothing-sig variant)",
+            )
+        # Error-strata guidance always appears
+        self.assertIn("whole-plot error", text.lower())
+
+    def test_snapshot_no_placeholder_tokens(self):
+        """No literal {…} placeholders in any significance variant."""
+        import re
+        for mp, sub, intr in self._variants():
+            text = self._interp(mp, sub, intr)
+            placeholders = re.findall(r'\{[^}]+\}', text)
+            self.assertEqual(
+                placeholders, [],
+                f"Placeholder tokens found for variant (mp={mp}, sub={sub}, int={intr}): "
+                f"{placeholders}",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

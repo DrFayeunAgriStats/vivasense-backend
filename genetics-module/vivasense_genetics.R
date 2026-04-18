@@ -243,10 +243,8 @@ compute_single_environment <- function(data, trait_name = "Trait",
     heritability_out   <- list(not_applicable = TRUE)
     genetic_params_out <- list(not_applicable = TRUE)
     flags_out <- list(
-      mean_valid      = mean_is_valid,
-      crd_mode        = crd_mode,
-      factorial       = has_factor,
-      n_factor_levels = n_factor_levels
+      design_valid = TRUE,
+      mean_valid   = mean_is_valid
     )
     negative_sigma2g    <- FALSE
     sigma2_genotype_raw <- NA_real_
