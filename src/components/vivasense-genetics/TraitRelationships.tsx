@@ -122,6 +122,7 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
   const [userObjective, setUserObjective] = useState<"Field understanding" | "Genotype comparison" | "Breeding decision">("Field understanding");
   const [results, setResults] = useState<CorrelationResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [displayMode, setDisplayMode] = useState<"phenotypic" | "between_genotype" | "genotypic">("phenotypic");
 
   // When a new (or first) dataset context arrives, reset the trait selection
   // and discard any previous results.
@@ -131,6 +132,7 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
       setResults(null);
       setError(null);
       setStep("setup");
+      setDisplayMode("phenotypic");
     }
   }, [datasetContext]);
 
@@ -149,6 +151,12 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
     setError(null);
 
     try {
+      console.log("[TraitRelationships] Starting correlation analysis...", {
+        traits: selectedTraits,
+        method,
+        objective: userObjective,
+      });
+
       const data = await computeCorrelation({
         base64_content: datasetContext.base64Content,
         file_type: datasetContext.fileType,
@@ -160,10 +168,46 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
         method,
         user_objective: userObjective,
       });
+
+      console.log("[TraitRelationships] API response received successfully", {
+        trait_names: data.trait_names,
+        method: data.method,
+        phenotypic_n: data.phenotypic?.n_observations,
+        between_genotype_n: data.between_genotype?.n_observations,
+        genotypic_available: data.genotypic !== null,
+        genotypic_n: data.genotypic?.n_observations,
+        interpretation_length: data.interpretation?.length,
+        warnings_count: data.warnings?.length,
+      });
+
+      // Set results and determine initial display mode
       setResults(data);
+      
+      // Set initial displayMode based on objective
+      let initialMode: "phenotypic" | "between_genotype" | "genotypic" = "phenotypic";
+      if (userObjective === "Field understanding") {
+        initialMode = "phenotypic";
+      } else if (userObjective === "Genotype comparison") {
+        initialMode = "between_genotype";
+      } else {
+        // "Breeding decision" → prefer VC-based genotypic; fall back if unavailable
+        initialMode = data.genotypic ? "genotypic" : "between_genotype";
+      }
+      setDisplayMode(initialMode);
+
+      console.log("[TraitRelationships] State updated", {
+        step: "results",
+        displayMode: initialMode,
+      });
+
       setStep("results");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Correlation failed");
+      const errorMsg = err instanceof Error ? err.message : "Correlation failed";
+      console.error("[TraitRelationships] API error:", {
+        error: errorMsg,
+        errorType: err instanceof Error ? err.constructor.name : typeof err,
+      });
+      setError(errorMsg);
       setStep("setup");
     }
   };
@@ -172,6 +216,7 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
     setResults(null);
     setError(null);
     setStep("setup");
+    setDisplayMode("phenotypic");
     // Keep selectedTraits and method as-is — user tweaks then re-runs
   };
 
@@ -404,41 +449,48 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
   // ── Results ───────────────────────────────────────────────────────────────
 
   if (step === "results" && results) {
-    // Map objective → display mode; fall back gracefully when genotypic VC is null
-    let displayMode: 'phenotypic' | 'between_genotype' | 'genotypic';
-    if (userObjective === "Field understanding") {
-      displayMode = "phenotypic";
-    } else if (userObjective === "Genotype comparison") {
-      displayMode = "between_genotype";
-    } else {
-      // "Breeding decision" → prefer VC-based genotypic; fall back if unavailable
-      displayMode = results.genotypic ? "genotypic" : "between_genotype";
+    // Debug: log that we're in results view with current displayMode
+    console.log("[TraitRelationships] Rendering results view", {
+      displayMode,
+      results_available: !!results,
+      phenotypic_available: results.phenotypic !== null,
+      between_genotype_available: results.between_genotype !== null,
+      genotypic_available: results.genotypic !== null,
+    });
+
+    // Validate that displayMode has valid data
+    let stats: CorrelationStats | null = null;
+    if (displayMode === "phenotypic") {
+      stats = results.phenotypic;
+    } else if (displayMode === "between_genotype") {
+      stats = results.between_genotype;
+    } else if (displayMode === "genotypic") {
+      stats = results.genotypic ?? results.between_genotype;
     }
 
-    const modeLabelMap: Record<typeof displayMode, string> = {
+    if (!stats) {
+      console.warn("[TraitRelationships] No stats available for mode:", displayMode);
+      stats = results.phenotypic ?? results.between_genotype;
+    }
+
+    const modeLabelMap: Record<"phenotypic" | "between_genotype" | "genotypic", string> = {
       phenotypic:       "Phenotypic (Field-Level)",
       between_genotype: "Between-Genotype Association",
       genotypic:        "Genotypic (Variance-Component)",
     };
     const modeLabel = modeLabelMap[displayMode];
 
-    // stats is always defined: genotypic falls back to between_genotype
-    const stats =
-      displayMode === "phenotypic" ? results.phenotypic :
-      displayMode === "between_genotype" ? results.between_genotype :
-      (results.genotypic ?? results.between_genotype);
-
     // Debug logs — active mode and matrix dimensions
-    const activeMatrix = stats.r_matrix;
-    console.log("[TraitRelationships] results rendered", {
+    const activeMatrix = stats?.r_matrix ?? [];
+    console.log("[TraitRelationships] Results view state", {
       activeMode: displayMode,
       modeLabel,
       n_traits: results.trait_names.length,
-      n_observations: stats.n_observations,
+      n_observations: stats?.n_observations,
       matrix_rows: activeMatrix.length,
       matrix_cols: activeMatrix[0]?.length ?? 0,
       genotypic_available: results.genotypic !== null,
-      inference_approximate: stats.inference_approximate,
+      inference_approximate: stats?.inference_approximate,
     });
 
     return (
@@ -451,7 +503,7 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
             </h3>
             <p className="text-sm text-gray-500">
               {results.trait_names.length} traits ·{" "}
-              {stats.n_observations}{" "}
+              {stats?.n_observations ?? 0}{" "}
               {displayMode === "phenotypic" ? "observations" : "genotype means"} ·{" "}
               {results.method === "spearman" ? "Spearman" : "Pearson"} · {modeLabel}
             </p>
@@ -468,6 +520,46 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
           >
             Adjust Selection
           </button>
+        </div>
+
+        {/* Mode selector — NEW */}
+        <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+          <label className="block text-sm font-semibold text-gray-700 mb-3">
+            Display Correlation Mode
+          </label>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {[
+              { value: "phenotypic", label: "Phenotypic", desc: "All observations" },
+              { value: "between_genotype", label: "Between-Genotype", desc: "Genotype means", available: true },
+              { value: "genotypic", label: "Genotypic VC", desc: "Variance component", available: results.genotypic !== null },
+            ] as const).map((mode) => (
+              <button
+                key={mode.value}
+                type="button"
+                disabled={mode.value === "genotypic" && !mode.available}
+                onClick={() => {
+                  console.log("[TraitRelationships] Mode switched to:", mode.value);
+                  setDisplayMode(mode.value);
+                }}
+                className={[
+                  "relative rounded-lg border p-3 text-left text-sm transition-colors",
+                  displayMode === mode.value
+                    ? "border-emerald-500 bg-emerald-50 text-emerald-900"
+                    : mode.value === "genotypic" && !mode.available
+                    ? "border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed opacity-50"
+                    : "border-gray-300 bg-white text-gray-700 hover:border-emerald-300",
+                ].join(" ")}
+              >
+                <div className="font-medium">{mode.label}</div>
+                <div className="text-xs text-gray-500 mt-0.5">
+                  {mode.value === "genotypic" && !mode.available ? "Not available" : mode.desc}
+                </div>
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-gray-500 mt-2">
+            Switch modes to view different correlation perspectives. Genotypic VC requires ≥3 genotypes per trait pair.
+          </p>
         </div>
 
         {/* Data warnings */}
