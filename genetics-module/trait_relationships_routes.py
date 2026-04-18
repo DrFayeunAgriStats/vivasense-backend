@@ -296,23 +296,26 @@ async def compute_correlation(request: CorrelationRequest):
         logger.error("Correlation R error: %s", exc)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    # Extract data from R result
+    # Extract data from R result — all three modes required
     trait_names = result.get("trait_names", request.trait_columns)
     warnings = result.get("warnings", [])
     phenotypic = result.get("phenotypic", {})
+    between_genotype = result.get("between_genotype", {})
     genotypic = result.get("genotypic", {})
     
     # Generate new academic-grade interpretation instead of using R script's legacy text
     interpretation_text = generate_dual_mode_correlation_interpretation(
         trait_names=trait_names,
-        genotypic=genotypic,
+        between_genotype=between_genotype,
         phenotypic=phenotypic,
-        user_objective=request.user_objective
+        user_objective=request.user_objective,
+        genotypic_vc=genotypic,
     )
     
     # Override the R script's interpretation with the new validated interpretation
     result["interpretation"] = interpretation_text
     result["statistical_note"] = _STATISTICAL_NOTE
+    result["between_genotype"] = between_genotype  # Ensure it's in result dict for schema validation
     
     import json as _json
     logger.info("[correlation] response keys: %s", list(result.keys()))
