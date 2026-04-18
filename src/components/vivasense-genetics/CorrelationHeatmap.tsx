@@ -41,6 +41,8 @@ export interface HeatmapCell {
 
 interface CorrelationHeatmapProps {
   data: CorrelationResponse;
+  /** Correlation mode to display. */
+  mode?: 'phenotypic' | 'between_genotype' | 'genotypic';
   /** Passed from parent to support controlled export triggers. Optional. */
   exportRef?: React.RefObject<{ exportPng: () => void; exportSvg: () => void }>;
 }
@@ -53,9 +55,26 @@ interface CorrelationHeatmapProps {
  * Flatten the n×n r_matrix + p_matrix into a 1-D array of HeatmapCell objects.
  * Produces n² cells — including the diagonal (value=1, isDiagonal=true).
  */
-function flattenMatrix(data: CorrelationResponse): HeatmapCell[] {
-  const { trait_names, r_matrix, p_matrix } = data;
+function flattenMatrix(data: CorrelationResponse, mode: 'phenotypic' | 'between_genotype' | 'genotypic' = 'phenotypic'): HeatmapCell[] {
+  const stats =
+    mode === 'phenotypic' ? data.phenotypic :
+    mode === 'between_genotype' ? data.between_genotype :
+    data.genotypic;
+
+  const { trait_names } = data;
+
+  if (!stats) {
+    console.warn(`CorrelationHeatmap: ${mode} data not available`);
+    return [];
+  }
+
+  const { r_matrix, p_matrix } = stats;
   const cells: HeatmapCell[] = [];
+
+  if (!r_matrix || !p_matrix || !Array.isArray(r_matrix) || !Array.isArray(p_matrix)) {
+    console.warn(`CorrelationHeatmap: ${mode} matrices not available, returning empty cells`);
+    return cells;
+  }
 
   for (let row = 0; row < trait_names.length; row++) {
     for (let col = 0; col < trait_names.length; col++) {
@@ -246,14 +265,22 @@ interface TooltipState {
 // Main component
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function CorrelationHeatmap({ data }: CorrelationHeatmapProps) {
-  const { trait_names, n_observations, method } = data;
+export function CorrelationHeatmap({ data, mode = 'phenotypic' }: CorrelationHeatmapProps) {
+  const { trait_names, method } = data;
+  const stats =
+    mode === 'phenotypic' ? data.phenotypic :
+    mode === 'between_genotype' ? data.between_genotype :
+    data.genotypic;
+  const n_observations = stats?.n_observations ?? 0;
   const n = trait_names.length;
 
   // Flatten the matrix to a typed flat array as required
-  const cells: HeatmapCell[] = flattenMatrix(data);
+  const cells: HeatmapCell[] = flattenMatrix(data, mode);
 
-  // Ref to the SVG element for export
+  // Debug logging for troubleshooting
+  console.log(`CorrelationHeatmap: Rendering ${mode} mode with ${cells.length} cells`);
+  console.log('CorrelationHeatmap: Sample cell:', cells[0]);
+
   const svgRef = useRef<SVGSVGElement>(null);
 
   // Tooltip state (hover)

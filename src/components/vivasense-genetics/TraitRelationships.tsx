@@ -37,6 +37,7 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
   const [step, setStep] = useState<TRStep>("setup");
   const [selectedTraits, setSelectedTraits] = useState<string[]>([]);
   const [method, setMethod] = useState<"pearson" | "spearman">("pearson");
+  const [userObjective, setUserObjective] = useState<"Field understanding" | "Genotype comparison" | "Breeding decision">("Field understanding");
   const [results, setResults] = useState<CorrelationResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -75,6 +76,7 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
         trait_columns: selectedTraits,
         mode: datasetContext.mode,
         method,
+        user_objective: userObjective,
       });
       setResults(data);
       setStep("results");
@@ -232,6 +234,58 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
           </p>
         </div>
 
+        {/* User objective selector */}
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">
+            Analysis Objective
+          </label>
+          <div className="grid gap-2 sm:grid-cols-1">
+            {([
+              {
+                value: "Field understanding",
+                label: "Field Understanding → Phenotypic",
+                desc: "Co-variation among all field observations; reflects genetics + environment jointly",
+              },
+              {
+                value: "Genotype comparison",
+                label: "Genotype Comparison → Between-Genotype",
+                desc: "Association among genotype means; not a true genetic parameter",
+              },
+              {
+                value: "Breeding decision",
+                label: "Breeding Decision → Genotypic (VC-based)",
+                desc: "Variance-component genotypic correlation via bivariate REML; falls back to between-genotype if unavailable",
+              },
+            ] as const).map((obj) => (
+              <label
+                key={obj.value}
+                className={[
+                  "flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors",
+                  userObjective === obj.value
+                    ? "border-emerald-500 bg-emerald-50 text-emerald-800"
+                    : "border-gray-200 bg-white text-gray-600 hover:border-emerald-300",
+                ].join(" ")}
+              >
+                <input
+                  type="radio"
+                  name="objective"
+                  value={obj.value}
+                  checked={userObjective === obj.value}
+                  onChange={(e) => setUserObjective(e.target.value as typeof userObjective)}
+                  className="mt-0.5 rounded border-gray-300 text-emerald-600"
+                />
+                <div>
+                  <div className="font-medium">{obj.label}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">{obj.desc}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+          <p className="mt-1 text-xs text-gray-400">
+            This influences correlation mode selection and interpretation guidance.
+          </p>
+        </div>
+
         {/* Run button */}
         <button
           type="button"
@@ -268,19 +322,47 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
   // ── Results ───────────────────────────────────────────────────────────────
 
   if (step === "results" && results) {
+    // Map objective → display mode; fall back gracefully when genotypic VC is null
+    let displayMode: 'phenotypic' | 'between_genotype' | 'genotypic';
+    if (userObjective === "Field understanding") {
+      displayMode = "phenotypic";
+    } else if (userObjective === "Genotype comparison") {
+      displayMode = "between_genotype";
+    } else {
+      // "Breeding decision" → prefer VC-based genotypic; fall back if unavailable
+      displayMode = results.genotypic ? "genotypic" : "between_genotype";
+    }
+
+    const modeLabelMap: Record<typeof displayMode, string> = {
+      phenotypic:       "Phenotypic (Field-Level)",
+      between_genotype: "Between-Genotype Association",
+      genotypic:        "Genotypic (Variance-Component)",
+    };
+    const modeLabel = modeLabelMap[displayMode];
+    const stats =
+      displayMode === "phenotypic" ? results.phenotypic :
+      displayMode === "between_genotype" ? results.between_genotype :
+      (results.genotypic ?? results.between_genotype);
+
     return (
       <div className="space-y-5">
         {/* Header */}
         <div className="flex items-start justify-between gap-4">
           <div>
             <h3 className="text-lg font-semibold text-gray-800">
-              Phenotypic Correlations
+              Three-Mode Correlation Analysis
             </h3>
             <p className="text-sm text-gray-500">
               {results.trait_names.length} traits ·{" "}
-              {results.n_observations} genotype means ·{" "}
-              {results.method === "spearman" ? "Spearman" : "Pearson"}
+              {stats.n_observations}{" "}
+              {displayMode === "phenotypic" ? "observations" : "genotype means"} ·{" "}
+              {results.method === "spearman" ? "Spearman" : "Pearson"} · {modeLabel}
             </p>
+            {userObjective === "Breeding decision" && !results.genotypic && (
+              <p className="text-xs text-amber-600 mt-0.5">
+                ⚠ Genotypic VC not available — showing between-genotype association as fallback
+              </p>
+            )}
           </div>
           <button
             type="button"
@@ -318,17 +400,30 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
             <span className="shrink-0 mt-px">ℹ</span>
             P-values are unadjusted for multiple comparisons.
           </p>
+          <p className="flex items-start gap-1.5 text-xs text-gray-400">
+            <span className="shrink-0 mt-px">ℹ</span>
+            Analysis objective: {userObjective}
+          </p>
         </div>
+
+        {/* Debug logging */}
+        {console.log("TraitRelationships: correlation response", {
+          phenotypic: results.phenotypic,
+          between_genotype: results.between_genotype,
+          genotypic: results.genotypic,
+          displayMode,
+          userObjective,
+        })}
 
         {/* Heatmap — below stats notes, above interpretation */}
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <h4 className="text-sm font-semibold text-gray-700">Correlation Heatmap</h4>
             <span className="text-xs text-gray-400 font-normal">
-              Red = negative · White = zero · Blue = positive
+              {modeLabel} · Red = negative · White = zero · Blue = positive
             </span>
           </div>
-          <CorrelationHeatmap data={results} />
+          <CorrelationHeatmap data={results} mode={displayMode} />
         </div>
 
         {/* Interpretation */}

@@ -12,7 +12,8 @@ Returns heatmap-ready data derived from correlation analysis:
 
 The heatmap mode is selected based on user objective:
 - "Field understanding": Uses phenotypic correlations (all observations)
-- "Genotype comparison"/"Breeding decision": Uses genotypic correlations (genotype means)
+- "Genotype comparison": Uses between-genotype association (genotype means)
+- "Breeding decision": Uses genotypic correlation (variance-component REML); falls back to between-genotype
 
 The frontend renders this directly as a correlation heatmap (e.g. via a
 charting library).  No separate R computation is performed — the heatmap
@@ -60,7 +61,7 @@ async def analysis_heatmap(request: CorrelationModuleRequest):
     use the full dual-mode correlation analysis at /analysis/correlation.
     """
 
-    The returned `matrix` is the n×n r-value grid; `labels` gives the trait
+    The returned `matrix` is the n x n r-value grid; `labels` gives the trait
     names for each row/column; `min_val`/`max_val` give the observed range
     (excluding diagonal 1.0 values) for colour-scale calibration.
 
@@ -124,16 +125,23 @@ async def analysis_heatmap(request: CorrelationModuleRequest):
         ) from exc
 
     labels    = raw.get("trait_names", request.trait_columns)
-    
+
     # Choose correlation mode based on user objective
     if request.user_objective == "Field understanding":
-        # Use phenotypic correlations for field-level understanding
         r_matrix  = raw.get("phenotypic", {}).get("r_matrix", [])
         mode_used = "phenotypic"
+    elif request.user_objective == "Genotype comparison":
+        r_matrix  = raw.get("between_genotype", {}).get("r_matrix", [])
+        mode_used = "between_genotype"
     else:
-        # Use genotypic correlations for genotype comparison or breeding decisions
-        r_matrix  = raw.get("genotypic", {}).get("r_matrix", [])
-        mode_used = "genotypic"
+        # "Breeding decision" → variance-component genotypic; fall back to between_genotype
+        geno_vc = raw.get("genotypic")
+        if geno_vc and geno_vc.get("r_matrix"):
+            r_matrix  = geno_vc["r_matrix"]
+            mode_used = "genotypic"
+        else:
+            r_matrix  = raw.get("between_genotype", {}).get("r_matrix", [])
+            mode_used = "between_genotype"
     
     warnings  = raw.get("warnings", [])
 
@@ -157,8 +165,9 @@ async def analysis_heatmap(request: CorrelationModuleRequest):
     strong_pos = sum(1 for v in off_diag if v >= 0.7)
     strong_neg = sum(1 for v in off_diag if v <= -0.7)
     mode_desc = {
-        "phenotypic": "all observations (reflecting field-level co-variation)",
-        "genotypic": "genotype means (reflecting genotype-level relationships)"
+        "phenotypic":       "all observations (field-level co-variation)",
+        "between_genotype": "genotype means (between-genotype association; not a genetic parameter)",
+        "genotypic":        "variance-component based genotypic correlation (bivariate REML)",
     }
     interp_parts = [
         f"Heatmap shows {request.method.capitalize()} r-values for "

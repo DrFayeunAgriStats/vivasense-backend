@@ -378,28 +378,43 @@ def _add_correlation_section(doc: Document, corr: CorrelationResponse) -> None:
     method_label = corr.method.capitalize()
 
     _add_kv(doc, "Method", f"{method_label} correlation")
-    _add_kv(doc, "No. Genotype Means Used", str(corr.n_observations))
+    _add_kv(doc, "Phenotypic Observations", str(corr.phenotypic.n_observations))
+    _add_kv(doc, "Between-Genotype Means", str(corr.between_genotype.n_observations))
+    if corr.genotypic is not None:
+        _add_kv(doc, "Genotypic VC Observations", str(corr.genotypic.n_observations))
     doc.add_paragraph()
 
-    # Pairwise table (upper triangle, excluding diagonal)
-    headers = ["Trait 1", "Trait 2", "r-value", "p-value", "Sig."]
-    rows_data = []
-    for i in range(n):
-        for j in range(i + 1, n):
-            r_val = corr.r_matrix[i][j] if corr.r_matrix else None
-            p_val = corr.p_matrix[i][j] if corr.p_matrix else None
-            sig = _sig_label(p_val)
-            rows_data.append([
-                traits[i],
-                traits[j],
-                _fmt(r_val, 3, thousands=False),
-                _fmt_p(p_val),
-                sig if sig else "ns",
-            ])
+    # Build mode list: always include phenotypic + between_genotype; add genotypic VC if available
+    mode_list = [
+        ("Phenotypic (Field-Level)", corr.phenotypic),
+        ("Between-Genotype Association", corr.between_genotype),
+    ]
+    if corr.genotypic is not None:
+        mode_list.append(("Genotypic (Variance-Component)", corr.genotypic))
 
-    if rows_data:
-        _add_stat_table(doc, headers, rows_data, numeric_cols={2})
-        doc.add_paragraph()
+    for mode_name, stats in mode_list:
+        _add_heading(doc, f"{mode_name} Correlations", level=2)
+        
+        headers = ["Trait 1", "Trait 2", "r-value", "p-value", "p-adj (FDR)", "Sig."]
+        rows_data = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                r_val = stats.r_matrix[i][j] if stats.r_matrix else None
+                p_val = stats.p_matrix[i][j] if stats.p_matrix else None
+                p_adj_val = stats.p_adj_matrix[i][j] if stats.p_adj_matrix else None
+                sig = _sig_label(p_val)
+                rows_data.append([
+                    traits[i],
+                    traits[j],
+                    _fmt(r_val, 3, thousands=False),
+                    _fmt_p(p_val),
+                    _fmt_p(p_adj_val),
+                    sig if sig else "ns",
+                ])
+
+        if rows_data:
+            _add_stat_table(doc, headers, rows_data, numeric_cols={2})
+            doc.add_paragraph()
 
     # Auto-interpretation
     _add_heading(doc, "Correlation Interpretation", level=2)
@@ -407,17 +422,18 @@ def _add_correlation_section(doc: Document, corr: CorrelationResponse) -> None:
         _add_body(doc, corr.interpretation)
         doc.add_paragraph()
 
-    # Count strong positive correlations for co-selection advice
+    # Count strong positive correlations — prefer VC genotypic if available, else between-genotype
+    _ref_stats = corr.genotypic if corr.genotypic is not None else corr.between_genotype
     strong_pos = [
         (traits[i], traits[j])
         for i in range(n)
         for j in range(i + 1, n)
-        if corr.r_matrix
-        and corr.r_matrix[i][j] is not None
-        and corr.r_matrix[i][j] >= 0.70
-        and corr.p_matrix
-        and corr.p_matrix[i][j] is not None
-        and corr.p_matrix[i][j] < 0.05
+        if _ref_stats.r_matrix
+        and _ref_stats.r_matrix[i][j] is not None
+        and _ref_stats.r_matrix[i][j] >= 0.70
+        and _ref_stats.p_matrix
+        and _ref_stats.p_matrix[i][j] is not None
+        and _ref_stats.p_matrix[i][j] < 0.05
     ]
     if strong_pos:
         pairs_str = ", ".join(f"{a} & {b}" for a, b in strong_pos[:5])

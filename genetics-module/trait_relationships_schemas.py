@@ -35,14 +35,21 @@ class CorrelationRequest(BaseModel):
 class CorrelationResponse(BaseModel):
     """
     Response from POST /genetics/correlation.
+
+    Three modes:
+      phenotypic       — all observations (field-level co-variation)
+      between_genotype — genotype means (between-genotype association; NOT a genetic parameter)
+      genotypic        — variance-component based via bivariate REML; None if estimation failed
     """
     trait_names: List[str]
     method: str
     phenotypic: CorrelationStats
-    genotypic: CorrelationStats
+    between_genotype: CorrelationStats
+    genotypic: Optional[CorrelationStats] = None
     interpretation: str
     warnings: List[str] = Field(default_factory=list)
     statistical_note: str = (
-        "Dual-mode analysis evaluates both phenotypic (all observations) "
-        "and genotypic (genotype means) correlations."
+        "Three-mode analysis: phenotypic (all observations), "
+        "between-genotype association (genotype means; not a true genetic parameter), "
+        "and genotypic correlation (variance-component based via bivariate REML)."
     )

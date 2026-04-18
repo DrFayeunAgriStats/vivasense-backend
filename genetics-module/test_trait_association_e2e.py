@@ -56,6 +56,34 @@ def test_interpretation_engine():
             [0.012, 0.0, 0.045],
             [0.089, 0.045, 0.0]
         ],
+        "between_genotype": {
+            "n_observations": 8,
+            "df": 6,
+            "critical_r": 0.706,
+            "r_matrix": [
+                [1.0, 0.85, 0.62],
+                [0.85, 1.0, 0.71],
+                [0.62, 0.71, 1.0]
+            ],
+            "p_matrix": [
+                [0.0, 0.012, 0.089],
+                [0.012, 0.0, 0.045],
+                [0.089, 0.045, 0.0]
+            ],
+            "p_adj_matrix": [[0.0]*3]*3,
+            "ci_lower_matrix": [[0.0]*3]*3,
+            "ci_upper_matrix": [[0.0]*3]*3
+        },
+        "phenotypic": {
+            "n_observations": 24,
+            "df": 22,
+            "critical_r": 0.404,
+            "r_matrix": [[1.0]*3]*3,
+            "p_matrix": [[0.0]*3]*3,
+            "p_adj_matrix": [[0.0]*3]*3,
+            "ci_lower_matrix": [[0.0]*3]*3,
+            "ci_upper_matrix": [[0.0]*3]*3
+        },
         "warnings": [],
         # This is the OLD legacy R interpretation (what we're replacing)
         "interpretation": "Positive correlations indicate traits that tend to improve together, facilitating indirect selection."
@@ -65,6 +93,9 @@ def test_interpretation_engine():
     n_observations = mock_r_result["n_observations"]
     r_matrix = mock_r_result["r_matrix"]
     p_matrix = mock_r_result["p_matrix"]
+    n_observations = mock_r_result["between_genotype"]["n_observations"]
+    r_matrix = mock_r_result["between_genotype"]["r_matrix"]
+    p_matrix = mock_r_result["between_genotype"]["p_matrix"]
     
     logger.info(f"    ✓ Mock data: {len(trait_names)} traits, {n_observations} genotype means")
     logger.info(f"    ✓ Traits: {trait_names}")
@@ -176,13 +207,12 @@ def test_interpretation_engine():
         # Create response with new interpretation
         response = CorrelationResponse(
             trait_names=trait_names,
-            n_observations=n_observations,
             method="pearson",
-            r_matrix=r_matrix,
-            p_matrix=p_matrix,
-            interpretation=new_interpretation,  # Use NEW interpretation
+            phenotypic=mock_r_result["phenotypic"],
+            between_genotype=mock_r_result["between_genotype"],
+            genotypic=None,
+            interpretation=new_interpretation,
             warnings=mock_r_result.get("warnings", []),
-            statistical_note="Correlations were computed using genotype-level means; significance levels are based on the number of genotypes."
         )
         
         # Create document and add correlation section

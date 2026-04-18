@@ -22,22 +22,33 @@ export interface CorrelationRequest {
   trait_columns: string[];
   mode: "single" | "multi";
   method?: "pearson" | "spearman";
+  user_objective?: "Field understanding" | "Genotype comparison" | "Breeding decision";
 }
 
 /**
  * Mirrors CorrelationResponse in trait_relationships_schemas.py.
- *
- * r_matrix[i][j] — Pearson/Spearman r between trait_names[i] and trait_names[j].
- *   Diagonal = 1.0. null when a pair had < 3 complete genotype means.
- * p_matrix[i][j] — two-sided p-value from cor.test().
- *   Diagonal = 0.0. null when a pair had < 3 complete genotype means.
+ * Three-mode: phenotypic, between_genotype, genotypic (VC-based, optional).
  */
-export interface CorrelationResponse {
-  trait_names: string[];
+export interface CorrelationStats {
   n_observations: number;
-  method: string;
+  df?: number;
+  critical_r?: number;
   r_matrix: (number | null)[][];
   p_matrix: (number | null)[][];
+  p_adj_matrix?: (number | null)[][];
+  ci_lower_matrix?: (number | null)[][];
+  ci_upper_matrix?: (number | null)[][];
+}
+
+export interface CorrelationResponse {
+  trait_names: string[];
+  method: string;
+  /** Field-level co-variation (all observations). */
+  phenotypic: CorrelationStats;
+  /** Association among genotype means. NOT a true genetic correlation. */
+  between_genotype: CorrelationStats;
+  /** Variance-component genotypic correlation (bivariate REML). Null if unavailable. */
+  genotypic: CorrelationStats | null;
   interpretation: string;
   warnings: string[];
   statistical_note: string;

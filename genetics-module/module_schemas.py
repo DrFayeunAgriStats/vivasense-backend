@@ -233,7 +233,8 @@ class CorrelationModuleResponse(BaseModel):
     trait_names: List[str]
     method: str
     phenotypic: CorrelationStats
-    genotypic: CorrelationStats
+    between_genotype: CorrelationStats
+    genotypic: Optional[CorrelationStats] = None
     statistical_note: Optional[str] = None
     interpretation: Optional[str] = None
     warnings: List[str] = Field(default_factory=list)

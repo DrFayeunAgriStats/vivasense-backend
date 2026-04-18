@@ -36,8 +36,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Analysis"])
 
 _STATISTICAL_NOTE = (
-    "Dual-mode analysis evaluates both phenotypic (all observations) "
-    "and genotypic (genotype means) correlations."
+    "Three-mode analysis: phenotypic (all observations), "
+    "between-genotype association (genotype means; not a true genetic parameter), "
+    "and genotypic correlation (variance-component based via bivariate REML)."
 )
 
 
@@ -113,16 +114,19 @@ async def analysis_correlation(request: CorrelationModuleRequest):
         raise HTTPException(status_code=500, detail=f"Correlation analysis failed: {exc}") from exc
 
     # Parse R response — discard R-generated interpretation text entirely
-    trait_names = raw.get("trait_names", request.trait_columns)
-    warnings = raw.get("warnings", [])
-    phenotypic = raw.get("phenotypic", {})
-    genotypic = raw.get("genotypic", {})
+    trait_names      = raw.get("trait_names", request.trait_columns)
+    warnings         = raw.get("warnings", [])
+    phenotypic       = raw.get("phenotypic", {})
+    between_genotype = raw.get("between_genotype", {})
+    # genotypic is None when sommer was unavailable or all pairs failed
+    genotypic_vc     = raw.get("genotypic")  # may be None
 
     python_interpretation = generate_dual_mode_correlation_interpretation(
         trait_names=trait_names,
-        genotypic=genotypic,
+        between_genotype=between_genotype,
         phenotypic=phenotypic,
-        user_objective=request.user_objective
+        genotypic_vc=genotypic_vc,
+        user_objective=request.user_objective,
     )
     logger.info(
         "Correlation interpretation generated (Python): %d chars",
@@ -133,7 +137,8 @@ async def analysis_correlation(request: CorrelationModuleRequest):
         trait_names=trait_names,
         method=request.method,
         phenotypic=phenotypic,
-        genotypic=genotypic,
+        between_genotype=between_genotype,
+        genotypic=genotypic_vc,
         interpretation=python_interpretation,
         warnings=warnings,
         statistical_note=_STATISTICAL_NOTE,
@@ -144,6 +149,7 @@ async def analysis_correlation(request: CorrelationModuleRequest):
         trait_names=corr.trait_names,
         method=corr.method,
         phenotypic=corr.phenotypic,
+        between_genotype=corr.between_genotype,
         genotypic=corr.genotypic,
         statistical_note=corr.statistical_note,
         interpretation=corr.interpretation,
