@@ -81,6 +81,8 @@ class RegressionRequest(BaseModel):
     y_variable: str = Field(..., description="Dependent variable column name")
     model_type: str = Field(default="linear", description="Type of regression model")
 
+    model_config = {'protected_namespaces': ()}
+
 
 class ConfidenceInterval(BaseModel):
     lower: float
@@ -118,6 +120,8 @@ class RegressionResponse(BaseModel):
     reliability_flags: List[str]
     warnings: List[str]
     plot_data: PlotData
+
+    model_config = {'protected_namespaces': ()}
 
 
 @router.post(

@@ -601,6 +601,7 @@ async def health_check():
 
 
 @app.get("/", tags=["Documentation"])
+@app.head("/", tags=["Documentation"])
 async def root():
     """Service information"""
     return {
