@@ -261,19 +261,23 @@ def generate_dual_mode_correlation_interpretation(
     Sections:
       1. Objective framing
       2. Statistical context (n, df, critical r per mode + critical r comparison)
-      3. Warning system (low power, pseudo-replication, multiple testing)
-      4. Mode distinction (what each mode means — no causation claims)
-      5. Pairwise comparison (genotypic vs phenotypic per pair)
-      6. Sign discordance alerts
-      7. Objective-specific closing guidance
+      3. Effective sample size clarification (phenotypic mode)
+      4. Warning system (low power, pseudo-replication, multiple testing)
+      5. Mode distinction with clear labels (phenotypic vs genotypic)
+      6. Pairwise comparison with CI interpretation, stability warnings, FDR summary
+      7. Sign discordance alerts
+      8. Breeding decision safeguards
+      9. Objective-specific closing guidance
 
     Rules enforced:
     - Never claims raw data is "better for breeding".
     - Never implies genetic causation from correlation.
-    - Genotypic mean correlation is explicitly distinguished from true genetic correlation.
-    - Warns when n < 10 (low power).
-    - Warns about pseudo-replication in phenotypic mode.
-    - Warns about multiple testing when > 2 traits.
+    - Genotypic associations are distinguished from true genetic correlations.
+    - Warns when n < 10 (low power) with CI guidance.
+    - Warns about pseudo-replication in phenotypic mode with effective sample size note.
+    - Warns about multiple testing with FDR interpretation and survivor tracking.
+    - Provides stability warnings for high correlations with small genotype panels.
+    - Adds breeding decision guardrails for high correlations or breeding objective.
     """
     sections: List[str] = []
     n_traits = len(trait_names)
@@ -355,7 +359,19 @@ def generate_dual_mode_correlation_interpretation(
     sections.append("\n".join(stat_lines))
 
     # ------------------------------------------------------------------
-    # 3. Warning system
+    # 3. Effective Sample Size Clarification (Phenotypic Mode)
+    # ------------------------------------------------------------------
+    if n_pheno > n_geno:
+        sections.append(
+            f"Effective Sample Size Note (Phenotypic Mode):\n"
+            f"Although n = {n_pheno} observations were used for phenotypic correlations, "
+            f"these are structured within {n_geno} genotypes and replications. "
+            f"The number of truly independent experimental units may be lower than {n_pheno}, "
+            f"potentially affecting the reliability of significance tests."
+        )
+
+    # ------------------------------------------------------------------
+    # 4. Warning system
     # ------------------------------------------------------------------
     warnings: List[str] = []
 
@@ -379,8 +395,8 @@ def generate_dual_mode_correlation_interpretation(
         warnings.append(
             f"Multiple testing: {n_pairs} pairwise comparisons conducted simultaneously. "
             "FDR-adjusted p-values are reported alongside raw p-values. "
-            "Use adjusted p-values for strict significance inference to control the false "
-            "discovery rate."
+            "Only correlations remaining significant after FDR adjustment should be considered reliable "
+            "for strict statistical inference to control the false discovery rate."
         )
 
     if warnings:
@@ -389,29 +405,33 @@ def generate_dual_mode_correlation_interpretation(
         )
 
     # ------------------------------------------------------------------
-    # 4. Mode distinction
+    # 5. Mode distinction
     # ------------------------------------------------------------------
     sections.append(
-        "Mode Distinction:\n"
-        "• Phenotypic Correlation: Reflects co-variation among individual experimental units "
+        "Correlation Type and Mode Distinction:\n"
+        "• Phenotypic Correlation (field-level): Reflects co-variation among individual experimental units "
         "(plots or plants). Captures the joint effects of genetic variation, environmental "
         "heterogeneity, and management. Useful for understanding field-level co-variation and "
         "physiological relationships, but does not isolate genetic from environmental effects.\n"
-        "• Genotypic Mean Correlation: Reflects co-variation among genotype average performances "
+        "• Genotypic Association (between-genotype): Reflects co-variation among genotype average performances "
         "across replications. By averaging out within-genotype replication, it reduces "
         "environmental noise and is informative for genotype comparison. "
-        "IMPORTANT: This is NOT a true quantitative genetic correlation — it does not partition "
-        "genetic from residual variance using mixed models. Correlation does not imply genetic "
-        "causation, and elevated r between genotype means does not confirm a shared genetic basis."
+        "IMPORTANT: This approximates between-genotype association but is NOT a true quantitative genetic correlation — "
+        "it does not partition genetic from residual variance using mixed models. Correlation does not imply genetic "
+        "causation, and elevated association between genotype means does not confirm a shared genetic basis."
     )
 
     # ------------------------------------------------------------------
-    # 5. Pairwise comparison narrative
+    # 6. Pairwise comparison narrative
     # ------------------------------------------------------------------
     comparison = build_comparison_table(trait_names, genotypic, phenotypic)
     if comparison:
-        pair_lines = ["Pairwise Comparison (Genotypic vs Phenotypic r):"]
+        pair_lines = ["Pairwise Comparison (Genotypic vs Phenotypic):"]
         discordant: List[Tuple[str, str, float, float]] = []
+        wide_ci_pairs: List[str] = []
+        stability_warnings: List[str] = []
+        fdr_survivors: List[str] = []
+        fdr_non_survivors: List[str] = []
 
         for entry in comparison:
             t1, t2 = entry["trait_1"], entry["trait_2"]
@@ -421,6 +441,10 @@ def generate_dual_mode_correlation_interpretation(
             pp = entry["phenotypic_p"]
             pag = entry["genotypic_p_adj"]
             pap = entry["phenotypic_p_adj"]
+            cilo_g = entry["genotypic_ci_lower"]
+            cihi_g = entry["genotypic_ci_upper"]
+            cilo_p = entry["phenotypic_ci_lower"]
+            cihi_p = entry["phenotypic_ci_upper"]
             sig_g = entry["genotypic_significant"]
             sig_p = entry["phenotypic_significant"]
 
@@ -434,6 +458,27 @@ def generate_dual_mode_correlation_interpretation(
 
             sig_g_label = "sig." if sig_g else "ns"
             sig_p_label = "sig." if sig_p else "ns"
+            
+            # Check for wide confidence intervals
+            if cilo_g is not None and cihi_g is not None and (cihi_g - cilo_g) > 0.6:
+                wide_ci_pairs.append(f"{t1} × {t2} (genotypic)")
+            if cilo_p is not None and cihi_p is not None and (cihi_p - cilo_p) > 0.6:
+                wide_ci_pairs.append(f"{t1} × {t2} (phenotypic)")
+            
+            # Check for stability warning
+            if n_geno < 10 and rg is not None and abs(rg) > 0.8:
+                stability_warnings.append(f"{t1} × {t2} (r = {rg:.3f})")
+            
+            # Track FDR survivors
+            if pag is not None and pag < 0.05:
+                fdr_survivors.append(f"{t1} × {t2} (genotypic)")
+            elif sig_g and (pag is None or pag >= 0.05):
+                fdr_non_survivors.append(f"{t1} × {t2} (genotypic)")
+            if pap is not None and pap < 0.05:
+                fdr_survivors.append(f"{t1} × {t2} (phenotypic)")
+            elif sig_p and (pap is None or pap >= 0.05):
+                fdr_non_survivors.append(f"{t1} × {t2} (phenotypic)")
+
             pair_lines.append(
                 f"  {t1} × {t2}:\n"
                 f"    Genotypic  r = {_rv(rg)} ({sig_g_label}), p = {_pv(pg)}, p_adj(FDR) = {_pv(pag)}\n"
@@ -444,6 +489,41 @@ def generate_dual_mode_correlation_interpretation(
                 discordant.append((t1, t2, rg, rp))
 
         sections.append("\n".join(pair_lines))
+
+        # Confidence Interval Interpretation
+        if wide_ci_pairs:
+            sections.append(
+                f"Confidence Interval Alert:\n"
+                f"The following correlation(s) have wide confidence intervals (> 0.6), "
+                f"indicating high uncertainty in the estimates: {', '.join(wide_ci_pairs)}. "
+                f"This suggests the correlations may not be precisely estimated."
+            )
+        
+        if n_geno < 10:
+            sections.append(
+                "Confidence Interval Note:\n"
+                "Due to the small number of genotype means (n < 10), confidence intervals "
+                "are expected to be wide for genotypic associations, reflecting higher uncertainty."
+            )
+
+        # Stability Warning
+        if stability_warnings:
+            sections.append(
+                f"Stability Warning:\n"
+                f"High correlation estimates with small genotype panels may be sensitive to individual genotypes: "
+                f"{', '.join(stability_warnings)}. "
+                f"Results should be interpreted cautiously and validated with larger populations."
+            )
+
+        # Multiple Testing FDR Summary
+        if n_traits > 2:
+            fdr_summary = []
+            if fdr_survivors:
+                fdr_summary.append(f"Correlations surviving FDR adjustment: {', '.join(fdr_survivors)}")
+            if fdr_non_survivors:
+                fdr_summary.append(f"Correlations not surviving FDR adjustment: {', '.join(fdr_non_survivors)}")
+            if fdr_summary:
+                sections.append("Multiple Testing Summary (FDR):\n" + "\n".join(fdr_summary))
 
         if discordant:
             disc_items = "; ".join(
@@ -460,29 +540,50 @@ def generate_dual_mode_correlation_interpretation(
             )
 
     # ------------------------------------------------------------------
-    # 6. Objective-specific closing guidance
+    # 7. Objective-specific closing guidance
     # ------------------------------------------------------------------
     objective_closing = {
         "Field understanding": (
             "For field-level understanding, phenotypic correlations describe the co-variation "
-            "observed in this trial. Differences between phenotypic and genotypic r indicate "
+            "observed in this trial. Differences between phenotypic and genotypic associations indicate "
             "how much of the observed co-variation is attributable to within-genotype "
             "environmental effects versus consistent differences between genotypes."
         ),
         "Genotype comparison": (
-            "For genotype comparison, genotypic mean correlations are more informative. "
+            "For genotype comparison, genotypic associations are more informative. "
             "They reflect aggregate performance differences between genotypes, filtering out "
             "replication noise. Treat these as descriptive rankings — not as genetic parameters. "
             "Confidence in any ranking increases with more replications and a larger genotype panel."
         ),
         "Breeding decision": (
-            "For breeding decisions, both phenotypic and genotypic mean correlation are insufficient "
-            "as stand-alone evidence. Heritability estimates, variance component analysis, and "
-            "validation across target environments are necessary to confirm that observed "
-            "associations have a heritable basis amenable to selection. "
+            "For breeding decisions, both phenotypic and genotypic associations are insufficient "
+            "as stand-alone evidence. Correlation alone is insufficient for selection decisions. "
+            "Reliable breeding decisions require additional evidence such as heritability, "
+            "genetic parameters, and validation across environments. "
             "Avoid implementing indirect selection strategies based solely on this analysis."
         ),
     }
+    
+    # Add breeding guardrail for high correlations regardless of objective
+    high_corr_guardrail = False
+    if comparison:
+        for entry in comparison:
+            rg = entry["genotypic_r"]
+            rp = entry["phenotypic_r"]
+            if (rg is not None and abs(rg) > 0.6) or (rp is not None and abs(rp) > 0.6):
+                high_corr_guardrail = True
+                break
+    
+    if user_objective == "Breeding decision" or high_corr_guardrail:
+        sections.append(
+            "Breeding Decision Safeguard:\n"
+            "Correlation alone is insufficient for selection decisions. "
+            "Reliable breeding decisions require additional evidence such as heritability, "
+            "variance component analysis, and validation across target environments. "
+            "High correlations (|r| > 0.6) may suggest potential for indirect selection, "
+            "but this requires independent confirmation of genetic basis."
+        )
+    
     if user_objective in objective_closing:
         sections.append(
             f"Guidance for '{user_objective}':\n" + objective_closing[user_objective]
