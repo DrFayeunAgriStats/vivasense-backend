@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pandas as pd
 from fastapi import HTTPException
 
-from analysis_regression_routes import analysis_regression, RegressionRequest
+from analysis_regression_routes import analysis_regression, RegressionRequest, classify_strength
 
 
 class TestRegressionEndpoint(unittest.IsolatedAsyncioTestCase):
@@ -169,6 +169,26 @@ class TestRegressionEndpoint(unittest.IsolatedAsyncioTestCase):
         
         warning_texts = " ".join(res.warnings)
         self.assertIn("No statistically reliable linear relationship", warning_texts)
+
+
+class TestClassifyStrength(unittest.TestCase):
+    """Locked boundary tests for classify_strength() thresholds."""
+
+    def test_boundary_weak(self):
+        """R²=0.24 (just below 0.25) with p<0.05 → weak"""
+        self.assertEqual(classify_strength(0.24, 0.01), "weak")
+
+    def test_boundary_moderate(self):
+        """R²=0.25 (at lower moderate boundary) with p<0.05 → moderate"""
+        self.assertEqual(classify_strength(0.25, 0.01), "moderate")
+
+    def test_boundary_strong(self):
+        """R²=0.50 (at strong boundary) with p<0.05 → strong"""
+        self.assertEqual(classify_strength(0.50, 0.01), "strong")
+
+    def test_significance_override(self):
+        """p≥0.05 overrides R² regardless → negligible_or_unreliable"""
+        self.assertEqual(classify_strength(0.99, 0.06), "negligible_or_unreliable")
 
 
 if __name__ == '__main__':

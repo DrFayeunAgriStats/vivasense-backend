@@ -21,6 +21,38 @@ from pydantic import BaseModel, Field
 import dataset_cache
 
 
+def classify_strength(r_squared: float, p_value: float) -> str:
+    """
+    REGRESSION STRENGTH CLASSIFICATION THRESHOLDS (LOCKED)
+    These thresholds are intentionally explicit to prevent drift.
+    Change ONLY if a documented change request exists.
+
+    R² Classification:
+      R² < 0.25        -> "weak"
+      R² 0.25 – 0.49   -> "moderate"
+      R² >= 0.50       -> "strong"
+
+    Significance Override:
+      p >= 0.05        -> "negligible_or_unreliable"  (regardless of R²)
+
+    Decision Logic:
+      if p >= 0.05:        return "negligible_or_unreliable"
+      elif R² < 0.25:      return "weak"
+      elif R² < 0.50:      return "moderate"
+      else:                return "strong"
+
+    Last reviewed: 2026-04-18
+    Author: VivaSense Regression Module
+    """
+    if p_value >= 0.05:
+        return "negligible_or_unreliable"
+    if r_squared < 0.25:
+        return "weak"
+    if r_squared < 0.50:
+        return "moderate"
+    return "strong"
+
+
 def _read_file_for_regression(content: bytes, file_type: str) -> pd.DataFrame:
     """
     Minimal file reader for regression — no genetics-specific row-floor.
@@ -182,33 +214,50 @@ async def analysis_regression(request: RegressionRequest):
     # r = sign(slope) × sqrt(R²)  — algebraically exact for simple OLS.
     r_coef = math.copysign(math.sqrt(max(0.0, r_squared)), slope)
 
-    # Build Interpretation fields
-    is_sig = p_value_slope < 0.05
+    # Build interpretation fields — thresholds enforced via classify_strength()
+    strength  = classify_strength(r_squared, p_value_slope)
+    is_sig    = p_value_slope < 0.05
     sig_class = "significant" if is_sig else "not_significant"
 
-    # FIX 1, 2, 3: Apply strict overrides for non-significant results to prevent contradictory frontend text
     if not is_sig:
         direction = "no_clear_relationship"
-        strength = "negligible_or_unreliable"
-        plain_effect = "Because the fitted linear relationship is not statistically reliable, the estimated change per unit increase should not be interpreted as meaningful."
-        summary_interpretation = f"{request.x_variable} does not appear to be a useful linear predictor of {request.y_variable} in this dataset. Other factors may be more important in explaining variation in the response."
+        plain_effect = (
+            "Because the fitted linear relationship is not statistically reliable, "
+            "the estimated change per unit increase should not be interpreted as meaningful."
+        )
+        summary_interpretation = (
+            f"{request.x_variable} does not appear to be a useful linear predictor of "
+            f"{request.y_variable} in this dataset. Other factors may be more important "
+            "in explaining variation in the response."
+        )
     else:
         direction = "positive" if slope > 0 else "negative" if slope < 0 else "none"
-        # Bug 4 fix: R² < 0.25 → "weak" (previously 0.20, which allowed R²=0.08 to reach "moderate")
-        strength = "weak" if r_squared < 0.25 else "moderate" if r_squared < 0.50 else "strong"
-
         if slope > 0:
-            plain_effect = f"For every 1-unit increase in {request.x_variable}, {request.y_variable} increases by {slope:.4f} units on average."
+            plain_effect = (
+                f"For every 1-unit increase in {request.x_variable}, "
+                f"{request.y_variable} increases by {slope:.4f} units on average."
+            )
         elif slope < 0:
-            plain_effect = f"For every 1-unit increase in {request.x_variable}, {request.y_variable} decreases by {abs(slope):.4f} units on average."
+            plain_effect = (
+                f"For every 1-unit increase in {request.x_variable}, "
+                f"{request.y_variable} decreases by {abs(slope):.4f} units on average."
+            )
         else:
-            plain_effect = f"Changes in {request.x_variable} are not associated with changes in {request.y_variable}."
-
-        # Threshold mirrors the strength boundary (R² < 0.25 → limited)
+            plain_effect = (
+                f"Changes in {request.x_variable} are not associated with "
+                f"changes in {request.y_variable}."
+            )
+        # Summary text mirrors the R² threshold boundary in classify_strength()
         if r_squared < 0.25:
-            summary_interpretation = "A statistically detectable relationship is present, but the model explains only a limited proportion of the variation in the response."
+            summary_interpretation = (
+                "A statistically detectable relationship is present, but the model "
+                "explains only a limited proportion of the variation in the response."
+            )
         else:
-            summary_interpretation = "A statistically reliable linear relationship is present, and the model captures a meaningful proportion of the variation in the response."
+            summary_interpretation = (
+                "A statistically reliable linear relationship is present, and the model "
+                "captures a meaningful proportion of the variation in the response."
+            )
 
     # Publication-ready equation: "{outcome} = {intercept} + {slope} × {predictor}"
     # U+00D7 (×) is safe in UTF-8 JSON responses and python-docx (UTF-8 XML).
