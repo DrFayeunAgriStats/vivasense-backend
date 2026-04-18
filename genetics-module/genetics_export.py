@@ -394,26 +394,49 @@ def _add_correlation_section(doc: Document, corr: CorrelationResponse) -> None:
 
     for mode_name, stats in mode_list:
         _add_heading(doc, f"{mode_name} Correlations", level=2)
-        
-        headers = ["Trait 1", "Trait 2", "r-value", "p-value", "p-adj (FDR)", "Sig."]
+
+        is_vc = getattr(stats, "inference_approximate", False)
+        # Distinguish column headers: approximate inference for VC, exact for others
+        p_col      = "≈p-value"   if is_vc else "p-value"
+        p_adj_col  = "≈p-adj (FDR)" if is_vc else "p-adj (FDR)"
+        headers = ["Trait 1", "Trait 2", "rg" if is_vc else "r", p_col, p_adj_col, "Sig."]
+
         rows_data = []
         for i in range(n):
             for j in range(i + 1, n):
-                r_val = stats.r_matrix[i][j] if stats.r_matrix else None
-                p_val = stats.p_matrix[i][j] if stats.p_matrix else None
+                r_val     = stats.r_matrix[i][j]     if stats.r_matrix     else None
+                p_val     = stats.p_matrix[i][j]     if stats.p_matrix     else None
                 p_adj_val = stats.p_adj_matrix[i][j] if stats.p_adj_matrix else None
-                sig = _sig_label(p_val)
+                # For VC mode: if r exists but p is None, inference was suppressed for this pair
+                if is_vc and r_val is not None and p_val is None:
+                    p_display     = "unavailable"
+                    p_adj_display = "unavailable"
+                    sig_display   = "—"
+                else:
+                    p_display     = _fmt_p(p_val)
+                    p_adj_display = _fmt_p(p_adj_val)
+                    sig_display   = _sig_label(p_val) or "ns"
                 rows_data.append([
                     traits[i],
                     traits[j],
                     _fmt(r_val, 3, thousands=False),
-                    _fmt_p(p_val),
-                    _fmt_p(p_adj_val),
-                    sig if sig else "ns",
+                    p_display,
+                    p_adj_display,
+                    sig_display,
                 ])
 
         if rows_data:
             _add_stat_table(doc, headers, rows_data, numeric_cols={2})
+            doc.add_paragraph()
+
+        # Add inference note below the VC table
+        if is_vc:
+            note = getattr(stats, "inference_note", None) or (
+                "Genotypic correlation is estimated from variance components using a mixed model. "
+                "Confidence intervals and significance measures are approximate."
+            )
+            note_para = doc.add_paragraph(f"⚠ Note: {note}")
+            note_para.runs[0].italic = True
             doc.add_paragraph()
 
     # Auto-interpretation

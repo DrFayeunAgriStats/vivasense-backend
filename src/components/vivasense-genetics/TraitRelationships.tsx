@@ -398,8 +398,18 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
           </p>
           <p className="flex items-start gap-1.5 text-xs text-gray-400">
             <span className="shrink-0 mt-px">ℹ</span>
-            P-values are unadjusted for multiple comparisons.
+            Phenotypic and between-genotype p-values use standard cor.test(). P-values are
+            unadjusted for multiple comparisons; FDR-adjusted values are reported in the
+            interpretation text.
           </p>
+          {displayMode === "genotypic" && results.genotypic?.inference_approximate && (
+            <p className="flex items-start gap-1.5 text-xs text-amber-600">
+              <span className="shrink-0 mt-px">⚠</span>
+              {results.genotypic.inference_note ??
+                "Genotypic VC p-values and CIs are approximate (Fisher z on n_genotypes). " +
+                "Interpret cautiously — see interpretation text for details."}
+            </p>
+          )}
           <p className="flex items-start gap-1.5 text-xs text-gray-400">
             <span className="shrink-0 mt-px">ℹ</span>
             Analysis objective: {userObjective}

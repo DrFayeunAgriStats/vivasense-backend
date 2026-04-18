@@ -430,6 +430,17 @@ def generate_dual_mode_correlation_interpretation(
             "for strict statistical inference to control the false discovery rate."
         )
 
+    if genotypic_vc is not None:
+        warn_list.append(
+            "Genotypic VC mode (approximate inference): p-values and confidence intervals "
+            "for the genotypic correlation are based on Fisher's z approximation using "
+            "n_genotypes as the effective sample size. This understates uncertainty relative "
+            "to the true REML information matrix. Interpret cautiously, especially with small "
+            "sample sizes or when convergence warnings are present. "
+            "VC-based genotypic correlations should be validated with adequate data and "
+            "stable model fits before use in breeding decisions."
+        )
+
     if warn_list:
         sections.append(
             "Statistical Warnings:\n" + "\n".join(f"• {w}" for w in warn_list)
@@ -438,27 +449,41 @@ def generate_dual_mode_correlation_interpretation(
     # ------------------------------------------------------------------
     # 5. Mode distinction with correct scientific labels
     # ------------------------------------------------------------------
-    vc_mode_line = (
-        "• Genotypic Correlation (variance-component based): Estimated from bivariate REML "
-        "mixed models (sommer). Partitions genetic variance and covariance using genotype as a "
-        "random effect. The formula is rg = Covg(X,Y) / sqrt(Vg(X) × Vg(Y)). "
-        "This is the correct parameter for breeding inference, though precision depends on "
-        "the number of genotypes and replication structure."
-        if genotypic_vc is not None
-        else "• Genotypic Correlation (variance-component based): Not computed — "
-        "sommer package unavailable or insufficient data for bivariate REML."
-    )
+    if genotypic_vc is not None:
+        vc_note = genotypic_vc.get("inference_note") or (
+            "Genotypic correlation is estimated from variance components using a mixed model. "
+            "Confidence intervals and significance measures are approximate."
+        )
+        vc_mode_line = (
+            "• Genotypic Correlation (variance-component based): Estimated from bivariate REML "
+            "mixed models (sommer) using genotype as a random effect. "
+            "Formula: rg = Covg(X,Y) / sqrt(Vg(X) × Vg(Y)). "
+            "This is the breeding-relevant genetic parameter, but requires careful interpretation:\n"
+            "  – Inference (p-values, CIs) uses Fisher's z approximation with n_genotypes as "
+            "effective N; this understates uncertainty relative to the true REML information matrix.\n"
+            "  – Where a model did not converge or genetic variance was non-positive, rg is "
+            "suppressed and 'Reliable inference unavailable' is shown for that pair.\n"
+            "  – VC-based genotypic correlations should be validated with adequate data and "
+            "stable model fits before use in breeding decisions.\n"
+            f"  Model note: {vc_note}"
+        )
+    else:
+        vc_mode_line = (
+            "• Genotypic Correlation (variance-component based): Not computed — "
+            "sommer package unavailable or insufficient data for bivariate REML."
+        )
     sections.append(
         "Correlation Type and Mode Distinction:\n"
         "• Phenotypic Correlation (field-level relationship): Reflects co-variation among individual "
         "experimental units (plots or plants). Captures the joint effects of genetic variation, "
         "environmental heterogeneity, and management. Useful for understanding field-level co-variation "
-        "but does not isolate genetic from environmental effects.\n"
+        "but does not isolate genetic from environmental effects. "
+        "Inference uses standard Pearson/Spearman cor.test().\n"
         "• Between-Genotype Association (from genotype means): Reflects co-variation among genotype "
         "average performances across replications. Reduces within-genotype replication noise and is "
         "informative for genotype comparison. IMPORTANT: This is NOT a true quantitative genetic "
         "correlation — it does not partition genetic from residual variance using mixed models. "
-        "Elevated association between genotype means does not confirm a shared genetic basis.\n"
+        "Inference uses standard Pearson/Spearman cor.test() on genotype means.\n"
         + vc_mode_line
     )
 
@@ -503,7 +528,8 @@ def generate_dual_mode_correlation_interpretation(
 
             sig_bg_label = "sig." if sig_bg else "ns"
             sig_p_label  = "sig." if sig_p  else "ns"
-            sig_vc_label = "sig." if sig_vc else ("ns" if rvc is not None else "—")
+            # VC inference: mark as approx. when p is available; suppress when p is None but r exists
+            sig_vc_label = ("sig. (approx.)" if sig_vc else "ns (approx.)") if pvc is not None else ("—" if rvc is None else "inference suppressed")
 
             # Wide CI flags
             if cilo_bg is not None and cihi_bg is not None and (cihi_bg - cilo_bg) > 0.6:
@@ -529,11 +555,20 @@ def generate_dual_mode_correlation_interpretation(
             elif sig_vc and (pavc is None or pavc >= 0.05):
                 fdr_non_survivors.append(f"{t1} × {t2} (genotypic VC)")
 
-            vc_line = (
-                f"    Genotypic VC   r = {_rv(rvc)} ({sig_vc_label}), p = {_pv(pvc)}, p_adj(FDR) = {_pv(pavc)}"
-                if rvc is not None else
-                "    Genotypic VC   : not available"
-            )
+            if rvc is None:
+                vc_line = "    Genotypic VC        : not available (model failed or Vg non-positive)"
+            elif pvc is None:
+                vc_line = (
+                    f"    Genotypic VC        rg = {_rv(rvc)} — "
+                    "Reliable inference unavailable for this pair "
+                    "(n < 5 or |rg| = 1; p and CI suppressed)"
+                )
+            else:
+                vc_line = (
+                    f"    Genotypic VC        rg = {_rv(rvc)} ({sig_vc_label}), "
+                    f"≈p = {_pv(pvc)}, ≈p_adj(FDR) = {_pv(pavc)} "
+                    "[approx. inference — see model note]"
+                )
             pair_lines.append(
                 f"  {t1} × {t2}:\n"
                 f"    Phenotypic          r = {_rv(rp)} ({sig_p_label}), p = {_pv(pp)}, p_adj(FDR) = {_pv(pap)}\n"

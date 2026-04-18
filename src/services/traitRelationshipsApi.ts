@@ -38,6 +38,9 @@ export interface CorrelationStats {
   p_adj_matrix?: (number | null)[][];
   ci_lower_matrix?: (number | null)[][];
   ci_upper_matrix?: (number | null)[][];
+  /** True for genotypic VC mode: p-values and CIs are Fisher-z approximations. */
+  inference_approximate?: boolean;
+  inference_note?: string | null;
 }
 
 export interface CorrelationResponse {

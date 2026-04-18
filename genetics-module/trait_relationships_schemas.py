@@ -19,6 +19,9 @@ class CorrelationStats(BaseModel):
     p_adj_matrix: List[List[Optional[float]]]
     ci_lower_matrix: List[List[Optional[float]]]
     ci_upper_matrix: List[List[Optional[float]]]
+    # True only for genotypic VC mode: p-values and CIs are Fisher-z approximations
+    inference_approximate: bool = False
+    inference_note: Optional[str] = None
 
 class CorrelationRequest(BaseModel):
     base64_content: str = Field(..., description="Base64-encoded file content")

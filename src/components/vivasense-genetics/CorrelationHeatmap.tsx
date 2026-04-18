@@ -476,11 +476,21 @@ export function CorrelationHeatmap({ data, mode = 'phenotypic' }: CorrelationHea
           <ColorLegend />
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-400">
             <span>
-              {method === "spearman" ? "Spearman ρ" : "Pearson r"} ·{" "}
-              {n_observations} genotype means
+              {mode === "genotypic"
+                ? `rg (VC-based) · ${n_observations} genotypes`
+                : `${method === "spearman" ? "Spearman ρ" : "Pearson r"} · ${n_observations} ${mode === "phenotypic" ? "observations" : "genotype means"}`}
             </span>
-            <span>*** p&lt;0.001 · ** p&lt;0.01 · * p&lt;0.05 · ns ≥0.05</span>
+            {mode === "genotypic" ? (
+              <span className="text-amber-600">approx. p · *** &lt;0.001 · ** &lt;0.01 · * &lt;0.05 · ns ≥0.05</span>
+            ) : (
+              <span>*** p&lt;0.001 · ** p&lt;0.01 · * p&lt;0.05 · ns ≥0.05</span>
+            )}
           </div>
+          {mode === "genotypic" && (
+            <p className="mt-1 text-xs text-amber-600">
+              ⚠ Genotypic VC: p-values and CIs are approximate (Fisher z). Interpret cautiously.
+            </p>
+          )}
         </div>
       </div>
 

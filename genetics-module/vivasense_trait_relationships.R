@@ -293,7 +293,13 @@ compute_genotypic_vc_correlation <- function(data, trait_cols) {
       r_mat[j, i] <- rg
       any_success  <- TRUE
 
-      # Fisher z-based inference (uses n_genotypes as effective N)
+      # Approximate Fisher z-based inference.
+      # IMPORTANT: Fisher z SE = 1/sqrt(n-3) treats n_genotypes as independent
+      # observations of the correlation, which is an approximation — the true
+      # standard error of a REML-estimated rg depends on the information matrix
+      # of the bivariate model and is not computed here.  p-values and CIs are
+      # therefore conservative approximations only.
+      # Suppressed when n_ok < 5 (too few genotypes) or |rg| = 1 (boundary case).
       if (n_ok >= 5 && abs(rg) < 1.0) {
         z     <- atanh(rg)
         se_z  <- 1.0 / sqrt(n_ok - 3)
@@ -302,6 +308,11 @@ compute_genotypic_vc_correlation <- function(data, trait_cols) {
         p_mat[i, j]    <- p_val;  p_mat[j, i]    <- p_val
         ci_lower[i, j] <- tanh(z - z_crit * se_z); ci_lower[j, i] <- ci_lower[i, j]
         ci_upper[i, j] <- tanh(z + z_crit * se_z); ci_upper[j, i] <- ci_upper[i, j]
+      } else {
+        # Record why inference was suppressed
+        reason <- if (n_ok < 5) paste0(t1, " x ", t2, ": too few genotypes (n=", n_ok, ") for reliable inference")
+                  else paste0(t1, " x ", t2, ": |rg| = 1 — boundary value, inference suppressed")
+        vc_warnings <- c(vc_warnings, reason)
       }
     }
   }
@@ -329,14 +340,23 @@ compute_genotypic_vc_correlation <- function(data, trait_cols) {
   crit_r  <- if (!is.na(df_deg)) qt(0.975, df_deg) / sqrt(df_deg + qt(0.975, df_deg)^2) else NA_real_
 
   list(
-    n_observations  = n_geno,
-    df              = if (is.na(df_deg)) NULL else df_deg,
-    critical_r      = if (is.na(crit_r)) NULL else crit_r,
-    r_matrix        = unname(r_mat),
-    p_matrix        = unname(p_mat),
-    p_adj_matrix    = unname(p_adj_mat),
-    ci_lower_matrix = unname(ci_lower),
-    ci_upper_matrix = unname(ci_upper),
-    warnings        = vc_warnings
+    n_observations       = n_geno,
+    df                   = if (is.na(df_deg)) NULL else df_deg,
+    critical_r           = if (is.na(crit_r)) NULL else crit_r,
+    r_matrix             = unname(r_mat),
+    p_matrix             = unname(p_mat),
+    p_adj_matrix         = unname(p_adj_mat),
+    ci_lower_matrix      = unname(ci_lower),
+    ci_upper_matrix      = unname(ci_upper),
+    # Signal to consumers that all inference values (p, CI) are approximations
+    inference_approximate = TRUE,
+    inference_note        = paste0(
+      "Genotypic correlation is estimated from variance components using bivariate REML ",
+      "(sommer). p-values and confidence intervals use a Fisher z approximation with ",
+      "n_genotypes as the effective sample size — this understates uncertainty relative ",
+      "to the true REML information matrix. Interpret cautiously, especially with small ",
+      "genotype panels or when convergence warnings are present."
+    ),
+    warnings             = vc_warnings
   )
 }

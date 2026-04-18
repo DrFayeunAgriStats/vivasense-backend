@@ -221,6 +221,8 @@ class CorrelationStats(BaseModel):
     p_adj_matrix: List[List[Optional[float]]]
     ci_lower_matrix: List[List[Optional[float]]]
     ci_upper_matrix: List[List[Optional[float]]]
+    inference_approximate: bool = False
+    inference_note: Optional[str] = None
 
 class CorrelationModuleRequest(ModuleRequest):
     """Extends ModuleRequest with correlation-specific options."""
