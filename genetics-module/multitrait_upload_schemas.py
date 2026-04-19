@@ -39,6 +39,11 @@ class UploadPreviewResponse(BaseModel):
 
     Returned before analysis so the user can confirm/correct the column
     mapping. No genetics computation occurs at this stage.
+
+    dataset_token is populated at preview time so the frontend can immediately
+    pass it to /analysis/* endpoints without requiring a separate
+    POST /upload/dataset call.  The token uses auto-detected column defaults
+    and can be superseded by a confirmed token from POST /upload/dataset.
     """
     detected_columns: DetectedColumns
     n_rows: int
@@ -53,6 +58,14 @@ class UploadPreviewResponse(BaseModel):
     )
     column_names: List[str]
     warnings: List[str] = Field(default_factory=list)
+    dataset_token: Optional[str] = Field(
+        default=None,
+        description=(
+            "Dataset token registered in the backend cache using auto-detected "
+            "column defaults. Pass directly to /analysis/* endpoints. "
+            "Superseded when the user confirms column mapping via POST /upload/dataset."
+        ),
+    )
 
 
 # ============================================================================

@@ -36,6 +36,10 @@ export interface UploadPreviewResponse {
   mode_suggestion: "single" | "multi";
   column_names: string[];
   warnings: string[];
+  /** Dataset token registered at preview time using auto-detected columns.
+   *  Pass directly to /analysis/* endpoints. Superseded by a confirmed token
+   *  from POST /upload/dataset once the user confirms column mapping. */
+  dataset_token?: string | null;
 }
 
 export interface UploadAnalysisRequest {

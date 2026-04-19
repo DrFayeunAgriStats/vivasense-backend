@@ -33,7 +33,7 @@ from multitrait_upload_schemas import (
     UploadPreviewResponse,
 )
 from module_schemas import UploadDatasetRequest, UploadDatasetResponse
-import dataset_cache
+import dataset_cache  # noqa: E402 — already imported above for upload/dataset
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Upload"])
@@ -100,6 +100,32 @@ async def upload_preview_v2(file: UploadFile = File(...)):
         for row in df.head(5).to_dict(orient="records")
     ]
 
+    # Register dataset in cache using auto-detected defaults so the frontend
+    # receives a usable dataset_token from the preview response — no separate
+    # POST /upload/dataset call required before hitting /analysis/* endpoints.
+    preview_token: Optional[str] = None
+    try:
+        b64 = base64.b64encode(content).decode("ascii")
+        preview_token = dataset_cache.create_token()
+        dataset_cache.put_dataset(preview_token, {
+            "base64_content":     b64,
+            "file_type":          file_type,
+            "genotype_column":    detected.genotype.column if detected.genotype else None,
+            "rep_column":         detected.rep.column if detected.rep else None,
+            "environment_column": detected.environment.column if detected.environment else None,
+            "factor_column":      None,
+            "main_plot_column":   None,
+            "sub_plot_column":    None,
+            "mode":               mode_suggestion,
+            "design_type":        mode_suggestion,
+            "random_environment": False,
+            "selection_intensity": 2.06,
+        })
+        logger.info("upload/preview: auto-registered dataset token %s", preview_token)
+    except Exception as exc:
+        logger.warning("upload/preview: failed to register dataset token — %s", exc)
+        preview_token = None
+
     return UploadPreviewResponse(
         detected_columns=detected,
         n_rows=len(df),
@@ -108,6 +134,7 @@ async def upload_preview_v2(file: UploadFile = File(...)):
         mode_suggestion=mode_suggestion,
         column_names=list(df.columns),
         warnings=warnings,
+        dataset_token=preview_token,
     )
 
 

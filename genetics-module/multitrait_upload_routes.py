@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
+import dataset_cache
 from multitrait_upload_schemas import (
     DatasetSummary,
     DetectedColumn,
@@ -552,6 +553,34 @@ async def upload_preview(file: UploadFile = File(...)):
         for row in preview_head.to_dict(orient="records")
     ]
 
+    # Register dataset in cache using auto-detected column defaults.
+    # This gives the frontend a valid dataset_token immediately — so
+    # /analysis/descriptive-stats (and other module endpoints) can be called
+    # without requiring a separate POST /upload/dataset confirmation step.
+    # The token is superseded when the user confirms mappings via /upload/dataset.
+    preview_token: Optional[str] = None
+    try:
+        b64 = base64.b64encode(content).decode("ascii")
+        preview_token = dataset_cache.create_token()
+        dataset_cache.put_dataset(preview_token, {
+            "base64_content":     b64,
+            "file_type":          file_type,
+            "genotype_column":    detected.genotype.column if detected.genotype else None,
+            "rep_column":         detected.rep.column if detected.rep else None,
+            "environment_column": detected.environment.column if detected.environment else None,
+            "factor_column":      None,
+            "main_plot_column":   None,
+            "sub_plot_column":    None,
+            "mode":               mode_suggestion,
+            "design_type":        mode_suggestion,
+            "random_environment": False,
+            "selection_intensity": 2.06,
+        })
+        logger.info("upload-preview: auto-registered dataset token %s", preview_token)
+    except Exception as exc:
+        logger.warning("upload-preview: failed to register dataset token — %s", exc)
+        preview_token = None
+
     return UploadPreviewResponse(
         detected_columns=detected,
         n_rows=len(df),
@@ -560,6 +589,7 @@ async def upload_preview(file: UploadFile = File(...)):
         mode_suggestion=mode_suggestion,
         column_names=list(df.columns),
         warnings=warn,
+        dataset_token=preview_token,
     )
 
 
