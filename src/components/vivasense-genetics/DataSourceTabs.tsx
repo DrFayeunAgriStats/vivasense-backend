@@ -30,7 +30,7 @@
 import React, { useState } from "react";
 import { UploadDatasetContext } from "@/services/geneticsUploadApi";
 
-type TabId = "manual" | "upload" | "relationships";
+type TabId = "manual" | "upload" | "relationships" | "descriptive";
 
 interface DataSourceTabsProps {
   /** The existing manual input form / component */
@@ -48,17 +48,25 @@ interface DataSourceTabsProps {
    * When omitted, the third tab is not rendered.
    */
   traitRelationshipsContent?: (ctx: UploadDatasetContext | null) => React.ReactNode;
+  /**
+   * Render-prop for the Descriptive Statistics tab.
+   * Receives the current dataset context including dataset_token.
+   * When omitted, the Descriptive Statistics tab is not rendered.
+   */
+  descriptiveStatsContent?: (ctx: UploadDatasetContext | null) => React.ReactNode;
 }
 
 export function DataSourceTabs({
   manualContent,
   uploadContent,
   traitRelationshipsContent,
+  descriptiveStatsContent,
 }: DataSourceTabsProps) {
   const [active, setActive] = useState<TabId>("manual");
   const [datasetContext, setDatasetContext] = useState<UploadDatasetContext | null>(null);
 
   const showRelationships = typeof traitRelationshipsContent === "function";
+  const showDescriptive = typeof descriptiveStatsContent === "function";
 
   type TabDef = { id: TabId; label: string; icon: string; description: string };
 
@@ -82,6 +90,16 @@ export function DataSourceTabs({
             label: "Trait Relationships",
             icon: "🔗",
             description: "Correlations between traits",
+          },
+        ]
+      : []),
+    ...(showDescriptive
+      ? [
+          {
+            id: "descriptive" as TabId,
+            label: "Descriptive Stats",
+            icon: "📊",
+            description: "Summary statistics per trait",
           },
         ]
       : []),
@@ -115,9 +133,9 @@ export function DataSourceTabs({
               — {tab.description}
             </span>
             {/* Badge: shows when a dataset is ready and this tab is inactive */}
-            {tab.id === "relationships" &&
+            {(tab.id === "relationships" || tab.id === "descriptive") &&
               datasetContext !== null &&
-              active !== "relationships" && (
+              active !== tab.id && (
                 <span className="ml-1 h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
               )}
           </button>
@@ -135,6 +153,11 @@ export function DataSourceTabs({
         {showRelationships && (
           <div className={active === "relationships" ? "block" : "hidden"}>
             {traitRelationshipsContent(datasetContext)}
+          </div>
+        )}
+        {showDescriptive && (
+          <div className={active === "descriptive" ? "block" : "hidden"}>
+            {descriptiveStatsContent(datasetContext)}
           </div>
         )}
       </div>

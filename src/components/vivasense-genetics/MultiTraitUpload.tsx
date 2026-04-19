@@ -15,6 +15,7 @@ import { ResultsDisplay } from "./ResultsDisplay";
 import {
   previewUpload,
   analyzeUpload,
+  confirmDataset,
   fileToBase64,
   inferFileType,
   UploadPreviewResponse,
@@ -65,8 +66,37 @@ export function MultiTraitUpload({ onDatasetReady }: MultiTraitUploadProps = {})
     try {
       const base64_content = await fileToBase64(file);
 
-      // Share dataset context with sibling components (e.g. Trait Relationships)
-      // before the analysis call so the context is available immediately.
+      // Step B — Register dataset in backend cache → receive dataset_token.
+      // This token is required by all /analysis/* module endpoints (descriptive
+      // stats, ANOVA module, genetic parameters module, correlation module).
+      // Non-fatal: if /upload/dataset fails the existing /genetics/analyze-upload
+      // pipeline still runs; module-based endpoints simply become unavailable.
+      let datasetToken: string | null = null;
+      try {
+        const confirmed = await confirmDataset({
+          base64_content,
+          file_type: inferFileType(file),
+          genotype_column: mapping.genotypeColumn || null,
+          rep_column: mapping.repColumn || null,
+          environment_column:
+            mapping.mode === "multi" ? mapping.environmentColumn || null : null,
+          mode: mapping.mode,
+          design_type: mapping.mode === "multi" ? "multi" : "single",
+          random_environment: mapping.randomEnvironment,
+          selection_intensity: 2.06,
+        });
+        datasetToken = confirmed.dataset_token;
+        console.log("[MultiTraitUpload] dataset_token acquired:", datasetToken);
+      } catch (tokenErr) {
+        console.warn(
+          "[MultiTraitUpload] POST /upload/dataset failed — module endpoints (descriptive stats) unavailable:",
+          tokenErr
+        );
+      }
+
+      // Share dataset context with sibling components (Trait Relationships,
+      // Descriptive Stats) before the analysis call so context is immediately
+      // available. datasetToken is null if /upload/dataset failed.
       onDatasetReady?.({
         file,
         base64Content: base64_content,
@@ -77,6 +107,7 @@ export function MultiTraitUpload({ onDatasetReady }: MultiTraitUploadProps = {})
           mapping.mode === "multi" ? mapping.environmentColumn || undefined : undefined,
         availableTraitColumns: preview?.detected_columns.traits ?? mapping.selectedTraits,
         mode: mapping.mode,
+        datasetToken,
       });
 
       const data = await analyzeUpload({

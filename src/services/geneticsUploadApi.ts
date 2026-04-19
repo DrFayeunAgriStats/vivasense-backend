@@ -336,8 +336,7 @@ export function fileToBase64(file: File): Promise<string> {
 /**
  * Snapshot of a confirmed upload session.
  * Passed from MultiTraitUpload (via onDatasetReady) up to DataSourceTabs,
- * then down into TraitRelationships so it can run correlation without
- * requiring a second file upload.
+ * then down into TraitRelationships and DescriptiveStatsModule.
  */
 export interface UploadDatasetContext {
   /** The original File object (kept for display purposes). */
@@ -352,6 +351,118 @@ export interface UploadDatasetContext {
   /** All numeric columns detected in the file (not just the ones selected for heritability). */
   availableTraitColumns: string[];
   mode: "single" | "multi";
+  /**
+   * Token from POST /upload/dataset. Required by all /analysis/* module endpoints.
+   * Null if dataset confirmation failed (module-based endpoints unavailable).
+   */
+  datasetToken: string | null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DATASET CONFIRMATION  (POST /upload/dataset)
+// Step B in the module-based pipeline: register the confirmed dataset in the
+// backend cache and receive a dataset_token for all /analysis/* endpoints.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ConfirmDatasetRequest {
+  base64_content: string;
+  file_type: "csv" | "xlsx" | "xls";
+  genotype_column: string | null;
+  rep_column: string | null;
+  environment_column?: string | null;
+  mode: "single" | "multi";
+  design_type?: "single" | "multi";
+  random_environment?: boolean;
+  selection_intensity?: number;
+}
+
+export interface ConfirmDatasetResponse {
+  dataset_token: string;
+  n_genotypes: number | null;
+  n_reps: number;
+  n_environments: number | null;
+  n_rows: number;
+  column_names: string[];
+  mode: string;
+  design_type: string;
+}
+
+export async function confirmDataset(
+  request: ConfirmDatasetRequest
+): Promise<ConfirmDatasetResponse> {
+  const url = `${ENGINE_BASE}/upload/dataset`;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Network error confirming dataset: ${msg}`);
+  }
+  if (!response.ok) {
+    const detail = await extractErrorDetail(response);
+    throw new Error(`Dataset confirmation failed — ${detail}`);
+  }
+  return response.json() as Promise<ConfirmDatasetResponse>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DESCRIPTIVE STATISTICS  (POST /analysis/descriptive-stats)
+// Requires a valid dataset_token from POST /upload/dataset.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface TraitDescriptiveResult {
+  trait: string;
+  n: number;
+  mean: number | null;
+  minimum: number | null;
+  maximum: number | null;
+  sd: number | null;
+  cv_percent: number | null;
+  median: number | null;
+  skewness: number | null;
+  kurtosis: number | null;
+  missing_count: number;
+  zero_count: number;
+  precision_class: string;
+  flags: string[];
+  interpretation: string;
+}
+
+export interface DescriptiveStatsResponse {
+  dataset_token: string;
+  overview: { n_traits: number; n_observations: number };
+  summary_table: TraitDescriptiveResult[];
+  reliable_traits: string[];
+  caution_traits: string[];
+  global_flags: string[];
+  recommendation: string;
+}
+
+export async function runDescriptiveStats(request: {
+  dataset_token: string;
+  trait_columns: string[];
+}): Promise<DescriptiveStatsResponse> {
+  const url = `${ENGINE_BASE}/analysis/descriptive-stats`;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Network error running descriptive stats: ${msg}`);
+  }
+  if (!response.ok) {
+    const detail = await extractErrorDetail(response);
+    throw new Error(`Descriptive statistics failed — ${detail}`);
+  }
+  return response.json() as Promise<DescriptiveStatsResponse>;
 }
 
 /** Infer file_type from File.name */
