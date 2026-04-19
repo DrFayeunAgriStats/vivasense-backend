@@ -20,9 +20,21 @@ router = APIRouter(tags=["Analysis"])
 
 @router.post("/analysis/descriptive-stats", response_model=DescriptiveResponse, summary="Compute comprehensive descriptive statistics")
 async def analyze_descriptive_stats(request: ModuleRequest):
+    if not request.dataset_token:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "dataset_token is required. Upload a file via POST /genetics/upload-preview "
+                "and use the dataset_token returned in that response."
+            ),
+        )
+
     ctx = dataset_cache.get_dataset(request.dataset_token)
     if not ctx:
-        raise HTTPException(status_code=404, detail="Dataset not found. Re-upload to get a new token.")
+        raise HTTPException(
+            status_code=404,
+            detail="Dataset not found or session expired. Re-upload to get a fresh token.",
+        )
     
     try:
         df = read_file(base64.b64decode(ctx["base64_content"]), ctx["file_type"])

@@ -99,7 +99,14 @@ class UploadDatasetResponse(BaseModel):
 
 class ModuleRequest(BaseModel):
     """Base request body for all /analysis/* endpoints."""
-    dataset_token: str = Field(..., description="Token from POST /upload/dataset")
+    dataset_token: Optional[str] = Field(
+        default=None,
+        description=(
+            "Token from POST /upload/dataset (or returned by POST /genetics/upload-preview). "
+            "When null the endpoint returns 400 with a user-friendly message instead of "
+            "a 422 Pydantic validation error."
+        ),
+    )
     trait_columns: List[str] = Field(..., min_length=1)
 
 
