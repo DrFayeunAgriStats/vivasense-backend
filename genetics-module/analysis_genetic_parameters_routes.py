@@ -32,7 +32,7 @@ from module_schemas import (
     DescriptiveStats,
     ModuleRequest,
 )
-from analysis_anova_routes import compute_descriptive_stats
+from analysis_utils import compute_descriptive_stats
 import dataset_cache
 from genetics_interpretation import generate_genetics_interpretation
 

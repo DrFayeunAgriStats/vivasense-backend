@@ -117,6 +117,11 @@ class DescriptiveStats(BaseModel):
     min: Optional[float] = None
     max: Optional[float] = None
     range: Optional[float] = None
+    median: Optional[float] = None
+    skewness: Optional[float] = None
+    kurtosis: Optional[float] = None
+    missing_count: int = 0
+    zero_count: int = 0
 
 
 class GenotypeDescriptiveStats(BaseModel):
@@ -368,3 +373,34 @@ class TraitAssociationModuleResponse(BaseModel):
     interpretation_placeholder: InterpretationPlaceholder = Field(default_factory=InterpretationPlaceholder)
     dataset_token: str
     warnings: List[str] = Field(default_factory=list)
+
+
+# ============================================================================
+# DESCRIPTIVE STATISTICS MODULE
+# ============================================================================
+
+class TraitDescriptiveResult(BaseModel):
+    trait: str
+    n: int
+    mean: Optional[float] = None
+    minimum: Optional[float] = None
+    maximum: Optional[float] = None
+    sd: Optional[float] = None
+    cv_percent: Optional[float] = None
+    median: Optional[float] = None
+    skewness: Optional[float] = None
+    kurtosis: Optional[float] = None
+    missing_count: int
+    zero_count: int
+    precision_class: str
+    flags: List[str]
+    interpretation: str
+
+class DescriptiveResponse(BaseModel):
+    dataset_token: str
+    overview: Dict[str, Any]
+    summary_table: List[TraitDescriptiveResult]
+    reliable_traits: List[str]
+    caution_traits: List[str]
+    global_flags: List[str]
+    recommendation: str

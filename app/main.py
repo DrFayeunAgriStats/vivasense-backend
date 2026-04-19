@@ -133,6 +133,16 @@ try:
 except Exception as _e:
     print(f"WARN: upload router not loaded — {_e}", flush=True)
 
+# Step 5.5 — Descriptive Stats analysis module (/analysis/descriptive-stats)
+_an_desc_ok = False
+try:
+    from analysis_descriptive_stats_routes import router as desc_router  # noqa: E402
+    app.include_router(desc_router)
+    _an_desc_ok = True
+    print("Router registered: analysis-descriptive-stats (/analysis/descriptive-stats)", flush=True)
+except Exception as _e:
+    print(f"WARN: analysis-descriptive-stats router not loaded — {_e}", flush=True)
+
 # Step 6 — ANOVA analysis module (/analysis/anova)
 _an_anova_ok = False
 try:
@@ -227,6 +237,7 @@ async def startup_event() -> None:
     logger.info("genetics-export router loaded: %s", _ex_ok)
     logger.info("genetics-analyze router loaded: %s", _ag_ok)
     logger.info("upload router loaded: %s", _up_ok)
+    logger.info("analysis-descriptive-stats router loaded: %s", _an_desc_ok)
     logger.info("analysis-anova router loaded: %s", _an_anova_ok)
     logger.info("analysis-genetic-parameters router loaded: %s", _an_gp_ok)
     logger.info("analysis-correlation router loaded: %s", _an_corr_ok)

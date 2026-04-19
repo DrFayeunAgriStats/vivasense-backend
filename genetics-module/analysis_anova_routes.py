@@ -32,6 +32,7 @@ from genetics_schemas import GeneticsResponse
 from multitrait_upload_routes import build_observations, check_balance, read_file
 from module_schemas import AnovaModuleResponse, AnovaTraitResult, ModuleRequest
 import dataset_cache
+from analysis_utils import compute_descriptive_stats, compute_per_genotype_stats, classify_precision_level
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Analysis"])
@@ -552,123 +553,6 @@ def generate_anova_interpretation(
     sections.append(("Recommendation", " ".join(recs)))
 
     return "\n\n".join(f"{heading}\n{content}" for heading, content in sections)
-
-
-def compute_descriptive_stats(series: pd.Series) -> Dict[str, Optional[float]]:
-    """Compute numeric descriptive statistics for a trait series.
-
-    This uses raw observation-level data and ignores missing values.
-    If insufficient observations exist, variance/SD/SE are returned as None.
-    """
-    clean = pd.to_numeric(series, errors="coerce").dropna()
-    n = len(clean)
-
-    if n == 0:
-        return {
-            "grand_mean": None,
-            "standard_deviation": None,
-            "variance": None,
-            "standard_error": None,
-            "cv_percent": None,
-            "min": None,
-            "max": None,
-            "range": None,
-        }
-
-    grand_mean = float(clean.mean())
-    min_val = float(clean.min())
-    max_val = float(clean.max())
-    range_val = max_val - min_val
-
-    if n >= 2:
-        variance = float(clean.var(ddof=1))
-        standard_deviation = float(variance ** 0.5)
-        standard_error = float(standard_deviation / (n ** 0.5))
-    else:
-        variance = None
-        standard_deviation = None
-        standard_error = None
-
-    cv_percent = None
-    if grand_mean != 0 and standard_deviation is not None:
-        cv_percent = float((standard_deviation / grand_mean) * 100)
-
-    return {
-        "grand_mean": grand_mean,
-        "standard_deviation": standard_deviation,
-        "variance": variance,
-        "standard_error": standard_error,
-        "cv_percent": cv_percent,
-        "min": min_val,
-        "max": max_val,
-        "range": range_val,
-    }
-
-
-def compute_per_genotype_stats(
-    df: pd.DataFrame, trait_column: str, genotype_column: str
-) -> List[Dict[str, Optional[float]]]:
-    """Compute per-genotype descriptive statistics for the requested trait."""
-    if genotype_column not in df.columns:
-        return []
-
-    grouped = df[[genotype_column, trait_column]].copy()
-    grouped[trait_column] = pd.to_numeric(grouped[trait_column], errors="coerce")
-
-    stats: List[Dict[str, Optional[float]]] = []
-    for genotype, group in grouped.groupby(genotype_column, sort=True):
-        clean = group[trait_column].dropna()
-        n = len(clean)
-
-        if n == 0:
-            stats.append(
-                {
-                    "genotype": genotype,
-                    "mean": None,
-                    "sd": None,
-                    "cv_percent": None,
-                }
-            )
-            continue
-
-        mean_val = float(clean.mean())
-        sd_val = None
-        cv_percent = None
-
-        if n >= 2:
-            variance = float(clean.var(ddof=1))
-            sd_val = float(variance ** 0.5)
-            if mean_val != 0:
-                cv_percent = float((sd_val / mean_val) * 100)
-
-        stats.append(
-            {
-                "genotype": genotype,
-                "mean": mean_val,
-                "sd": sd_val,
-                "cv_percent": cv_percent,
-            }
-        )
-
-    return stats
-
-
-def classify_precision_level(cv_percent: Optional[float]) -> str:
-    """Classify experimental precision based on coefficient of variation.
-
-    Thresholds (aligned with VivaSense ANOVA spec):
-      < 10  → good
-      10–20 → moderate   (20 inclusive)
-      > 20  → low
-    """
-    if cv_percent is None:
-        return "low"  # No CV available, assume low precision
-    if cv_percent < 10.0:
-        return "good"
-    elif cv_percent <= 20.0:
-        return "moderate"
-    else:
-        return "low"
 
 
 def get_cv_interpretation_flag(cv_percent: Optional[float]) -> str:

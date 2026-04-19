@@ -209,6 +209,14 @@ try:
 except Exception as _e:
     logger.warning("upload router not loaded — %s", _e)
 
+# Step 5.5 — Descriptive Stats analysis module (/analysis/descriptive-stats)
+try:
+    from analysis_descriptive_stats_routes import router as desc_router
+    app.include_router(desc_router)
+    logger.info("analysis-descriptive-stats router loaded (/analysis/descriptive-stats)")
+except Exception as _e:
+    logger.warning("analysis-descriptive-stats router not loaded — %s", _e)
+
 # Step 6 — ANOVA analysis module (/analysis/anova)
 try:
     from analysis_anova_routes import router as anova_router
