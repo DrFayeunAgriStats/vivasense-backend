@@ -789,12 +789,30 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                 SummaryTableRow(trait=trait, status="failed", error=error_msg)
             )
 
+    # Ensure session state is preserved even if individual analyses fail
+    dataset_token = dataset_cache.create_token()
+    dataset_cache.put_dataset(dataset_token, {
+        "base64_content":     request.base64_content,
+        "file_type":          request.file_type,
+        "genotype_column":    request.genotype_column,
+        "rep_column":         request.rep_column,
+        "environment_column": request.environment_column,
+        "factor_column":      factor_col,
+        "main_plot_column":   getattr(request, "main_plot_column", None),
+        "sub_plot_column":    getattr(request, "sub_plot_column", None),
+        "mode":               request.mode,
+        "design_type":        request.mode,
+        "random_environment": request.random_environment,
+        "selection_intensity": request.selection_intensity,
+    })
+
     # Build the full response first (without token so the object is complete)
     response = UploadAnalysisResponse(
         summary_table=summary_table,
         trait_results=trait_results,
         dataset_summary=dataset_summary,
         failed_traits=failed_traits,
+        dataset_token=dataset_token,
     )
 
     print(f"[EXPORT] Generating {actual_module.upper()} report — {len(summary_table)} trait(s) processed", flush=True)

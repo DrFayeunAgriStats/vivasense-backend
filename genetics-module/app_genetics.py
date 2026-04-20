@@ -364,6 +364,14 @@ if ("factor" %in% colnames(data)) {{
   data$factor <- as.character(data$factor)
 }}
 
+# Ensure Type III Sum of Squares is used for unbalanced data
+if (requireNamespace("car", quietly = TRUE)) {{
+  library(car)
+  options(contrasts = c("contr.sum", "contr.poly"))
+}} else {{
+  warning("Package 'car' is not available. Standard ANOVA will be used, which may be biased for unbalanced data.")
+}}
+
 # Run analysis
 result <- genetics_analysis(
     data = data,

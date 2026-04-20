@@ -183,3 +183,7 @@ class UploadAnalysisResponse(BaseModel):
         default=None,
         description="Cache token — pass back to /download-results for full export",
     )
+    dataset_token: Optional[str] = Field(
+        default=None,
+        description="Dataset context token for subsequent analysis endpoints.",
+    )
