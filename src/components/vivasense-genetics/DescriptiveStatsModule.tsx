@@ -286,7 +286,23 @@ export function DescriptiveStatsModule({ datasetContext }: DescriptiveStatsModul
   const clearAll = () => setSelectedTraits([]);
 
   const handleRun = async () => {
-    if (!canRun || !token) return;
+    if (!canRun) return;
+
+    // Runtime guard: token must be present before the request is sent.
+    // This catches any case where the run button is triggered programmatically
+    // before dataset confirmation has completed.
+    if (!token) {
+      setError(
+        "Preview completed, but dataset confirmation is still required. " +
+        "Re-upload your file and confirm the column mapping to receive a dataset token."
+      );
+      return;
+    }
+
+    console.log(
+      "[DescriptiveStats] sending request — dataset_token:", token,
+      "| traits:", selectedTraits,
+    );
     setLoading(true);
     setError(null);
     setResults(null);
@@ -295,6 +311,7 @@ export function DescriptiveStatsModule({ datasetContext }: DescriptiveStatsModul
         dataset_token: token,
         trait_columns: selectedTraits,
       });
+      console.log("[DescriptiveStats] response received — n_traits:", data.overview.n_traits);
       setResults(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Descriptive statistics failed");

@@ -66,43 +66,43 @@ export function MultiTraitUpload({ onDatasetReady }: MultiTraitUploadProps = {})
     try {
       const base64_content = await fileToBase64(file);
 
-      // Step B — Obtain dataset_token for /analysis/* module endpoints.
-      // Prefer the token already returned by /genetics/upload-preview (preview_token).
-      // If not present, call POST /upload/dataset with confirmed column mappings
-      // to get a token that reflects the user's selections.
-      // Non-fatal: existing /genetics/analyze-upload pipeline works without a token.
-      let datasetToken: string | null = preview?.dataset_token ?? null;
-
-      if (!datasetToken) {
-        try {
-          const confirmed = await confirmDataset({
-            base64_content,
-            file_type: inferFileType(file),
-            genotype_column: mapping.genotypeColumn || null,
-            rep_column: mapping.repColumn || null,
-            environment_column:
-              mapping.mode === "multi" ? mapping.environmentColumn || null : null,
-            mode: mapping.mode,
-            design_type: mapping.mode === "multi" ? "multi" : "single",
-            random_environment: mapping.randomEnvironment,
-            selection_intensity: 2.06,
-          });
-          datasetToken = confirmed.dataset_token;
-          console.log("[MultiTraitUpload] dataset_token from /upload/dataset:", datasetToken);
-        } catch (tokenErr) {
-          console.warn(
-            "[MultiTraitUpload] POST /upload/dataset failed — module endpoints unavailable:",
-            tokenErr
-          );
-        }
-      } else {
-        console.log("[MultiTraitUpload] dataset_token from preview:", datasetToken);
+      // Always call POST /upload/dataset with the user's confirmed column mapping.
+      // Never shortcut via the preview token — that token was registered with
+      // auto-detected defaults and may not reflect the user's actual selections.
+      // Module endpoints (/analysis/*) require a token from this confirmation step.
+      console.log("[MultiTraitUpload] calling POST /upload/dataset with confirmed mapping…");
+      let datasetToken: string | null = null;
+      try {
+        const confirmed = await confirmDataset({
+          base64_content,
+          file_type: inferFileType(file),
+          genotype_column: mapping.genotypeColumn || null,
+          rep_column: mapping.repColumn || null,
+          environment_column:
+            mapping.mode === "multi" ? mapping.environmentColumn || null : null,
+          mode: mapping.mode,
+          design_type: mapping.mode === "multi" ? "multi" : "single",
+          random_environment: mapping.randomEnvironment,
+          selection_intensity: 2.06,
+        });
+        datasetToken = confirmed.dataset_token;
+        console.log(
+          "[MultiTraitUpload] POST /upload/dataset succeeded — dataset_token:",
+          datasetToken,
+          "| n_rows:", confirmed.n_rows,
+          "| n_reps:", confirmed.n_reps,
+        );
+      } catch (tokenErr) {
+        console.warn(
+          "[MultiTraitUpload] POST /upload/dataset failed — module endpoints (descriptive stats, etc.) will be unavailable:",
+          tokenErr
+        );
       }
 
       // Share dataset context with sibling components (Trait Relationships,
-      // Descriptive Stats) before the analysis call so context is immediately
-      // available. datasetToken is null if /upload/dataset failed.
-      onDatasetReady?.({
+      // Descriptive Stats) after dataset confirmation.
+      // datasetToken is null only if /upload/dataset failed above.
+      const ctx: UploadDatasetContext = {
         file,
         base64Content: base64_content,
         fileType: inferFileType(file),
@@ -113,7 +113,13 @@ export function MultiTraitUpload({ onDatasetReady }: MultiTraitUploadProps = {})
         availableTraitColumns: preview?.detected_columns.traits ?? mapping.selectedTraits,
         mode: mapping.mode,
         datasetToken,
-      });
+      };
+      console.log(
+        "[MultiTraitUpload] sharing dataset context — datasetToken:",
+        ctx.datasetToken,
+        "| availableTraitColumns:", ctx.availableTraitColumns,
+      );
+      onDatasetReady?.(ctx);
 
       const data = await analyzeUpload({
         base64_content,
