@@ -404,7 +404,7 @@ class TraitDescriptiveResult(BaseModel):
     interpretation: str
 
 class DescriptiveResponse(BaseModel):
-    dataset_token: str
+    dataset_token: Optional[str] = None
     overview: Dict[str, Any]
     summary_table: List[TraitDescriptiveResult]
     reliable_traits: List[str]

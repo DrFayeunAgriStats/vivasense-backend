@@ -1069,12 +1069,17 @@ async def export_regression_word(data: RegressionResponse):
     tags=["Export"],
 )
 async def export_descriptive_stats_word(data: DescriptiveResponse):
+    logger.info(
+        "[DESC_EXPORT] Request received: %d traits, token=%s",
+        len(data.summary_table),
+        data.dataset_token or "none",
+    )
     try:
         doc = _new_document(
             "VivaSense Descriptive Statistics Report",
             f"{len(data.summary_table)} trait(s) analysed",
         )
-        
+
         # ── 1. Executive Summary ──────────────────────────────────────────────
         _add_heading(doc, "Executive Summary", level=1)
         _add_body(doc, "This report outlines the descriptive statistics, data quality checks, and variability analyses for the selected traits.")
@@ -1082,28 +1087,51 @@ async def export_descriptive_stats_word(data: DescriptiveResponse):
             _add_body(doc, "Several statistical warnings or data quality issues were detected:", italic=True)
             _add_heading(doc, "Key Warnings", level=2)
             for flag in data.global_flags:
-                doc.add_paragraph(f"• {flag}", style="List Bullet")
+                doc.add_paragraph(f"• {flag}")
         else:
             _add_body(doc, "All traits exhibit good experimental precision with no severe quality flags.", italic=True)
-            
+
         doc.add_paragraph()
         _add_body(doc, f"Recommendation: {data.recommendation}")
         doc.add_page_break()
-        
+
         # ── 2. Data Quality / Missing Data ────────────────────────────────────
         _add_heading(doc, "Data Quality Overview", level=1)
         dq_headers = ["Trait", "Missing (n)", "Zero Values (n)", "Precision Class", "Flags"]
-        dq_rows = [[t.trait, str(t.missing_count), str(t.zero_count), t.precision_class.capitalize(), ", ".join(t.flags) if t.flags else "None"] for t in data.summary_table]
+        dq_rows = [
+            [
+                t.trait,
+                str(t.missing_count),
+                str(t.zero_count),
+                t.precision_class.capitalize() if t.precision_class else "—",
+                ", ".join(t.flags) if t.flags else "None",
+            ]
+            for t in data.summary_table
+        ]
         _add_stat_table(doc, dq_headers, dq_rows, numeric_cols={1, 2})
         doc.add_paragraph()
-        
+
         # ── 3. Descriptive Statistics Table ───────────────────────────────────
         _add_heading(doc, "Descriptive Statistics (Overall)", level=1)
         headers = ["Trait", "n", "Mean", "SD", "Min", "Median", "Max", "CV%", "Skewness", "Kurtosis"]
-        rows = [[t.trait, str(t.n), _fmt(t.mean, 4), _fmt(t.sd, 4), _fmt(t.minimum, 4), _fmt(t.median, 4), _fmt(t.maximum, 4), f"{_fmt(t.cv_percent, 2)}%" if t.cv_percent is not None else "—", _fmt(t.skewness, 4), _fmt(t.kurtosis, 4)] for t in data.summary_table]
+        rows = [
+            [
+                t.trait,
+                str(t.n),
+                _fmt(t.mean, 4),
+                _fmt(t.sd, 4),
+                _fmt(t.minimum, 4),
+                _fmt(t.median, 4),
+                _fmt(t.maximum, 4),
+                f"{_fmt(t.cv_percent, 2)}%" if t.cv_percent is not None else "—",
+                _fmt(t.skewness, 4),
+                _fmt(t.kurtosis, 4),
+            ]
+            for t in data.summary_table
+        ]
         _add_stat_table(doc, headers, rows, numeric_cols=set(range(1, 10)))
         doc.add_paragraph()
-        
+
         # ── 4. Trait-by-Trait Interpretations ─────────────────────────────────
         doc.add_page_break()
         _add_heading(doc, "Trait-by-Trait Interpretations", level=1)
@@ -1113,13 +1141,15 @@ async def export_descriptive_stats_word(data: DescriptiveResponse):
             if t.flags:
                 _add_body(doc, f"Flags: {', '.join(t.flags)}", italic=True)
             doc.add_paragraph()
-            
+
         _scope_paragraph(doc)
         _add_footer(doc)
+
+        logger.info("[DESC_EXPORT] Document built successfully, sending response.")
         return _docx_response(doc, "vivasense_descriptive_stats_report.docx")
 
     except Exception as exc:
-        logger.error("Descriptive Stats export failed: %s", exc, exc_info=True)
+        logger.error("[DESC_EXPORT] Export failed: %s", exc, exc_info=True)
         return JSONResponse(
             status_code=500,
             content={"detail": f"Descriptive Stats export failed: {exc}"},
