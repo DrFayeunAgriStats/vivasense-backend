@@ -24,8 +24,9 @@ async def analyze_descriptive_stats(request: ModuleRequest):
         raise HTTPException(
             status_code=400,
             detail=(
-                "dataset_token is required. Upload a file via POST /genetics/upload-preview "
-                "and use the dataset_token returned in that response."
+                "dataset_token is required. Please confirm your dataset before running analysis. "
+                "Upload a file via POST /genetics/upload-preview, then confirm it via POST /upload/dataset "
+                "to receive a dataset_token."
             ),
         )
 

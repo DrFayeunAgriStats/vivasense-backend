@@ -8,6 +8,7 @@ suppressPackageStartupMessages({
   library(agricolae)
   library(dplyr)
   library(tidyr)
+  library(car)
 })
 
 # ============================================================================
@@ -127,6 +128,26 @@ compute_single_environment <- function(data, trait_name = "Trait",
     1L
   }
 
+  # Guard: catch single-level factors before aov() to produce clear errors
+  if (!has_splitplot && n_genotypes < 2) {
+    stop(sprintf(
+      "Genotype column must have \u22652 levels for analysis. Got %d level(s). Check your data.",
+      n_genotypes
+    ))
+  }
+  if (!crd_mode && !has_splitplot && nlevels(data$rep) < 2) {
+    stop(sprintf(
+      "Replication column must have \u22652 levels for RCBD. Got %d level(s). Check your data.",
+      nlevels(data$rep)
+    ))
+  }
+  if (has_factor && n_factor_levels < 2) {
+    stop(sprintf(
+      "Factor column must have \u22652 levels for factorial analysis. Got %d level(s). Check your data.",
+      n_factor_levels
+    ))
+  }
+
   if (has_splitplot) {
     data$main_plot <- factor(data$main_plot)
     data$sub_plot  <- factor(data$sub_plot)
@@ -202,7 +223,9 @@ compute_single_environment <- function(data, trait_name = "Trait",
     # Subplot residual is the canonical error term for CV and mean separation
     ms_error <- sub_table["Residuals", "Mean Sq"]
   } else {
-    anova_table <- anova(model)
+    anova_raw <- car::Anova(model, type = "III")
+    anova_raw[["Mean Sq"]] <- anova_raw[["Sum Sq"]] / anova_raw[["Df"]]
+    anova_table <- anova_raw
 
     ms_genotype <- if ("genotype" %in% rownames(anova_table)) {
       anova_table["genotype", "Mean Sq"]
