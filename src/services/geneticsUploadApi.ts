@@ -473,24 +473,45 @@ export async function runDescriptiveStats(request: {
  * Export descriptive statistics results as a Word document.
  * Endpoint: POST /export/descriptive-stats-word
  *
- * Sends the DescriptiveStatsResponse flat — NOT nested under a "response" key.
- * The backend DescriptiveResponse schema expects all fields at the top level.
+ * Accepts two shapes:
+ *   • DescriptiveStatsResponse — flat (from this module's handleExport)
+ *   • Combined state object    — { response: DescriptiveStatsResponse, trait_columns, ... }
+ *     as produced by some callers that store request + response together.
+ *
+ * Either way the payload sent to the backend is fully flat.
+ * The nested "response" key is never forwarded.
  */
-export async function exportDescriptiveStats(data: DescriptiveStatsResponse): Promise<void> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function exportDescriptiveStats(currentData: DescriptiveStatsResponse | Record<string, any>): Promise<void> {
   const url = `${ENGINE_BASE}/export/descriptive-stats-word`;
 
-  // Flat payload — only the fields DescriptiveResponse expects at the root.
+  // Flatten: prefer fields from currentData.response if present, fall back to root.
+  // This handles both the flat DescriptiveStatsResponse shape and the combined
+  // { response: DescriptiveStatsResponse, trait_columns, genotype_column, ... } shape.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const r = (currentData as any).response;
+
   const payload = {
-    dataset_token:  data.dataset_token,
-    overview:       data.overview,
-    summary_table:  data.summary_table,
-    reliable_traits: data.reliable_traits,
-    caution_traits:  data.caution_traits,
-    global_flags:    data.global_flags,
-    recommendation:  data.recommendation,
+    dataset_token:    (currentData as any).dataset_token ?? null,
+    overview:         r?.overview         ?? (currentData as any).overview         ?? null,
+    summary_table:    r?.summary_table    ?? (currentData as any).summary_table    ?? [],
+    reliable_traits:  r?.reliable_traits  ?? (currentData as any).reliable_traits  ?? [],
+    caution_traits:   r?.caution_traits   ?? (currentData as any).caution_traits   ?? [],
+    global_flags:     r?.global_flags     ?? (currentData as any).global_flags     ?? [],
+    recommendation:   r?.recommendation   ?? (currentData as any).recommendation   ?? "",
+    // extra context fields — backend ignores them, kept for traceability
+    trait_columns:       (currentData as any).trait_columns        ?? [],
+    genotype_column:     (currentData as any).genotype_column      ?? null,
+    rep_column:          (currentData as any).rep_column           ?? null,
+    expected_replication: (currentData as any).expected_replication ?? null,
   };
 
-  console.log("[exportDescriptiveStats] POST", url, "payload keys:", Object.keys(payload));
+  console.log(
+    "[exportDescriptiveStats] POST", url,
+    "| payload keys:", Object.keys(payload),
+    "| overview present:", !!payload.overview,
+    "| summary_table rows:", payload.summary_table?.length ?? 0,
+  );
 
   let response: Response;
   try {
