@@ -18,6 +18,7 @@
 import React, { useState } from "react";
 import {
   runDescriptiveStats,
+  exportDescriptiveStats,
   DescriptiveStatsResponse,
   TraitDescriptiveResult,
   UploadDatasetContext,
@@ -163,6 +164,20 @@ function ResultsPanel({
   onReset: () => void;
 }) {
   const cautionSet = new Set(results.caution_traits);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  const handleExport = async () => {
+    setExporting(true);
+    setExportError(null);
+    try {
+      await exportDescriptiveStats(results);
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -175,13 +190,30 @@ function ResultsPanel({
             {results.overview.n_observations} observations
           </p>
         </div>
-        <button
-          onClick={onReset}
-          className="text-xs text-gray-500 hover:text-gray-700 underline"
-        >
-          Run again
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={exporting}
+            className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {exporting ? "Generating…" : "Download Report (.docx)"}
+          </button>
+          <button
+            onClick={onReset}
+            className="text-xs text-gray-500 hover:text-gray-700 underline"
+          >
+            Run again
+          </button>
+        </div>
       </div>
+
+      {exportError && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+          <p className="text-xs font-semibold text-red-700">Export failed</p>
+          <p className="text-xs text-red-600 mt-0.5">{exportError}</p>
+        </div>
+      )}
 
       {/* Reliable / Caution */}
       <div className="grid sm:grid-cols-2 gap-3">

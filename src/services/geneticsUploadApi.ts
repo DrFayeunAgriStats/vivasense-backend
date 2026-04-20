@@ -469,6 +469,58 @@ export async function runDescriptiveStats(request: {
   return response.json() as Promise<DescriptiveStatsResponse>;
 }
 
+/**
+ * Export descriptive statistics results as a Word document.
+ * Endpoint: POST /export/descriptive-stats-word
+ *
+ * Sends the DescriptiveStatsResponse flat — NOT nested under a "response" key.
+ * The backend DescriptiveResponse schema expects all fields at the top level.
+ */
+export async function exportDescriptiveStats(data: DescriptiveStatsResponse): Promise<void> {
+  const url = `${ENGINE_BASE}/export/descriptive-stats-word`;
+
+  // Flat payload — only the fields DescriptiveResponse expects at the root.
+  const payload = {
+    dataset_token:  data.dataset_token,
+    overview:       data.overview,
+    summary_table:  data.summary_table,
+    reliable_traits: data.reliable_traits,
+    caution_traits:  data.caution_traits,
+    global_flags:    data.global_flags,
+    recommendation:  data.recommendation,
+  };
+
+  console.log("[exportDescriptiveStats] POST", url, "payload keys:", Object.keys(payload));
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Network error during descriptive stats export: ${msg}`);
+  }
+
+  if (!response.ok) {
+    const detail = await extractErrorDetail(response);
+    console.error("[exportDescriptiveStats] Server error", response.status, detail);
+    throw new Error(`Descriptive stats export failed (${response.status}) — ${detail}`);
+  }
+
+  const blob = await response.blob();
+  const blobUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = blobUrl;
+  a.download = "vivasense_descriptive_stats_report.docx";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(blobUrl);
+}
+
 /** Infer file_type from File.name */
 export function inferFileType(file: File): "csv" | "xlsx" | "xls" {
   const name = file.name.toLowerCase();
