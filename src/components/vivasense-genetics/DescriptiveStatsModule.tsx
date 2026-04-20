@@ -271,9 +271,20 @@ export function DescriptiveStatsModule({ datasetContext }: DescriptiveStatsModul
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<DescriptiveStatsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [hasAutoRun, setHasAutoRun] = useState(false);
 
   const token = datasetContext?.datasetToken ?? null;
   const availableTraits = datasetContext?.availableTraitColumns ?? [];
+
+  // Auto-populate traits when context arrives
+  useEffect(() => {
+    if (datasetContext) {
+      setSelectedTraits(datasetContext.availableTraitColumns);
+      setResults(null);
+      setError(null);
+      setHasAutoRun(false); // Reset auto-run state for new datasets
+    }
+  }, [datasetContext]);
 
   const canRun = token !== null && selectedTraits.length > 0 && !loading;
 
@@ -286,18 +297,15 @@ export function DescriptiveStatsModule({ datasetContext }: DescriptiveStatsModul
   const clearAll = () => setSelectedTraits([]);
 
   const handleRun = async () => {
-    if (!canRun) return;
-
-    // Runtime guard: token must be present before the request is sent.
-    // This catches any case where the run button is triggered programmatically
-    // before dataset confirmation has completed.
+    // 1. Disable or block the call until the dataset_token state is non-null
     if (!token) {
       setError(
-        "Preview completed, but dataset confirmation is still required. " +
-        "Re-upload your file and confirm the column mapping to receive a dataset token."
+        "Dataset token is missing. Please wait for the preview response to finish generating the token."
       );
+      console.warn("[DescriptiveStats] Blocked execution: dataset_token is null");
       return;
     }
+    if (selectedTraits.length === 0) return;
 
     console.log(
       "[DescriptiveStats] sending request — dataset_token:", token,
@@ -307,6 +315,7 @@ export function DescriptiveStatsModule({ datasetContext }: DescriptiveStatsModul
     setError(null);
     setResults(null);
     try {
+      // 3. Ensure the dataset_token is explicitly added to the JSON body 
       const data = await runDescriptiveStats({
         dataset_token: token,
         trait_columns: selectedTraits,
@@ -319,6 +328,16 @@ export function DescriptiveStatsModule({ datasetContext }: DescriptiveStatsModul
       setLoading(false);
     }
   };
+
+  // 2. Watch that triggers the analysis only after the token has been successfully received
+  useEffect(() => {
+    if (token !== null && selectedTraits.length > 0 && !hasAutoRun) {
+      console.log("[DescriptiveStats] Token successfully received. Auto-triggering analysis.");
+      setHasAutoRun(true);
+      handleRun();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, selectedTraits, hasAutoRun]);
 
   const handleReset = () => {
     setResults(null);
