@@ -40,12 +40,34 @@ export function MultiTraitUpload({ onDatasetReady }: MultiTraitUploadProps = {})
   const [preview, setPreview] = useState<UploadPreviewResponse | null>(null);
   const [results, setResults] = useState<UploadAnalysisResponse | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [datasetToken, setDatasetToken] = useState<string | null>(null);
 
   // ── Step 1: File selected → preview fetched ──────────────────────────────
 
-  const handlePreviewReady = (f: File, p: UploadPreviewResponse) => {
+  const handlePreviewReady = async (f: File, p: UploadPreviewResponse) => {
     setFile(f);
     setPreview(p);
+    if (p.dataset_token) {
+      setDatasetToken(p.dataset_token);
+      // Emit context immediately using auto-detected columns so 
+      // /analysis/descriptive-stats can be called before explicit confirmation
+      try {
+        const base64Content = await fileToBase64(f);
+        onDatasetReady?.({
+          file: f,
+          base64Content,
+          fileType: inferFileType(f),
+          genotypeColumn: p.detected_columns.genotype?.column || "",
+          repColumn: p.detected_columns.rep?.column || "",
+          environmentColumn: p.mode_suggestion === "multi" ? (p.detected_columns.environment?.column || undefined) : undefined,
+          availableTraitColumns: p.detected_columns.traits || [],
+          mode: p.mode_suggestion,
+          datasetToken: p.dataset_token,
+        });
+      } catch (err) {
+        console.warn("[MultiTraitUpload] Failed to generate initial dataset context", err);
+      }
+    }
     setStep("confirming");
   };
 
@@ -71,7 +93,7 @@ export function MultiTraitUpload({ onDatasetReady }: MultiTraitUploadProps = {})
       // auto-detected defaults and may not reflect the user's actual selections.
       // Module endpoints (/analysis/*) require a token from this confirmation step.
       console.log("[MultiTraitUpload] calling POST /upload/dataset with confirmed mapping…");
-      let datasetToken: string | null = null;
+      let finalToken: string | null = datasetToken; // Fallback to preview token
       try {
         const confirmed = await confirmDataset({
           base64_content,
@@ -85,10 +107,11 @@ export function MultiTraitUpload({ onDatasetReady }: MultiTraitUploadProps = {})
           random_environment: mapping.randomEnvironment,
           selection_intensity: 2.06,
         });
-        datasetToken = confirmed.dataset_token;
+        finalToken = confirmed.dataset_token;
+        setDatasetToken(finalToken);
         console.log(
           "[MultiTraitUpload] POST /upload/dataset succeeded — dataset_token:",
-          datasetToken,
+          finalToken,
           "| n_rows:", confirmed.n_rows,
           "| n_reps:", confirmed.n_reps,
         );
@@ -101,7 +124,7 @@ export function MultiTraitUpload({ onDatasetReady }: MultiTraitUploadProps = {})
 
       // Share dataset context with sibling components (Trait Relationships,
       // Descriptive Stats) after dataset confirmation.
-      // datasetToken is null only if /upload/dataset failed above.
+      // finalToken falls back to preview token if /upload/dataset failed above.
       const ctx: UploadDatasetContext = {
         file,
         base64Content: base64_content,
@@ -112,7 +135,7 @@ export function MultiTraitUpload({ onDatasetReady }: MultiTraitUploadProps = {})
           mapping.mode === "multi" ? mapping.environmentColumn || undefined : undefined,
         availableTraitColumns: preview?.detected_columns.traits ?? mapping.selectedTraits,
         mode: mapping.mode,
-        datasetToken,
+        datasetToken: finalToken,
       };
       console.log(
         "[MultiTraitUpload] sharing dataset context — datasetToken:",
@@ -148,6 +171,7 @@ export function MultiTraitUpload({ onDatasetReady }: MultiTraitUploadProps = {})
     setPreview(null);
     setResults(null);
     setAnalysisError(null);
+    setDatasetToken(null);
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
