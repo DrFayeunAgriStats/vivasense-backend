@@ -15,8 +15,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ── R packages ────────────────────────────────────────────────────────────────
 # Note: asreml is a commercial package (paid licence) — not available on CRAN
-RUN R -e "install.packages(c('jsonlite','agricolae','dplyr','tidyr','readr','ggplot2','sommer'), \
-           repos='https://cloud.r-project.org/', Ncpus=2)"
+RUN R -e "install.packages(c('jsonlite','agricolae','dplyr','tidyr','readr','ggplot2','sommer','car','pbkrtest','lme4'), \
+           repos='https://cloud.r-project.org/', dependencies=TRUE, Ncpus=2)"
 
 # ── Python deps ───────────────────────────────────────────────────────────────
 WORKDIR /app
