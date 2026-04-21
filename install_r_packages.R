@@ -2,6 +2,16 @@
 
 CRAN_MIRROR <- "https://cloud.r-project.org/"
 
+# Step 1: Install cpp11 and Rcpp dependencies first
+cpp_packages <- c("cpp11", "Rcpp", "RcppArmadillo", "RcppProgress", "RcppEigen")
+message("Installing C++ interface packages first: ", paste(cpp_packages, collapse = ", "))
+install.packages(
+  cpp_packages,
+  repos = CRAN_MIRROR,
+  dependencies = TRUE,
+  Ncpus = 1L
+)
+
 required_packages <- c(
   "car", "lme4", "emmeans", "multcomp", "lmerTest", "pbkrtest",
   "agricolae", "sommer", "dplyr", "tidyr", "ggplot2", "jsonlite",
