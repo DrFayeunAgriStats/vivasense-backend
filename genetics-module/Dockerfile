@@ -4,6 +4,7 @@ FROM python:3.11-slim
 RUN apt-get update && apt-get install -y \
     r-base \
     r-base-dev \
+    cmake \
     libcurl4-openssl-dev \
     libssl-dev \
     libxml2-dev \
@@ -15,7 +16,7 @@ RUN apt-get update && apt-get install -y \
 
 # Install required R packages
 # Note: asreml is a commercial package requiring a paid license — not installable from CRAN
-RUN R -e "install.packages(c('jsonlite','agricolae','dplyr','tidyr','readr','ggplot2','sommer','car','pbkrtest','lme4'), repos='https://cloud.r-project.org/', dependencies=TRUE, Ncpus=2)"
+RUN R -e "install.packages(c('Rcpp','cpp11','jsonlite','agricolae','dplyr','tidyr','readr','ggplot2','sommer','car','pbkrtest','lme4'), repos='https://cloud.r-project.org/', dependencies=TRUE, Ncpus=2)"
 
 # Set working directory
 WORKDIR /app

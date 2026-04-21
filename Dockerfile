@@ -4,6 +4,7 @@ FROM python:3.11-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     r-base \
     r-base-dev \
+    cmake \
     libcurl4-openssl-dev \
     libssl-dev \
     libxml2-dev \

@@ -1,34 +1,54 @@
 # install_r_packages.R
 
 CRAN_MIRROR <- "https://cloud.r-project.org/"
+INSTALL_NCPUS <- 2L
 
+message("=== Phase 1: Installing C++ interface packages ===")
+base_cpp_packages <- c("Rcpp", "cpp11")
+install.packages(
+  base_cpp_packages,
+  repos = CRAN_MIRROR,
+  dependencies = TRUE,
+  Ncpus = INSTALL_NCPUS
+)
+
+message("\n=== Phase 2: Installing Rcpp ecosystem packages ===")
+rcpp_packages <- c("RcppArmadillo", "RcppEigen", "RcppProgress")
+install.packages(
+  rcpp_packages,
+  repos = CRAN_MIRROR,
+  dependencies = TRUE,
+  Ncpus = INSTALL_NCPUS
+)
+
+message("\n=== Phase 3: Installing packages that depend on cpp11 ===")
+cpp11_dependent <- c("tzdb", "isoband")
+install.packages(
+  cpp11_dependent,
+  repos = CRAN_MIRROR,
+  dependencies = TRUE,
+  Ncpus = INSTALL_NCPUS
+)
+
+message("\n=== Phase 4: Installing application packages ===")
 required_packages <- c(
   "car", "lme4", "emmeans", "multcomp", "lmerTest", "pbkrtest",
   "agricolae", "sommer", "dplyr", "tidyr", "ggplot2", "jsonlite",
   "readr", "stringr", "purrr", "broom", "rlang", "tibble"
 )
 
-missing_pkgs <- required_packages[
-  !sapply(required_packages, requireNamespace, quietly = TRUE)
-]
+install.packages(
+  required_packages,
+  repos = CRAN_MIRROR,
+  dependencies = c("Depends", "Imports"),
+  Ncpus = INSTALL_NCPUS
+)
 
-if (length(missing_pkgs) > 0) {
-  message("Installing missing packages (", length(missing_pkgs), "): ",
-          paste(missing_pkgs, collapse = ", "))
-
-  install.packages(
-    missing_pkgs,
-    repos = CRAN_MIRROR,
-    dependencies = c("Depends", "Imports"),
-    Ncpus = 1L
-  )
-} else {
-  message("All required R packages already present - skipping installation.")
-}
-
+message("\n=== Verifying all packages ===")
+all_packages <- c(base_cpp_packages, rcpp_packages, cpp11_dependent, required_packages)
 failed <- character(0)
 
-for (pkg in required_packages) {
+for (pkg in all_packages) {
   if (!requireNamespace(pkg, quietly = TRUE)) {
     failed <- c(failed, pkg)
     message("FAIL: package '", pkg, "' could not be loaded.")
@@ -44,5 +64,5 @@ if (length(failed) > 0) {
   )
 }
 
-message("\nAll ", length(required_packages),
+message("\nAll ", length(all_packages),
         " R packages installed and verified successfully.")
