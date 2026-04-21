@@ -6,12 +6,10 @@ starts and /health always returns 200, even if R or optional deps are absent.
 """
 import logging
 import os
-import shutil
-import subprocess
 import sys
-from pathlib import Path
 
 from fastapi import FastAPI, Response
+from app.core.startup_checks import run_startup_checks
 from fastapi.middleware.cors import CORSMiddleware
 
 # Force stdout/stderr to be unbuffered so every print/log reaches Render immediately.
@@ -230,6 +228,15 @@ except Exception as _e:
 @app.on_event("startup")
 async def startup_event() -> None:
     logger.info("=== VivaSense startup ===")
+    # Verify R is available and all required packages are installed.
+    # This raises RuntimeError (and aborts startup) if the Docker build
+    # omitted R or a package failed to install.
+    try:
+        run_startup_checks()
+    except RuntimeError as _rsc_err:
+        logger.critical("startup_checks FAILED — %s", _rsc_err)
+        raise
+
     logger.info("CWD: %s", os.getcwd())
     logger.info("genetics-module path: %s", _genetics_dir)
     logger.info("trait-relationships router loaded: %s", _tr_ok)
@@ -245,23 +252,6 @@ async def startup_event() -> None:
     logger.info("analysis-regression router loaded: %s", _an_reg_ok)
     logger.info("export-modules router loaded: %s", _ex_mod_ok)
     logger.info("academic-mentor router loaded: %s", _ac_ok)
-
-    rscript = shutil.which("Rscript")
-    if rscript:
-        logger.info("Rscript found: %s", rscript)
-    else:
-        logger.warning("Rscript NOT found — this is a native-Python deploy; R endpoints will return 503")
-
-    # Run the CRAN package installer (only meaningful when R is present)
-    installer = Path(_genetics_dir) / "install_packages.R"
-    if rscript and installer.exists():
-        logger.info("Running install_packages.R …")
-        result = subprocess.run(
-            ["Rscript", str(installer)], capture_output=True, text=True
-        )
-        logger.info("install_packages.R: %s", result.stdout.strip() or "(no output)")
-        if result.returncode != 0:
-            logger.warning("install_packages.R exited %d: %s", result.returncode, result.stderr.strip())
 
     # Initialise trait-relationships engine (non-fatal)
     if init_trait_relationships_engine is not None:
