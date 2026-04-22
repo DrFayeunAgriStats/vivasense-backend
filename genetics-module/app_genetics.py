@@ -266,6 +266,38 @@ try:
 except Exception as _e:
     logger.warning("analysis-regression router not loaded — %s", _e)
 
+# Step 9.7 — Stability analysis module (/analysis/stability)
+try:
+    from analysis_stability_routes import router as stability_router
+    app.include_router(stability_router)
+    logger.info("analysis-stability router loaded (/analysis/stability)")
+except Exception as _e:
+    logger.warning("analysis-stability router not loaded — %s", _e)
+
+# Step 9.8 — BLUP analysis module (/analysis/blup)
+try:
+    from analysis_blup_routes import router as blup_router
+    app.include_router(blup_router)
+    logger.info("analysis-blup router loaded (/analysis/blup)")
+except Exception as _e:
+    logger.warning("analysis-blup router not loaded — %s", _e)
+
+# Step 9.9 — PCA analysis module (/analysis/pca)
+try:
+    from analysis_pca_routes import router as pca_router
+    app.include_router(pca_router)
+    logger.info("analysis-pca router loaded (/analysis/pca)")
+except Exception as _e:
+    logger.warning("analysis-pca router not loaded — %s", _e)
+
+# Step 9.10 — Cluster analysis module (/analysis/cluster)
+try:
+    from analysis_cluster_routes import router as cluster_router
+    app.include_router(cluster_router)
+    logger.info("analysis-cluster router loaded (/analysis/cluster)")
+except Exception as _e:
+    logger.warning("analysis-cluster router not loaded — %s", _e)
+
 # Step 10 — Module-specific Word/report export (/export/*)
 try:
     from export_module_routes import router as export_mod_router

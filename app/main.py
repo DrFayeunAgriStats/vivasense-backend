@@ -201,6 +201,46 @@ try:
 except Exception as _e:
     print(f"WARN: analysis-regression router not loaded — {_e}", flush=True)
 
+# Step 9.7 — Stability analysis module (/analysis/stability)
+_an_stab_ok = False
+try:
+    from analysis_stability_routes import router as stability_router  # noqa: E402
+    app.include_router(stability_router)
+    _an_stab_ok = True
+    print("Router registered: analysis-stability (/analysis/stability)", flush=True)
+except Exception as _e:
+    print(f"WARN: analysis-stability router not loaded — {_e}", flush=True)
+
+# Step 9.8 — BLUP analysis module (/analysis/blup)
+_an_blup_ok = False
+try:
+    from analysis_blup_routes import router as blup_router  # noqa: E402
+    app.include_router(blup_router)
+    _an_blup_ok = True
+    print("Router registered: analysis-blup (/analysis/blup)", flush=True)
+except Exception as _e:
+    print(f"WARN: analysis-blup router not loaded — {_e}", flush=True)
+
+# Step 9.9 — PCA analysis module (/analysis/pca)
+_an_pca_ok = False
+try:
+    from analysis_pca_routes import router as pca_router  # noqa: E402
+    app.include_router(pca_router)
+    _an_pca_ok = True
+    print("Router registered: analysis-pca (/analysis/pca)", flush=True)
+except Exception as _e:
+    print(f"WARN: analysis-pca router not loaded — {_e}", flush=True)
+
+# Step 9.10 — Cluster analysis module (/analysis/cluster)
+_an_cluster_ok = False
+try:
+    from analysis_cluster_routes import router as cluster_router  # noqa: E402
+    app.include_router(cluster_router)
+    _an_cluster_ok = True
+    print("Router registered: analysis-cluster (/analysis/cluster)", flush=True)
+except Exception as _e:
+    print(f"WARN: analysis-cluster router not loaded — {_e}", flush=True)
+
 # Step 10 — Module-specific export endpoints (/export/*)
 _ex_mod_ok = False
 try:
@@ -250,6 +290,10 @@ async def startup_event() -> None:
     logger.info("analysis-correlation router loaded: %s", _an_corr_ok)
     logger.info("analysis-heatmap router loaded: %s", _an_hm_ok)
     logger.info("analysis-regression router loaded: %s", _an_reg_ok)
+    logger.info("analysis-stability router loaded: %s", _an_stab_ok)
+    logger.info("analysis-blup router loaded: %s", _an_blup_ok)
+    logger.info("analysis-pca router loaded: %s", _an_pca_ok)
+    logger.info("analysis-cluster router loaded: %s", _an_cluster_ok)
     logger.info("export-modules router loaded: %s", _ex_mod_ok)
     logger.info("academic-mentor router loaded: %s", _ac_ok)
 
