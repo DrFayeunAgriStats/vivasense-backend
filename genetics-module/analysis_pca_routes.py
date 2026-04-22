@@ -137,6 +137,7 @@ def _compute_pca(
         "scores": scores,
         "trait_names": available_traits,
         "genotype_labels": [str(g) for g in genotype_labels],
+        "scaled": scale,
     }
 
 
@@ -162,6 +163,7 @@ def _generate_pca_interpretation(
     cum_var = result["cumulative_variance"]
     loadings = result["loadings"]
     n_pcs = result["n_components"]
+    scaled = result.get("scaled", True)
 
     # 1. Overview
     pc1_var = var_exp[0] if var_exp else 0.0
@@ -171,7 +173,7 @@ def _generate_pca_interpretation(
     overview = (
         f"Principal Component Analysis (PCA) was performed on {n_traits} traits "
         f"across {n_genos} genotypes using genotype means "
-        f"{'standardised to unit variance' if True else 'without standardisation'}. "
+        f"{'standardised to unit variance' if scaled else 'without standardisation'}. "
         f"A total of {n_pcs} principal components were extracted. "
         f"PC1 explained {pc1_var:.1f}% and PC2 explained {pc2_var:.1f}% of total "
         f"phenotypic variance (combined: {pc12_var:.1f}%). "
