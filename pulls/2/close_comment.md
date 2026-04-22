@@ -1,0 +1,1 @@
+Closing this PR as it has been superseded by #3, which was merged successfully with a more comprehensive fix that includes 4-phase R package installation ordering.
