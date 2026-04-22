@@ -97,7 +97,6 @@ app.add_middleware(
         "https://www.fieldtoinsightacademy.com.ng",
         "http://localhost:3000",
         "http://localhost:5173",
-        "*",
     ],
     allow_credentials=False,
     allow_methods=["GET", "POST", "HEAD", "OPTIONS"],
@@ -921,7 +920,7 @@ def fmt_p(p) -> Optional[float]:
     if np.isnan(f):
         return None
     if f < 0.0001:
-        return 0.0001   # floor — display as "< 0.001" in interpretation
+        return 0.0001   # floor — display as "< 0.0001" in interpretation
     return round(f, 4)
 
 
