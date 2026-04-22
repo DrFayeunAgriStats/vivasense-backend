@@ -34,7 +34,8 @@ message("\n=== Phase 4: Installing application packages ===")
 required_packages <- c(
   "car", "lme4", "emmeans", "multcomp", "lmerTest", "pbkrtest",
   "agricolae", "sommer", "dplyr", "tidyr", "ggplot2", "jsonlite",
-  "readr", "stringr", "purrr", "broom", "rlang", "tibble"
+  "readr", "stringr", "purrr", "broom", "rlang", "tibble",
+  "cluster"
 )
 
 install.packages(

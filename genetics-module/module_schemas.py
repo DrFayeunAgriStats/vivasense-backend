@@ -411,3 +411,147 @@ class DescriptiveResponse(BaseModel):
     caution_traits: List[str]
     global_flags: List[str]
     recommendation: str
+
+
+# ============================================================================
+# STABILITY ANALYSIS MODULE
+# ============================================================================
+
+class GenotypeStability(BaseModel):
+    """Per-genotype Eberhart-Russell stability metrics."""
+    genotype: str
+    mean: float
+    bi: float          # Regression coefficient (b_i)
+    s2di: float        # Deviation from regression (S²d_i)
+    rank: int
+    stability_class: str  # "stable" | "responsive_favorable" | "responsive_poor" | "unpredictable"
+
+
+class StabilityRequest(BaseModel):
+    """Request body for POST /analysis/stability."""
+    dataset_token: str = Field(..., description="Token from POST /upload/dataset")
+    trait_column: str = Field(..., description="Single trait column for stability analysis")
+
+
+class StabilityResponse(BaseModel):
+    """Response from POST /analysis/stability."""
+    status: str
+    trait: str
+    n_genotypes: int
+    n_environments: int
+    genotype_stability: List[GenotypeStability]
+    environment_means: Dict[str, float]
+    grand_mean: float
+    best_stable_genotypes: List[str]
+    interpretation: str
+    plot_data: Optional[Dict[str, Any]] = None
+
+
+# ============================================================================
+# BLUP MODULE
+# ============================================================================
+
+class GenotypeBLUP(BaseModel):
+    """Per-genotype BLUP prediction."""
+    genotype: str
+    blup: float
+    se: float
+    reliability: float
+    rank: int
+
+
+class BLUPRequest(BaseModel):
+    """Request body for POST /analysis/blup."""
+    dataset_token: str = Field(..., description="Token from POST /upload/dataset")
+    trait_column: str = Field(..., description="Trait column for BLUP analysis")
+    random_effects: List[str] = Field(default=["genotype"], description="Columns to treat as random effects")
+    fixed_effects: List[str] = Field(default=[], description="Columns to treat as fixed effects")
+
+
+class BLUPResponse(BaseModel):
+    """Response from POST /analysis/blup."""
+    status: str
+    trait: str
+    model_type: str   # "single-environment" | "multi-environment"
+    genotype_blups: List[GenotypeBLUP]
+    best_genotypes: List[str]
+    variance_components: Dict[str, float]
+    interpretation: str
+
+
+# ============================================================================
+# PCA MODULE
+# ============================================================================
+
+class GenotypeScore(BaseModel):
+    """Genotype coordinates on principal component axes."""
+    genotype: str
+    scores: List[float]
+
+
+class BiplotData(BaseModel):
+    """Data for rendering a PCA biplot."""
+    loadings: Dict[str, List[float]]   # trait -> [PC1_loading, PC2_loading, ...]
+    scores: List[GenotypeScore]
+
+
+class PCARequest(BaseModel):
+    """Request body for POST /analysis/pca."""
+    dataset_token: str = Field(..., description="Token from POST /upload/dataset")
+    trait_columns: List[str] = Field(..., min_length=2, description="≥2 trait columns for PCA")
+    scale: bool = Field(default=True, description="Standardise traits before PCA")
+    n_components: Optional[int] = Field(default=None, description="Number of PCs (default: all)")
+
+
+class PCAResponse(BaseModel):
+    """Response from POST /analysis/pca."""
+    status: str
+    n_traits: int
+    n_genotypes: int
+    variance_explained: List[float]
+    cumulative_variance: List[float]
+    loadings: Dict[str, List[float]]   # trait -> [PC1, PC2, ...] loadings
+    scores: List[GenotypeScore]
+    biplot_data: BiplotData
+    interpretation: str
+
+
+# ============================================================================
+# CLUSTER ANALYSIS MODULE
+# ============================================================================
+
+class GenotypeCluster(BaseModel):
+    """Cluster assignment for a single genotype."""
+    genotype: str
+    cluster_id: int
+    silhouette_score: Optional[float] = None
+
+
+class ClusterSummary(BaseModel):
+    """Summary statistics for one cluster."""
+    cluster_id: int
+    size: int
+    mean_per_trait: Dict[str, float]
+
+
+class ClusterRequest(BaseModel):
+    """Request body for POST /analysis/cluster."""
+    dataset_token: str = Field(..., description="Token from POST /upload/dataset")
+    trait_columns: List[str] = Field(..., min_length=2, description="≥2 trait columns for clustering")
+    method: str = Field(default="ward", description="Linkage method: ward, complete, average, single")
+    k: Optional[int] = Field(default=None, description="Number of clusters (None = auto-detect)")
+    scale: bool = Field(default=True, description="Standardise traits before clustering")
+
+
+class ClusterResponse(BaseModel):
+    """Response from POST /analysis/cluster."""
+    status: str
+    n_genotypes: int
+    n_traits: int
+    method: str
+    optimal_k: int
+    cluster_assignments: List[GenotypeCluster]
+    cluster_summary: List[ClusterSummary]
+    silhouette_scores: List[float]
+    dendrogram_data: Optional[Dict[str, Any]] = None
+    interpretation: str
