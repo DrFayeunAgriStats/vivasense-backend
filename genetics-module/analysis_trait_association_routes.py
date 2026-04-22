@@ -187,9 +187,9 @@ async def analyze_trait_association(request: TraitAssociationModuleRequest):
 
     # Extract data
     trait_names = raw.get("trait_names", request.trait_columns)
-    n_observations = raw.get("n_observations", 0)
-    r_matrix_list = raw.get("r_matrix", [])
-    p_matrix_list = raw.get("p_matrix", [])
+    n_observations = raw.get("genotypic", {}).get("n_observations", 0)
+    r_matrix_list = raw.get("genotypic", {}).get("r_matrix", [])
+    p_matrix_list = raw.get("genotypic", {}).get("p_matrix", [])
     warnings = raw.get("warnings", [])
 
     # Build dict matrices
