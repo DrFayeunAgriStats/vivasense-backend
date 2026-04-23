@@ -45,8 +45,18 @@ install.packages(
   Ncpus = INSTALL_NCPUS
 )
 
+message("\n=== Phase 5: Installing stability analysis packages ===")
+stability_packages <- c("metan")  # GGE biplot support
+
+install.packages(
+  stability_packages,
+  repos        = CRAN_MIRROR,
+  dependencies = c("Depends", "Imports"),
+  Ncpus        = INSTALL_NCPUS
+)
+
 message("\n=== Verifying all packages ===")
-all_packages <- c(base_cpp_packages, rcpp_packages, cpp11_dependent, required_packages)
+all_packages <- c(base_cpp_packages, rcpp_packages, cpp11_dependent, required_packages, stability_packages)
 failed <- character(0)
 
 for (pkg in all_packages) {
