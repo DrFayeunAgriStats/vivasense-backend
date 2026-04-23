@@ -662,31 +662,31 @@ def _compute_gge_biplot(
     mean_vs_stability: Optional[MeanVsStability] = None
     if biplot_type == "mean-stability":
         # Distance from origin in GGE biplot = instability
-        distances = [
-            float(np.sqrt(geno_scores_mat[i, 0] ** 2 + (geno_scores_mat[i, 1] if n_pc > 1 else 0.0) ** 2))
-            for i in range(n_g)
-        ]
-        # Normalise mean performance (0–1)
-        means = [float(geno_means[i]) for i in range(n_g)]
-        mean_range = max(means) - min(means) if max(means) != min(means) else 1.0
-        norm_means = [(m - min(means)) / mean_range for m in means]
+        pc2_col = geno_scores_mat[:, 1] if n_pc > 1 else np.zeros(n_g)
+        distances_arr = np.sqrt(geno_scores_mat[:, 0] ** 2 + pc2_col ** 2)
+        # Normalise mean performance (0–1); guard against constant means
+        mean_range = float(geno_means.max() - geno_means.min())
+        if mean_range == 0.0:
+            norm_means_arr = np.full(n_g, 0.5)
+        else:
+            norm_means_arr = (geno_means - geno_means.min()) / mean_range
         # Ideal: high normalised mean, low distance
         # Score = norm_mean / (distance + epsilon)
         eps = 1e-9
-        scores = [nm / (d + eps) for nm, d in zip(norm_means, distances)]
-        ideal_idx = int(np.argmax(scores))
+        scores_arr = norm_means_arr / (distances_arr + eps)
+        ideal_idx = int(np.argmax(scores_arr))
         ideal_geno = genotypes[ideal_idx]
 
-        dist_ranks = list(np.argsort(distances) + 1)  # lower distance = better rank
+        dist_ranks = np.argsort(distances_arr).argsort() + 1  # lower distance = rank 1
         geno_dist_sorted = sorted(
-            zip(range(n_g), distances, dist_ranks),
+            zip(range(n_g), distances_arr.tolist(), dist_ranks.tolist()),
             key=lambda x: x[1],
         )
         genotype_distances: List[GenotypeDistance] = [
             GenotypeDistance(
                 genotype=genotypes[i],
                 distance_from_ideal=round(d, 6),
-                rank=r,
+                rank=int(r),
             )
             for i, d, r in geno_dist_sorted
         ]
@@ -1038,11 +1038,6 @@ async def analysis_stability(request: StabilityRequest) -> StabilityResponse:
     interpretation = "\n\n---\n\n".join(interp_parts) if interp_parts else (
         "No methods were computed. Specify at least one method in the 'methods' field."
     )
-
-    # Use AMMI grand mean as fallback if classic was not run
-    if not run_classic and classic_result == {}:
-        n_environments = df[env_col].nunique()
-        n_genotypes = df[genotype_col].nunique()
 
     return StabilityResponse(
         status="success",
