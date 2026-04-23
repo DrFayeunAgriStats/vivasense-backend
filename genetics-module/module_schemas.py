@@ -427,22 +427,149 @@ class GenotypeStability(BaseModel):
     stability_class: str  # "stable" | "responsive_favorable" | "responsive_poor" | "unpredictable"
 
 
+# ── AMMI sub-schemas ──────────────────────────────────────────────────────────
+
+class GenotypeIPCA(BaseModel):
+    """Genotype IPCA scores from AMMI analysis."""
+    genotype: str
+    mean: float
+    ipca1: float
+    ipca2: Optional[float] = None
+    ipca3: Optional[float] = None
+
+
+class EnvironmentIPCA(BaseModel):
+    """Environment IPCA scores from AMMI analysis."""
+    environment: str
+    mean: float
+    ipca1: float
+    ipca2: Optional[float] = None
+
+
+class GenotypeASV(BaseModel):
+    """AMMI Stability Value (Purchase et al. 2000). Lower ASV = more stable."""
+    genotype: str
+    asv: float
+    rank: int
+    stability_class: str   # "highly stable" | "stable" | "moderately stable" | "unstable"
+
+
+class AMMIBiplotData(BaseModel):
+    """Coordinates for AMMI biplot rendering."""
+    genotypes: List[Dict[str, Any]]
+    environments: List[Dict[str, Any]]
+
+
+class AMMIResults(BaseModel):
+    """Full AMMI analysis results."""
+    variance_explained: List[float]       # % variance explained by each IPCA
+    cumulative_variance: List[float]
+    genotype_scores: List[GenotypeIPCA]
+    environment_scores: List[EnvironmentIPCA]
+    stability_measure: List[GenotypeASV]  # ASV per genotype
+    biplot_data: AMMIBiplotData
+    interpretation: str
+
+
+# ── GGE Biplot sub-schemas ────────────────────────────────────────────────────
+
+class GenotypePC(BaseModel):
+    """Genotype principal-component scores from GGE biplot."""
+    genotype: str
+    mean: float
+    pc1: float
+    pc2: float
+
+
+class EnvironmentPC(BaseModel):
+    """Environment principal-component scores from GGE biplot."""
+    environment: str
+    mean: float
+    pc1: float
+    pc2: float
+
+
+class MegaEnvironment(BaseModel):
+    """A sector (mega-environment) in the which-won-where pattern."""
+    id: int
+    environments: List[str]
+    best_genotype: str
+    mean_yield: float
+
+
+class WhichWonWhere(BaseModel):
+    """Which-Won-Where pattern: mega-environment delineation."""
+    mega_environments: List[MegaEnvironment]
+    winning_genotypes: Dict[str, str]   # environment -> winning genotype
+    interpretation: str
+
+
+class GenotypeDistance(BaseModel):
+    """Distance of a genotype from the ideal point in GGE Mean-vs-Stability view."""
+    genotype: str
+    distance_from_ideal: float
+    rank: int
+
+
+class MeanVsStability(BaseModel):
+    """Mean performance vs stability from GGE biplot AEC view."""
+    ideal_genotype: str
+    ideal_coordinates: Dict[str, float]  # {"pc1": ..., "pc2": ...}
+    genotype_distances: List[GenotypeDistance]
+    interpretation: str
+
+
+class GGEBiplotData(BaseModel):
+    """Coordinates for GGE biplot rendering."""
+    genotypes: List[Dict[str, Any]]
+    environments: List[Dict[str, Any]]
+
+
+class GGEResults(BaseModel):
+    """Full GGE Biplot analysis results."""
+    variance_explained: List[float]      # % variance by PC1, PC2
+    cumulative_variance: float           # PC1 + PC2
+    genotype_scores: List[GenotypePC]
+    environment_scores: List[EnvironmentPC]
+    which_won_where: Optional[WhichWonWhere] = None
+    mean_vs_stability: Optional[MeanVsStability] = None
+    biplot_data: GGEBiplotData
+    interpretation: str
+
+
+# ── Request / Response ────────────────────────────────────────────────────────
+
 class StabilityRequest(BaseModel):
     """Request body for POST /analysis/stability."""
     dataset_token: str = Field(..., description="Token from POST /upload/dataset")
     trait_column: str = Field(..., description="Single trait column for stability analysis")
+    methods: List[str] = Field(
+        default=["eberhart-russell", "shukla"],
+        description="Methods to compute: eberhart-russell, shukla, ammi, gge-biplot",
+    )
+    biplot_type: Optional[str] = Field(
+        default="which-won-where",
+        description="GGE biplot view: which-won-where | mean-stability | discriminativeness",
+    )
+    ammi_components: Optional[int] = Field(
+        default=2,
+        description="Number of IPCA axes to compute for AMMI",
+    )
 
 
 class StabilityResponse(BaseModel):
     """Response from POST /analysis/stability."""
     status: str
     trait: str
+    methods_computed: List[str]
     n_genotypes: int
     n_environments: int
     genotype_stability: List[GenotypeStability]
     environment_means: Dict[str, float]
     grand_mean: float
     best_stable_genotypes: List[str]
+    ammi_results: Optional[AMMIResults] = None
+    gge_results: Optional[GGEResults] = None
     interpretation: str
     plot_data: Optional[Dict[str, Any]] = None
 
