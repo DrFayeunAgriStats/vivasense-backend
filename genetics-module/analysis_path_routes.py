@@ -247,13 +247,19 @@ async def analysis_path_analysis(request: PathAnalysisRequest):
 
     Requires a dataset_token from POST /upload/dataset.
     """
-    if not request.predictor_traits:
+    try:
+        outcome_trait = request.resolved_outcome_trait
+        predictor_traits = request.resolved_predictor_traits
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if not predictor_traits:
         raise HTTPException(
             status_code=400,
             detail="At least one predictor trait is required.",
         )
 
-    if request.outcome_trait in request.predictor_traits:
+    if outcome_trait in predictor_traits:
         raise HTTPException(
             status_code=400,
             detail="outcome_trait must not appear in predictor_traits.",
@@ -275,7 +281,7 @@ async def analysis_path_analysis(request: PathAnalysisRequest):
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Could not read dataset: {exc}") from exc
 
-    all_cols = [request.outcome_trait] + request.predictor_traits
+    all_cols = [outcome_trait] + predictor_traits
     missing = [c for c in all_cols if c not in df.columns]
     if missing:
         raise HTTPException(
@@ -293,8 +299,8 @@ async def analysis_path_analysis(request: PathAnalysisRequest):
     try:
         result = _compute_path_analysis(
             df,
-            request.outcome_trait,
-            request.predictor_traits,
+            outcome_trait,
+            predictor_traits,
             request.standardize,
         )
     except ValueError as exc:
@@ -304,7 +310,7 @@ async def analysis_path_analysis(request: PathAnalysisRequest):
         raise HTTPException(status_code=500, detail=f"Path analysis failed: {exc}") from exc
 
     interpretation = _build_interpretation(
-        outcome=request.outcome_trait,
+        outcome=outcome_trait,
         path_coefs=result["path_coefficients"],
         decomp=result["correlation_decomposition"],
         r_squared=result["r_squared"],
@@ -314,8 +320,8 @@ async def analysis_path_analysis(request: PathAnalysisRequest):
 
     return PathAnalysisResponse(
         status="success",
-        outcome_trait=request.outcome_trait,
-        predictor_traits=request.predictor_traits,
+        outcome_trait=outcome_trait,
+        predictor_traits=predictor_traits,
         n_observations=result["n_observations"],
         path_coefficients=result["path_coefficients"],
         correlation_decomposition=result["correlation_decomposition"],

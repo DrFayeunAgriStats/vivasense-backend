@@ -300,7 +300,7 @@ except Exception as _e:
 
 # Step 9.11 — Path analysis module (/analysis/path-analysis)
 try:
-    from analysis_path_analysis_routes import router as path_analysis_router
+    from analysis_path_routes import router as path_analysis_router
     app.include_router(path_analysis_router)
     logger.info("analysis-path-analysis router loaded (/analysis/path-analysis)")
 except Exception as _e:

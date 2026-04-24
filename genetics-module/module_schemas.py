@@ -814,15 +814,31 @@ class CorrelationDecomp(BaseModel):
 class PathAnalysisRequest(BaseModel):
     """Request body for POST /analysis/path-analysis."""
     dataset_token: str = Field(..., description="Token from POST /upload/dataset")
-    outcome_trait: str = Field(..., description="Dependent variable (e.g. yield)")
-    predictor_traits: List[str] = Field(
-        ..., min_length=1, description="Independent variable columns"
-    )
+    # Primary field names
+    outcome_trait: Optional[str] = Field(default=None, description="Dependent variable (e.g. yield)")
+    predictor_traits: Optional[List[str]] = Field(default=None, description="Independent variable columns")
+    # Alias field names accepted from older frontend versions
+    target_trait: Optional[str] = Field(default=None, description="Alias for outcome_trait")
+    trait_columns: Optional[List[str]] = Field(default=None, description="Alias for predictor_traits")
     method: str = Field(
         default="correlation",
         description="Analysis method: correlation (phenotypic) | covariance",
     )
     standardize: bool = Field(default=True, description="Use standardised path coefficients")
+
+    @property
+    def resolved_outcome_trait(self) -> str:
+        val = self.outcome_trait or self.target_trait
+        if not val:
+            raise ValueError("outcome_trait (or target_trait) is required")
+        return val
+
+    @property
+    def resolved_predictor_traits(self) -> List[str]:
+        val = self.predictor_traits or self.trait_columns
+        if not val:
+            raise ValueError("predictor_traits (or trait_columns) is required")
+        return val
 
 
 class PathAnalysisResponse(BaseModel):
