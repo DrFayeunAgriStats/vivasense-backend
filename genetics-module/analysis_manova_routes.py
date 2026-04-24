@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 VivaSense – MANOVA (Multivariate Analysis of Variance) Module
 
@@ -85,7 +86,7 @@ def _compute_manova(
     if len(data_clean) < min_obs_required:
         raise ValueError(
             f"Insufficient observations for MANOVA. "
-            f"Need at least {min_obs_required} rows (n_groups × n_traits), "
+            f"Need at least {min_obs_required} rows (n_groups x n_traits), "
             f"but only {len(data_clean)} complete rows found."
         )
 
@@ -225,7 +226,7 @@ def _build_interpretation(
 
         if sig_traits:
             parts.append(
-                f" Follow-up univariate ANOVAs at α = {alpha} indicated significant "
+                f" Follow-up univariate ANOVAs at alpha = {alpha} indicated significant "
                 f"group differences for: {', '.join(sig_traits)}."
             )
         if nonsig_traits:
@@ -245,8 +246,8 @@ def _build_interpretation(
             f"MANOVA found no significant overall multivariate effect of the grouping "
             f"factor ({test_stat_name} = {stat_value:.4f}, F = {f_stat:.3f}, {sig_str}). "
             f"The groups do not differ significantly across the combined {len(traits)}-trait "
-            f"profile at α = {alpha}. Consider whether the sample size is adequate "
-            f"(recommended: ≥20 observations per group for MANOVA robustness) or whether "
+            f"profile at alpha = {alpha}. Consider whether the sample size is adequate "
+            f"(recommended: >= 20 observations per group for MANOVA robustness) or whether "
             f"the chosen traits are discriminating for the factor of interest."
         )
 
@@ -270,7 +271,7 @@ async def analysis_manova(request: MANOVARequest):
       • Follow-up univariate ANOVAs per trait
       • Partial eta-squared effect sizes
 
-    Requires ≥2 trait columns and a dataset_token from POST /upload/dataset.
+    Requires >= 2 trait columns and a dataset_token from POST /upload/dataset.
     """
     if len(request.trait_columns) < 2:
         raise HTTPException(
