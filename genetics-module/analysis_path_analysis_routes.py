@@ -46,9 +46,14 @@ class PathAnalysisRequest(BaseModel):
         default=None,
         description="Token from POST /upload/dataset or /genetics/upload-preview",
     )
-    trait_columns: List[str] = Field(..., min_length=2, description="Causal (independent) trait columns")
-    target_trait: str = Field(..., description="Dependent variable column (e.g. yield)")
-    method: str = Field(default="pearson", pattern="^(pearson|spearman)$")
+    # Accept both naming conventions used by different frontend versions
+    predictor_traits: Optional[List[str]] = Field(default=None, description="Causal (independent) trait columns")
+    trait_columns: Optional[List[str]] = Field(default=None, description="Alias for predictor_traits")
+    outcome_trait: Optional[str] = Field(default=None, description="Dependent variable column (e.g. yield)")
+    target_trait: Optional[str] = Field(default=None, description="Alias for outcome_trait")
+    # "correlation" is treated as "pearson" for backward compatibility
+    method: Optional[str] = Field(default="pearson")
+    standardize: bool = Field(default=False, description="Reserved — not used in current implementation")
 
 
 class IndirectEffect(BaseModel):
@@ -184,10 +189,31 @@ async def analysis_path_analysis(request: PathAnalysisRequest):
     Requires at least 2 causal trait columns, a distinct target_trait column,
     and a dataset_token from POST /upload/dataset.
     """
+    # Resolve field name aliases
+    causal_traits = request.predictor_traits or request.trait_columns or []
+    target_trait = request.outcome_trait or request.target_trait
+
+    # Normalise method: "correlation" → "pearson"
+    method = request.method or "pearson"
+    if method not in ("pearson", "spearman"):
+        method = "pearson"
+
     if not request.dataset_token:
         raise HTTPException(
             status_code=400,
             detail="dataset_token is required. Upload your file first via POST /upload/dataset.",
+        )
+
+    if len(causal_traits) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="At least 2 predictor traits are required (send as 'predictor_traits' or 'trait_columns').",
+        )
+
+    if not target_trait:
+        raise HTTPException(
+            status_code=400,
+            detail="A target/outcome trait is required (send as 'outcome_trait' or 'target_trait').",
         )
 
     ctx = dataset_cache.get_dataset(request.dataset_token)
@@ -200,16 +226,16 @@ async def analysis_path_analysis(request: PathAnalysisRequest):
             ),
         )
 
-    if request.target_trait in request.trait_columns:
+    if target_trait in causal_traits:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"target_trait '{request.target_trait}' must not appear in trait_columns. "
+                f"target_trait '{target_trait}' must not appear in predictor_traits. "
                 "It is the dependent variable."
             ),
         )
 
-    all_traits = request.trait_columns + [request.target_trait]
+    all_traits = causal_traits + [target_trait]
 
     try:
         file_bytes = base64.b64decode(ctx["base64_content"])
@@ -251,10 +277,10 @@ async def analysis_path_analysis(request: PathAnalysisRequest):
         warnings.append(f"Small sample size (n={n} genotype means) — path coefficients may be unstable.")
 
     data = means_df[all_traits].values.astype(float)
-    n_causal = len(request.trait_columns)
+    n_causal = len(causal_traits)
 
     # Full correlation matrix over [causal traits..., target]
-    full_r = _corr_matrix(data, request.method)
+    full_r = _corr_matrix(data, method)
 
     if np.any(np.isnan(full_r)):
         warnings.append(
@@ -271,7 +297,6 @@ async def analysis_path_analysis(request: PathAnalysisRequest):
     try:
         p = np.linalg.solve(R_xx, r_xy)
     except np.linalg.LinAlgError:
-        # Singular matrix — try pseudoinverse
         warnings.append(
             "Correlation matrix of causal traits is singular (perfect multicollinearity). "
             "Path coefficients computed using pseudoinverse — interpret with caution."
@@ -287,14 +312,14 @@ async def analysis_path_analysis(request: PathAnalysisRequest):
     path_rows: List[PathCoefficientRow] = []
     corr_with_target: Dict[str, float] = {}
 
-    for i, trait in enumerate(request.trait_columns):
+    for i, trait in enumerate(causal_traits):
         direct = float(p[i])
         r_iy = float(r_xy[i])
         corr_with_target[trait] = r_iy
 
         indirect_effects: List[IndirectEffect] = []
         total_indirect = 0.0
-        for j, other_trait in enumerate(request.trait_columns):
+        for j, other_trait in enumerate(causal_traits):
             if i == j:
                 continue
             via_value = float(R_xx[i, j] * p[j])
@@ -312,16 +337,16 @@ async def analysis_path_analysis(request: PathAnalysisRequest):
         )
 
     interpretation = _generate_interpretation(
-        path_rows, request.target_trait, r_squared, residual, n
+        path_rows, target_trait, r_squared, residual, n
     )
 
     return PathAnalysisResponse(
         status="success",
         dataset_token=request.dataset_token,
-        target_trait=request.target_trait,
-        causal_traits=request.trait_columns,
+        target_trait=target_trait,
+        causal_traits=causal_traits,
         n_observations=n,
-        method=request.method,
+        method=method,
         r_squared=r_squared,
         residual_effect=residual,
         path_coefficients=path_rows,
