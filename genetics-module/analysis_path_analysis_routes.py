@@ -56,15 +56,11 @@ class PathAnalysisRequest(BaseModel):
     standardize: bool = Field(default=False, description="Reserved — not used in current implementation")
 
 
-class IndirectEffect(BaseModel):
-    via_trait: str
-    value: float
-
-
 class PathCoefficientRow(BaseModel):
     trait: str
     direct_effect: float
-    indirect_effects: List[IndirectEffect]
+    # Dict keyed by trait name: {"Ear_length_cm": 0.12, "Grain_weight_g": -0.05}
+    indirect_effects: Dict[str, float]
     total_indirect: float
     total_correlation_with_target: float
 
@@ -79,6 +75,8 @@ class PathAnalysisResponse(BaseModel):
     r_squared: float
     residual_effect: float
     path_coefficients: List[PathCoefficientRow]
+    # Flat dict: {"TraitA": direct_p_A, "TraitB": direct_p_B}
+    direct_effects: Dict[str, float]
     correlation_with_target: Dict[str, float]
     interpretation: str
     warnings: List[str]
@@ -317,13 +315,13 @@ async def analysis_path_analysis(request: PathAnalysisRequest):
         r_iy = float(r_xy[i])
         corr_with_target[trait] = r_iy
 
-        indirect_effects: List[IndirectEffect] = []
+        indirect_effects: Dict[str, float] = {}
         total_indirect = 0.0
         for j, other_trait in enumerate(causal_traits):
             if i == j:
                 continue
             via_value = float(R_xx[i, j] * p[j])
-            indirect_effects.append(IndirectEffect(via_trait=other_trait, value=via_value))
+            indirect_effects[other_trait] = via_value
             total_indirect += via_value
 
         path_rows.append(
@@ -335,6 +333,8 @@ async def analysis_path_analysis(request: PathAnalysisRequest):
                 total_correlation_with_target=r_iy,
             )
         )
+
+    direct_effects = {row.trait: row.direct_effect for row in path_rows}
 
     interpretation = _generate_interpretation(
         path_rows, target_trait, r_squared, residual, n
@@ -350,6 +350,7 @@ async def analysis_path_analysis(request: PathAnalysisRequest):
         r_squared=r_squared,
         residual_effect=residual,
         path_coefficients=path_rows,
+        direct_effects=direct_effects,
         correlation_with_target=corr_with_target,
         interpretation=interpretation,
         warnings=warnings,
