@@ -354,4 +354,12 @@ async def startup_event() -> None:
     except Exception as exc:
         logger.error("RGeneticsEngine init failed (503 on R endpoints): %s", exc)
 
+    # === DIAGNOSTIC: Dump all registered routes ===
+    print("\n=== ROUTE DUMP (for debugging) ===", flush=True)
+    for route in app.routes:
+        methods = getattr(route, "methods", None)
+        path = getattr(route, "path", None)
+        print(f"ROUTE: {methods} {path}", flush=True)
+    print("=== END ROUTE DUMP ===\n", flush=True)
+
     logger.info("=== VivaSense startup complete ===")
