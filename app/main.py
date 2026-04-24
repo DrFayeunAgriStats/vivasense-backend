@@ -241,6 +241,46 @@ try:
 except Exception as _e:
     print(f"WARN: analysis-cluster router not loaded — {_e}", flush=True)
 
+# Step 9.11 — Non-parametric tests module (/analysis/nonparametric)
+_an_np_ok = False
+try:
+    from analysis_nonparametric_routes import router as nonparametric_router  # noqa: E402
+    app.include_router(nonparametric_router)
+    _an_np_ok = True
+    print("Router registered: analysis-nonparametric (/analysis/nonparametric)", flush=True)
+except Exception as _e:
+    print(f"WARN: analysis-nonparametric router not loaded — {_e}", flush=True)
+
+# Step 9.12 — MANOVA module (/analysis/manova)
+_an_manova_ok = False
+try:
+    from analysis_manova_routes import router as manova_router  # noqa: E402
+    app.include_router(manova_router)
+    _an_manova_ok = True
+    print("Router registered: analysis-manova (/analysis/manova)", flush=True)
+except Exception as _e:
+    print(f"WARN: analysis-manova router not loaded — {_e}", flush=True)
+
+# Step 9.13 — Path analysis module (/analysis/path-analysis)
+_an_path_ok = False
+try:
+    from analysis_path_routes import router as path_router  # noqa: E402
+    app.include_router(path_router)
+    _an_path_ok = True
+    print("Router registered: analysis-path-analysis (/analysis/path-analysis)", flush=True)
+except Exception as _e:
+    print(f"WARN: analysis-path-analysis router not loaded — {_e}", flush=True)
+
+# Step 9.14 — Selection Index module (/analysis/selection-index)
+_an_si_ok = False
+try:
+    from analysis_selection_index_routes import router as selection_index_router  # noqa: E402
+    app.include_router(selection_index_router)
+    _an_si_ok = True
+    print("Router registered: analysis-selection-index (/analysis/selection-index)", flush=True)
+except Exception as _e:
+    print(f"WARN: analysis-selection-index router not loaded — {_e}", flush=True)
+
 # Step 10 — Module-specific export endpoints (/export/*)
 _ex_mod_ok = False
 try:
@@ -294,6 +334,10 @@ async def startup_event() -> None:
     logger.info("analysis-blup router loaded: %s", _an_blup_ok)
     logger.info("analysis-pca router loaded: %s", _an_pca_ok)
     logger.info("analysis-cluster router loaded: %s", _an_cluster_ok)
+    logger.info("analysis-nonparametric router loaded: %s", _an_np_ok)
+    logger.info("analysis-manova router loaded: %s", _an_manova_ok)
+    logger.info("analysis-path-analysis router loaded: %s", _an_path_ok)
+    logger.info("analysis-selection-index router loaded: %s", _an_si_ok)
     logger.info("export-modules router loaded: %s", _ex_mod_ok)
     logger.info("academic-mentor router loaded: %s", _ac_ok)
 

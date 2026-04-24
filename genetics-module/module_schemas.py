@@ -682,3 +682,206 @@ class ClusterResponse(BaseModel):
     silhouette_scores: List[float]
     dendrogram_data: Optional[Dict[str, Any]] = None
     interpretation: str
+
+
+# ============================================================================
+# NON-PARAMETRIC TESTS MODULE
+# ============================================================================
+
+class GroupMedian(BaseModel):
+    """Summary statistics for a single group in non-parametric tests."""
+    group_name: str
+    median: float
+    n: int
+    rank_sum: Optional[float] = None
+    mean_rank: Optional[float] = None
+
+
+class PairwiseComparison(BaseModel):
+    """Pairwise post-hoc comparison result (Dunn's test)."""
+    group1: str
+    group2: str
+    p_value: float
+    significant: bool
+    adjustment: str
+
+
+class NonparametricRequest(BaseModel):
+    """Request body for POST /analysis/nonparametric."""
+    dataset_token: str = Field(..., description="Token from POST /upload/dataset")
+    trait_column: str = Field(..., description="Numeric trait column to test")
+    group_column: str = Field(..., description="Factor column (e.g. genotype, treatment)")
+    test_type: str = Field(
+        default="kruskal-wallis",
+        description="Test to run: kruskal-wallis | friedman | dunn",
+    )
+    block_column: Optional[str] = Field(
+        default=None,
+        description="Block/rep column for Friedman test (repeated measures)",
+    )
+    alpha: float = Field(default=0.05, ge=0.0, le=1.0)
+
+
+class NonparametricResponse(BaseModel):
+    """Response from POST /analysis/nonparametric."""
+    status: str
+    test_type: str
+    trait: str
+    group_column: str
+    n_groups: int
+    n_observations: int
+    statistic: float
+    statistic_name: str
+    p_value: float
+    df: int
+    significant: bool
+    group_medians: List[GroupMedian]
+    posthoc_results: Optional[List[PairwiseComparison]] = None
+    interpretation: str
+    assumptions_met: Dict[str, Any]
+
+
+# ============================================================================
+# MANOVA MODULE
+# ============================================================================
+
+class UnivariateResult(BaseModel):
+    """Per-trait univariate ANOVA result from MANOVA follow-up."""
+    trait: str
+    f_statistic: float
+    p_value: float
+    significant: bool
+    eta_squared: Optional[float] = None
+
+
+class MANOVARequest(BaseModel):
+    """Request body for POST /analysis/manova."""
+    dataset_token: str = Field(..., description="Token from POST /upload/dataset")
+    trait_columns: List[str] = Field(..., min_length=2, description="≥2 trait columns for MANOVA")
+    factor_column: str = Field(..., description="Independent variable column (e.g. genotype)")
+    covariates: List[str] = Field(default=[], description="Optional covariate columns")
+    test_statistic: str = Field(
+        default="Wilks",
+        description="MANOVA test statistic: Wilks | Pillai | Hotelling-Lawley | Roy",
+    )
+    alpha: float = Field(default=0.05, ge=0.0, le=1.0)
+
+
+class MANOVAResponse(BaseModel):
+    """Response from POST /analysis/manova."""
+    status: str
+    n_traits: int
+    n_groups: int
+    n_observations: int
+    traits: List[str]
+    factor: str
+    test_statistic_name: str
+    test_statistic_value: float
+    f_statistic: float
+    df_hypothesis: int
+    df_error: int
+    p_value: float
+    significant: bool
+    univariate_results: List[UnivariateResult]
+    effect_sizes: Dict[str, float]
+    interpretation: str
+    assumptions_note: str
+
+
+# ============================================================================
+# PATH ANALYSIS MODULE
+# ============================================================================
+
+class PathCoefficient(BaseModel):
+    """Direct effect of a predictor on the outcome trait."""
+    predictor: str
+    direct_effect: float
+    std_error: float
+    t_statistic: float
+    p_value: float
+    significant: bool
+
+
+class CorrelationDecomp(BaseModel):
+    """Decomposition of trait correlation into direct and indirect effects."""
+    predictor: str
+    total_correlation: float
+    direct_effect: float
+    indirect_effect: float
+    percent_direct: float
+
+
+class PathAnalysisRequest(BaseModel):
+    """Request body for POST /analysis/path-analysis."""
+    dataset_token: str = Field(..., description="Token from POST /upload/dataset")
+    outcome_trait: str = Field(..., description="Dependent variable (e.g. yield)")
+    predictor_traits: List[str] = Field(
+        ..., min_length=1, description="Independent variable columns"
+    )
+    method: str = Field(
+        default="correlation",
+        description="Analysis method: correlation (phenotypic) | covariance",
+    )
+    standardize: bool = Field(default=True, description="Use standardised path coefficients")
+
+
+class PathAnalysisResponse(BaseModel):
+    """Response from POST /analysis/path-analysis."""
+    status: str
+    outcome_trait: str
+    predictor_traits: List[str]
+    n_observations: int
+    path_coefficients: List[PathCoefficient]
+    correlation_decomposition: List[CorrelationDecomp]
+    r_squared: float
+    residual_effect: float
+    indirect_effects: Dict[str, Dict[str, float]]
+    interpretation: str
+    path_diagram_data: Dict[str, Any]
+
+
+# ============================================================================
+# SELECTION INDEX MODULE
+# ============================================================================
+
+class GenotypeIndex(BaseModel):
+    """Per-genotype selection index score and rank."""
+    genotype: str
+    index_value: float
+    rank: int
+
+
+class SelectionIndexRequest(BaseModel):
+    """Request body for POST /analysis/selection-index."""
+    dataset_token: str = Field(..., description="Token from POST /upload/dataset")
+    trait_columns: List[str] = Field(..., min_length=2, description="≥2 trait columns for index")
+    economic_weights: Dict[str, float] = Field(
+        ..., description="Relative economic weight per trait (trait -> weight)"
+    )
+    genetic_parameters: Dict[str, Dict[str, float]] = Field(
+        default={},
+        description="Optional heritability (h2) and genetic variances per trait",
+    )
+    genetic_correlations: Optional[Dict[str, Dict[str, float]]] = Field(
+        default=None,
+        description="Optional genetic correlation matrix between traits",
+    )
+    selection_intensity: float = Field(
+        default=1.755,
+        description="Selection intensity i (top 10% = 1.755, top 5% = 2.063)",
+    )
+
+
+class SelectionIndexResponse(BaseModel):
+    """Response from POST /analysis/selection-index."""
+    status: str
+    traits: List[str]
+    n_genotypes: int
+    index_weights: Dict[str, float]
+    genotype_scores: List[GenotypeIndex]
+    expected_gain: Dict[str, float]
+    total_merit: float
+    selection_accuracy: float
+    relative_efficiency: Dict[str, float]
+    selected_genotypes: List[str]
+    interpretation: str
