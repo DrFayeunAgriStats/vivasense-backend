@@ -298,6 +298,14 @@ try:
 except Exception as _e:
     logger.warning("analysis-cluster router not loaded — %s", _e)
 
+# Step 9.11 — Path analysis module (/analysis/path-analysis)
+try:
+    from analysis_path_analysis_routes import router as path_analysis_router
+    app.include_router(path_analysis_router)
+    logger.info("analysis-path-analysis router loaded (/analysis/path-analysis)")
+except Exception as _e:
+    logger.warning("analysis-path-analysis router not loaded — %s", _e)
+
 # Step 10 — Module-specific Word/report export (/export/*)
 try:
     from export_module_routes import router as export_mod_router
