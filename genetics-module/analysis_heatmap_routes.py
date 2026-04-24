@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 VivaSense – Heatmap Analysis Module
 
@@ -19,7 +20,7 @@ The frontend renders this directly as a correlation heatmap (e.g. via a
 charting library).  No separate R computation is performed — the heatmap
 is a reshaped view of the correlation result.
 
-Requires a dataset_token from POST /upload/dataset and ≥ 2 trait columns.
+Requires a dataset_token from POST /upload/dataset and >= 2 trait columns.
 """
 
 import base64
@@ -59,13 +60,12 @@ async def analysis_heatmap(request: CorrelationModuleRequest):
     they reduce environmental noise and are more appropriate for visualizing
     genotype-level trait relationships. For field-level co-variation patterns,
     use the full dual-mode correlation analysis at /analysis/correlation.
-    """
 
     The returned `matrix` is the n x n r-value grid; `labels` gives the trait
     names for each row/column; `min_val`/`max_val` give the observed range
     (excluding diagonal 1.0 values) for colour-scale calibration.
 
-    Requires ≥ 2 trait columns and a dataset_token from POST /upload/dataset.
+    Requires >= 2 trait columns and a dataset_token from POST /upload/dataset.
     """
     import trait_relationships_routes as _tr_mod
 
@@ -175,11 +175,11 @@ async def analysis_heatmap(request: CorrelationModuleRequest):
     ]
     if strong_pos:
         interp_parts.append(
-            f"{strong_pos} trait pair(s) show strong positive correlation (r ≥ 0.70)."
+            f"{strong_pos} trait pair(s) show strong positive correlation (r >= 0.70)."
         )
     if strong_neg:
         interp_parts.append(
-            f"{strong_neg} trait pair(s) show strong negative correlation (r ≤ −0.70)."
+            f"{strong_neg} trait pair(s) show strong negative correlation (r <= -0.70)."
         )
     interpretation = "  ".join(interp_parts)
 
