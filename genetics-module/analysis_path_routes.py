@@ -193,7 +193,7 @@ def _build_interpretation(
 
     if sig_direct:
         sig_strs = [
-            f"{c.predictor} (p = {c.direct_effect:+.3f}, P = {c.p_value:.4f})"
+            f"{c.predictor} (β = {c.direct_effect:+.3f}, p = {c.p_value:.4f})"
             for c in sig_direct
         ]
         parts.append(

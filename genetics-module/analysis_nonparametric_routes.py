@@ -373,7 +373,7 @@ async def analysis_nonparametric(request: NonparametricRequest):
             posthoc_results = None
         else:
             result = _kruskal_wallis(df, request.trait_column, request.group_column)
-            if test_type == "dunn" and result["significant"] if "significant" in result else True:
+            if test_type == "dunn" and result.get("significant", True):
                 posthoc_results = _dunn_posthoc(
                     df, request.trait_column, request.group_column, request.alpha
                 )
