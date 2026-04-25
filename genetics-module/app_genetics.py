@@ -306,6 +306,14 @@ try:
 except Exception as _e:
     logger.warning("analysis-path-analysis router not loaded — %s", _e)
 
+# Step 9.12 — Selection Index module (/analysis/selection-index)
+try:
+    from analysis_selection_index_routes import router as selection_index_router
+    app.include_router(selection_index_router)
+    logger.info("analysis-selection-index router loaded (/analysis/selection-index)")
+except Exception as _e:
+    logger.warning("analysis-selection-index router not loaded — %s", _e)
+
 # Step 10 — Module-specific Word/report export (/export/*)
 try:
     from export_module_routes import router as export_mod_router
