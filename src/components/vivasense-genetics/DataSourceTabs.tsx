@@ -27,8 +27,15 @@
  * tab does not appear and the component behaves exactly as before.
  */
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { UploadDatasetContext } from "@/services/geneticsUploadApi";
+import {
+  getVivaSenseMode,
+  initializeVivaSenseMode,
+  modeLabel,
+  VIVASENSE_MODE_CHANGED_EVENT,
+  VivaSenseMode,
+} from "@/services/featureMode";
 
 type TabId = "manual" | "upload" | "relationships" | "descriptive";
 
@@ -64,6 +71,20 @@ export function DataSourceTabs({
 }: DataSourceTabsProps) {
   const [active, setActive] = useState<TabId>("manual");
   const [datasetContext, setDatasetContext] = useState<UploadDatasetContext | null>(null);
+  const [mode, setMode] = useState<VivaSenseMode>(() => initializeVivaSenseMode());
+
+  useEffect(() => {
+    // Hard-refresh guard: initialize only when key is missing; keep existing "pro".
+    initializeVivaSenseMode();
+
+    const syncMode = () => setMode(getVivaSenseMode());
+    window.addEventListener(VIVASENSE_MODE_CHANGED_EVENT, syncMode);
+    window.addEventListener("storage", syncMode);
+    return () => {
+      window.removeEventListener(VIVASENSE_MODE_CHANGED_EVENT, syncMode);
+      window.removeEventListener("storage", syncMode);
+    };
+  }, []);
 
   const showRelationships = typeof traitRelationshipsContent === "function";
   const showDescriptive = typeof descriptiveStatsContent === "function";
@@ -113,6 +134,15 @@ export function DataSourceTabs({
 
   return (
     <div className="w-full">
+      <div className="mb-3 flex justify-end">
+        <span
+          className="inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold"
+          style={{ borderColor: "#1B5E20", color: "#1B5E20", backgroundColor: "#E8F5E9" }}
+        >
+          {modeLabel(mode)}
+        </span>
+      </div>
+
       {/* Tab bar */}
       <div className="flex rounded-xl border border-gray-200 bg-gray-50 p-1 gap-1 mb-6">
         {tabs.map((tab) => (

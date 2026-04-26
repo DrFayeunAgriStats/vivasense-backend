@@ -26,7 +26,8 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from genetics_schemas import GeneticsResponse
 from multitrait_upload_routes import build_observations, check_balance, read_file
@@ -638,7 +639,7 @@ def is_gxe_effect_significant(anova_table) -> bool:
     response_model=AnovaModuleResponse,
     summary="Run ANOVA analysis for selected traits",
 )
-async def analysis_anova(request: ModuleRequest):
+async def analysis_anova(request: ModuleRequest, http_request: Request):
     """
     For each requested trait column, run the R genetics engine and return
     the ANOVA-specific slice of the result:
@@ -678,6 +679,16 @@ async def analysis_anova(request: ModuleRequest):
         )
 
     mode           = ctx["mode"]
+    if mode == "multi":
+        mode_header = (http_request.headers.get("X-VivaSense-Mode") or "free").lower().strip()
+        if mode_header != "pro":
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error": "PRO_FEATURE",
+                    "message": "Upgrade to access this feature",
+                },
+            )
     env_col        = ctx["environment_column"] if mode == "multi" else None
     geno_col       = ctx["genotype_column"]
     rep_col        = ctx["rep_column"]        # may be None for CRD datasets

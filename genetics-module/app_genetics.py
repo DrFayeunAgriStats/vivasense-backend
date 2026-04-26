@@ -140,6 +140,43 @@ app = FastAPI(
     version="1.0.0"
 )
 
+PRO_GATED_PATHS = {
+    "/analysis/genetic-parameters",
+    "/analysis/pca",
+    "/analysis/cluster",
+    "/analysis/selection-index",
+    "/analysis/path-analysis",
+    "/analysis/path-analysis/preflight",
+    "/genetics/analyze-upload",
+    "/genetics/download-results",
+    "/genetics/export-word",
+    "/export/descriptive-stats-word",
+    "/export/anova-word",
+    "/export/genetic-parameters-word",
+    "/export/correlation-word",
+    "/export/heatmap-report",
+    "/academic/interpret",
+}
+
+
+def _is_pro_gated_path(path: str) -> bool:
+    return path in PRO_GATED_PATHS
+
+
+@app.middleware("http")
+async def vivasense_mode_gate(request: Request, call_next):
+    if _is_pro_gated_path(request.url.path):
+        mode = request.headers.get("X-VivaSense-Mode", "free").lower().strip()
+        if mode != "pro":
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error": "PRO_FEATURE",
+                    "message": "Upgrade to access this feature",
+                },
+            )
+    return await call_next(request)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[

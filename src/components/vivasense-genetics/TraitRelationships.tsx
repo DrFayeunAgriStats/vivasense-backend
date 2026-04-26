@@ -27,6 +27,13 @@ import { CorrelationHeatmap } from "./CorrelationHeatmap";
 import { WordExportPreviewModal } from "@/components/export/WordExportPreviewModal";
 import { logDebug } from "@/utils/normalizeModuleData";
 import type { PreviewSection } from "@/utils/normalizeModuleData";
+import {
+  getVivaSenseMode,
+  ProFeatureError,
+  VIVASENSE_MODE_CHANGED_EVENT,
+  VivaSenseMode,
+} from "@/services/featureMode";
+import { ProFeatureModal } from "./ProFeatureModal";
 
 interface TraitRelationshipsProps {
   /**
@@ -126,6 +133,18 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
   const [displayMode, setDisplayMode] = useState<"phenotypic" | "between_genotype" | "genotypic">("phenotypic");
   const [showPreview, setShowPreview] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [showProModal, setShowProModal] = useState(false);
+  const [mode, setMode] = useState<VivaSenseMode>(() => getVivaSenseMode());
+
+  useEffect(() => {
+    const syncMode = () => setMode(getVivaSenseMode());
+    window.addEventListener(VIVASENSE_MODE_CHANGED_EVENT, syncMode);
+    window.addEventListener("storage", syncMode);
+    return () => {
+      window.removeEventListener(VIVASENSE_MODE_CHANGED_EVENT, syncMode);
+      window.removeEventListener("storage", syncMode);
+    };
+  }, []);
 
   // When a new (or first) dataset context arrives, reset the trait selection
   // and discard any previous results.
@@ -228,6 +247,10 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
 
   const handleDownload = async () => {
     if (!results) return;
+    if (mode !== "pro") {
+      setShowProModal(true);
+      return;
+    }
     setDownloading(true);
     try {
       // Client-side docx export flow
@@ -235,6 +258,10 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
         await exportCorrelationWord(results);
       }
     } catch (err) {
+      if (err instanceof ProFeatureError) {
+        setShowProModal(true);
+        return;
+      }
       console.error("Export failed", err);
     } finally {
       setDownloading(false);
@@ -603,7 +630,11 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
             disabled={!canExport || downloading}
             className="rounded-lg border border-emerald-600 bg-emerald-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {downloading ? "Generating…" : "Download Report (.docx)"}
+            {downloading
+              ? "Generating…"
+              : mode === "pro"
+              ? "Download Report (.docx)"
+              : "🔒 Pro · Download Report (.docx)"}
           </button>
         </div>
         </div>
@@ -738,6 +769,11 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
           onClose={() => setShowPreview(false)}
         />
       )}
+      <ProFeatureModal
+        open={showProModal}
+        onClose={() => setShowProModal(false)}
+        onActivated={() => setMode(getVivaSenseMode())}
+      />
       </div>
     );
   }

@@ -8,6 +8,7 @@
  */
 
 import { API_BASE } from "./apiConfig";
+import { buildModeHeaders } from "./featureMode";
 const ENGINE_BASE: string = API_BASE;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -68,7 +69,7 @@ export async function analyzeGenetics(
   try {
     response = await fetch(`${ENGINE_BASE}/genetics/analyze`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: buildModeHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(request),
     });
   } catch (err) {
@@ -95,7 +96,7 @@ export async function validateGenetics(
   try {
     response = await fetch(`${ENGINE_BASE}/genetics/validate`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: buildModeHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(request),
     });
   } catch (err) {
@@ -117,7 +118,9 @@ export async function validateGenetics(
  */
 export async function checkHealth(): Promise<boolean> {
   try {
-    const response = await fetch(`${ENGINE_BASE}/health`);
+    const response = await fetch(`${ENGINE_BASE}/health`, {
+      headers: buildModeHeaders(),
+    });
     return response.ok;
   } catch {
     return false;

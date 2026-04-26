@@ -10,6 +10,7 @@
  */
 
 import { API_BASE } from "./apiConfig";
+import { buildModeHeaders, guardProModule } from "./featureMode";
 const ENGINE_BASE: string = API_BASE;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -160,6 +161,7 @@ export async function previewUpload(file: File): Promise<UploadPreviewResponse> 
   try {
     response = await fetch(previewUrl, {
       method: "POST",
+      headers: buildModeHeaders(),
       body: fd,
     });
   } catch (err) {
@@ -186,6 +188,7 @@ export async function previewUpload(file: File): Promise<UploadPreviewResponse> 
 export async function analyzeUpload(
   request: UploadAnalysisRequest
 ): Promise<UploadAnalysisResponse> {
+  guardProModule("combined-anova");
   // Temporary debug log — remove after integration is confirmed working.
   console.log("[analyzeUpload] request fields:", {
     file_type: request.file_type,
@@ -208,7 +211,7 @@ export async function analyzeUpload(
   try {
     response = await fetch(analyzeUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: buildModeHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(request),
     });
   } catch (err) {
@@ -248,6 +251,7 @@ export async function exportWordReport(
   data: UploadAnalysisResponse,
   filename = "vivasense_genetics_report.docx"
 ): Promise<void> {
+  guardProModule("export-word");
   // Normalise trait_results so every entry has the required "status" field.
   // Guards against state where status was dropped during result construction.
   const normalizedTraitResults: Record<string, TraitResult> = {};
@@ -273,7 +277,7 @@ export async function exportWordReport(
   try {
     response = await fetch(exportUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: buildModeHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(payload),
     });
   } catch (err) {
@@ -399,7 +403,7 @@ export async function confirmDataset(
   try {
     response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: buildModeHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(request),
     });
   } catch (err) {
@@ -455,7 +459,7 @@ export async function runDescriptiveStats(request: {
   try {
     response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: buildModeHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(request),
     });
   } catch (err) {
@@ -483,6 +487,7 @@ export async function runDescriptiveStats(request: {
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function exportDescriptiveStats(currentData: DescriptiveStatsResponse | Record<string, any>): Promise<void> {
+  guardProModule("export-word");
   const url = `${ENGINE_BASE}/export/descriptive-stats-word`;
 
   // Flatten: prefer fields from currentData.response if present, fall back to root.
@@ -517,7 +522,7 @@ export async function exportDescriptiveStats(currentData: DescriptiveStatsRespon
   try {
     response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: buildModeHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(payload),
     });
   } catch (err) {

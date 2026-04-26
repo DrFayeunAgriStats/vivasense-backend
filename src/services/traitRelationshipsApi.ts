@@ -7,6 +7,7 @@
  */
 
 import { API_BASE } from "./apiConfig";
+import { buildModeHeaders, guardProModule } from "./featureMode";
 const ENGINE_BASE: string = API_BASE;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -154,7 +155,7 @@ export async function computeCorrelation(
   try {
     response = await fetch(correlationUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: buildModeHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(request),
     });
   } catch (err) {
@@ -174,6 +175,44 @@ export async function computeCorrelation(
   console.log("[traitRelationshipsApi] raw response keys:", Object.keys(raw ?? {}));
 
   return _normalizeResponse(raw);
+}
+
+/**
+ * Export correlation results to Word report.
+ * Endpoint: POST /export/correlation-word
+ */
+export async function exportCorrelationWord(
+  results: CorrelationResponse
+): Promise<void> {
+  guardProModule("export-word");
+
+  const url = `${ENGINE_BASE}/export/correlation-word`;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: buildModeHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(results),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Network error during correlation export: ${msg}`);
+  }
+
+  if (!response.ok) {
+    const detail = await _extractErrorDetail(response);
+    throw new Error(`Correlation export failed — ${detail}`);
+  }
+
+  const blob = await response.blob();
+  const blobUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = blobUrl;
+  a.download = "vivasense_correlation_report.docx";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(blobUrl);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

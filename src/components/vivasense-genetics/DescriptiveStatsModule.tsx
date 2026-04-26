@@ -15,7 +15,7 @@
  *   - Backend errors shown clearly; never silently swallowed
  */
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   runDescriptiveStats,
   exportDescriptiveStats,
@@ -23,6 +23,13 @@ import {
   TraitDescriptiveResult,
   UploadDatasetContext,
 } from "@/services/geneticsUploadApi";
+import {
+  getVivaSenseMode,
+  ProFeatureError,
+  VIVASENSE_MODE_CHANGED_EVENT,
+  VivaSenseMode,
+} from "@/services/featureMode";
+import { ProFeatureModal } from "./ProFeatureModal";
 
 interface DescriptiveStatsModuleProps {
   datasetContext: UploadDatasetContext | null;
@@ -159,20 +166,32 @@ function TraitRow({
 function ResultsPanel({
   results,
   onReset,
+  isPro,
+  onProBlocked,
 }: {
   results: DescriptiveStatsResponse;
   onReset: () => void;
+  isPro: boolean;
+  onProBlocked: () => void;
 }) {
   const cautionSet = new Set(results.caution_traits);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
 
   const handleExport = async () => {
+    if (!isPro) {
+      onProBlocked();
+      return;
+    }
     setExporting(true);
     setExportError(null);
     try {
       await exportDescriptiveStats(results);
     } catch (err) {
+      if (err instanceof ProFeatureError) {
+        onProBlocked();
+        return;
+      }
       setExportError(err instanceof Error ? err.message : "Export failed");
     } finally {
       setExporting(false);
@@ -197,7 +216,11 @@ function ResultsPanel({
             disabled={exporting}
             className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {exporting ? "Generating…" : "Download Report (.docx)"}
+            {exporting
+              ? "Generating…"
+              : isPro
+              ? "Download Report (.docx)"
+              : "🔒 Pro · Download Report (.docx)"}
           </button>
           <button
             onClick={onReset}
@@ -304,6 +327,8 @@ export function DescriptiveStatsModule({ datasetContext }: DescriptiveStatsModul
   const [results, setResults] = useState<DescriptiveStatsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hasAutoRun, setHasAutoRun] = useState(false);
+  const [showProModal, setShowProModal] = useState(false);
+  const [mode, setMode] = useState<VivaSenseMode>(() => getVivaSenseMode());
 
   const token = datasetContext?.datasetToken ?? null;
   const availableTraits = datasetContext?.availableTraitColumns ?? [];
@@ -317,6 +342,16 @@ export function DescriptiveStatsModule({ datasetContext }: DescriptiveStatsModul
       setHasAutoRun(false); // Reset auto-run state for new datasets
     }
   }, [datasetContext]);
+
+  useEffect(() => {
+    const syncMode = () => setMode(getVivaSenseMode());
+    window.addEventListener(VIVASENSE_MODE_CHANGED_EVENT, syncMode);
+    window.addEventListener("storage", syncMode);
+    return () => {
+      window.removeEventListener(VIVASENSE_MODE_CHANGED_EVENT, syncMode);
+      window.removeEventListener("storage", syncMode);
+    };
+  }, []);
 
   const canRun = token !== null && selectedTraits.length > 0 && !loading;
 
@@ -403,12 +438,27 @@ export function DescriptiveStatsModule({ datasetContext }: DescriptiveStatsModul
 
   // ── Case 3: results ready ─────────────────────────────────────────────────
   if (results) {
-    return <ResultsPanel results={results} onReset={handleReset} />;
+    return (
+      <>
+        <ResultsPanel
+          results={results}
+          onReset={handleReset}
+          isPro={mode === "pro"}
+          onProBlocked={() => setShowProModal(true)}
+        />
+        <ProFeatureModal
+          open={showProModal}
+          onClose={() => setShowProModal(false)}
+          onActivated={() => setMode(getVivaSenseMode())}
+        />
+      </>
+    );
   }
 
   // ── Case 4: setup UI ──────────────────────────────────────────────────────
   return (
-    <div className="space-y-5">
+    <>
+      <div className="space-y-5">
       {/* Dataset info badge */}
       <div className="flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2">
         <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
@@ -507,6 +557,12 @@ export function DescriptiveStatsModule({ datasetContext }: DescriptiveStatsModul
       >
         {loading ? "Running…" : "Run Descriptive Statistics"}
       </button>
-    </div>
+      </div>
+      <ProFeatureModal
+        open={showProModal}
+        onClose={() => setShowProModal(false)}
+        onActivated={() => setMode(getVivaSenseMode())}
+      />
+    </>
   );
 }

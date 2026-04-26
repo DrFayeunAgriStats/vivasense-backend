@@ -43,6 +43,7 @@ from multitrait_upload_routes import read_file
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Analysis"])
+MIN_COMPLETE_ROWS = 18
 
 
 # ============================================================================
@@ -62,11 +63,11 @@ def _compute_path_analysis(
     data_clean = data[cols].dropna()
     n = len(data_clean)
 
-    min_n = max(len(predictors) * 3, len(predictors) + 3)
-    if n < min_n:
+    if n < MIN_COMPLETE_ROWS:
         raise ValueError(
-            f"Insufficient observations for path analysis. "
-            f"Need at least {min_n} complete rows, found {n}."
+            "Path analysis requires at least 18 complete observations for the selected "
+            f"traits. Your current selection has only {n}. Please select fewer traits, "
+            "clean missing values, or upload more data."
         )
 
     # Standardise if requested
@@ -166,6 +167,18 @@ def _compute_path_analysis(
         "indirect_effects": indirect_matrix,
         "path_diagram_data": path_diagram_data,
     }
+
+
+def _count_complete_rows(
+    data: pd.DataFrame,
+    outcome: str,
+    predictors: List[str],
+) -> int:
+    cols = [outcome] + predictors
+    clean = data[cols].copy()
+    for c in cols:
+        clean[c] = pd.to_numeric(clean[c], errors="coerce")
+    return int(len(clean.dropna()))
 
 
 def _build_interpretation(
@@ -286,7 +299,22 @@ async def analysis_path_analysis(request: PathAnalysisRequest):
     if missing:
         raise HTTPException(
             status_code=400,
-            detail=f"Columns not found in dataset: {missing}",
+            detail=(
+                "Some selected traits are not present in this dataset. "
+                "Please select traits from the uploaded data. "
+                f"Missing: {missing}"
+            ),
+        )
+
+    complete_rows = _count_complete_rows(df, outcome_trait, predictor_traits)
+    if complete_rows < MIN_COMPLETE_ROWS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Path analysis requires at least 18 complete observations for the selected "
+                f"traits. Your current selection has only {complete_rows}. "
+                "Please select fewer traits, clean missing values, or upload more data."
+            ),
         )
 
     for col in all_cols:
@@ -331,3 +359,69 @@ async def analysis_path_analysis(request: PathAnalysisRequest):
         interpretation=interpretation,
         path_diagram_data=result["path_diagram_data"],
     )
+
+
+@router.post(
+    "/analysis/path-analysis/preflight",
+    summary="Validate Path Analysis trait selection before full execution",
+)
+async def path_analysis_preflight(request: PathAnalysisRequest):
+    """Quick validation endpoint for UI pre-checks before running full path analysis."""
+    try:
+        outcome_trait = request.resolved_outcome_trait
+        predictor_traits = request.resolved_predictor_traits
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if not predictor_traits:
+        raise HTTPException(status_code=400, detail="At least one predictor trait is required.")
+
+    if outcome_trait in predictor_traits:
+        raise HTTPException(
+            status_code=400,
+            detail="outcome_trait must not appear in predictor_traits.",
+        )
+
+    ctx = dataset_cache.get_dataset(request.dataset_token)
+    if ctx is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Dataset token '{request.dataset_token}' not found. "
+                "Re-upload via POST /upload/dataset to get a new token."
+            ),
+        )
+
+    try:
+        file_bytes = base64.b64decode(ctx["base64_content"])
+        df = read_file(file_bytes, ctx["file_type"])
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Could not read dataset: {exc}") from exc
+
+    all_cols = [outcome_trait] + predictor_traits
+    missing = [c for c in all_cols if c not in df.columns]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Some selected traits are not present in this dataset. "
+                "Please select traits from the uploaded data. "
+                f"Missing: {missing}"
+            ),
+        )
+
+    complete_rows = _count_complete_rows(df, outcome_trait, predictor_traits)
+    return {
+        "status": "ok" if complete_rows >= MIN_COMPLETE_ROWS else "insufficient_complete_rows",
+        "complete_rows": complete_rows,
+        "minimum_required": MIN_COMPLETE_ROWS,
+        "message": (
+            "Validation passed"
+            if complete_rows >= MIN_COMPLETE_ROWS
+            else (
+                "Path analysis requires at least 18 complete observations for the selected "
+                f"traits. Your current selection has only {complete_rows}. Please select fewer "
+                "traits, clean missing values, or upload more data."
+            )
+        ),
+    }

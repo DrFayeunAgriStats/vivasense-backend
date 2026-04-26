@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   AnovaTable,
   MeanSeparation,
@@ -12,6 +12,13 @@ import { WordExportPreviewModal } from "@/components/export/WordExportPreviewMod
 import { safeArray, logDebug, safeNumber } from "@/utils/normalizeModuleData";
 import type { PreviewSection } from "@/utils/normalizeModuleData";
 import { buildAnovaPreview, buildGeneticParametersPreview } from "@/utils/previewBuilders";
+import {
+  getVivaSenseMode,
+  ProFeatureError,
+  VIVASENSE_MODE_CHANGED_EVENT,
+  VivaSenseMode,
+} from "@/services/featureMode";
+import { ProFeatureModal } from "./ProFeatureModal";
 
 interface ResultsDisplayProps {
   results: UploadAnalysisResponse;
@@ -137,13 +144,35 @@ export function ResultsDisplay({ results, onReset }: ResultsDisplayProps) {
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(false);
+  const [showProModal, setShowProModal] = useState(false);
+  const [mode, setMode] = useState<VivaSenseMode>(() => getVivaSenseMode());
+
+  useEffect(() => {
+    const syncMode = () => setMode(getVivaSenseMode());
+    window.addEventListener(VIVASENSE_MODE_CHANGED_EVENT, syncMode);
+    window.addEventListener("storage", syncMode);
+    return () => {
+      window.removeEventListener(VIVASENSE_MODE_CHANGED_EVENT, syncMode);
+      window.removeEventListener("storage", syncMode);
+    };
+  }, []);
+
+  const isPro = mode === "pro";
 
   const handleDownload = async () => {
+    if (!isPro) {
+      setShowProModal(true);
+      return;
+    }
     setDownloading(true);
     setDownloadError(null);
     try {
       await exportWordReport(results);
     } catch (err) {
+      if (err instanceof ProFeatureError) {
+        setShowProModal(true);
+        return;
+      }
       setDownloadError(err instanceof Error ? err.message : "Download failed");
     } finally {
       setDownloading(false);
@@ -181,7 +210,11 @@ export function ResultsDisplay({ results, onReset }: ResultsDisplayProps) {
             disabled={downloading || successCount === 0}
             className="rounded-lg border border-emerald-600 bg-emerald-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {downloading ? "Generating…" : "Download Report (.docx)"}
+            {downloading
+              ? "Generating…"
+              : isPro
+              ? "Download Report (.docx)"
+              : "🔒 Pro · Download Report (.docx)"}
           </button>
           <button
             type="button"
@@ -283,6 +316,12 @@ export function ResultsDisplay({ results, onReset }: ResultsDisplayProps) {
           </span>
         </div>
       </div>
+
+      <ProFeatureModal
+        open={showProModal}
+        onClose={() => setShowProModal(false)}
+        onActivated={() => setMode(getVivaSenseMode())}
+      />
     </div>
   );
 }
@@ -368,6 +407,8 @@ function TraitDetails({
 }) {
   const [showAnovaDetails, setShowAnovaDetails] = useState(true);
   const [showAcademic, setShowAcademic] = useState(false);
+  const [showProModal, setShowProModal] = useState(false);
+  const isPro = getVivaSenseMode() === "pro";
 
   const ar = traitResult.analysis_result;
   const result = ar?.result;
@@ -452,11 +493,17 @@ function TraitDetails({
           {!showAcademic ? (
             <button
               type="button"
-              onClick={() => setShowAcademic(true)}
+              onClick={() => {
+                if (!isPro) {
+                  setShowProModal(true);
+                  return;
+                }
+                setShowAcademic(true);
+              }}
               className="mt-1 inline-flex items-center gap-2 rounded-lg border border-violet-300 bg-white px-3 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-50 transition-colors"
             >
               <span>🎓</span>
-              Get Academic Interpretation
+              {isPro ? "Get Academic Interpretation" : "🔒 Pro · Get Academic Interpretation"}
             </button>
           ) : (
             <AcademicInterpretationPanel
@@ -466,6 +513,10 @@ function TraitDetails({
               onClose={() => setShowAcademic(false)}
             />
           )}
+          <ProFeatureModal
+            open={showProModal}
+            onClose={() => setShowProModal(false)}
+          />
         </div>
       )}
     </div>

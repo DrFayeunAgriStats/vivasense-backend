@@ -8,6 +8,8 @@
  */
 
 import { API_BASE } from "./apiConfig";
+import { buildModeHeaders } from "./featureMode";
+import { guardProModule } from "./featureMode";
 
 const ENGINE_BASE: string = API_BASE;
 
@@ -108,13 +110,14 @@ export interface AcademicInterpretationResponse {
 export async function getAcademicInterpretation(
   request: AcademicInterpretRequest
 ): Promise<AcademicInterpretationResponse> {
+  guardProModule("advanced-interpretation");
   const url = `${ENGINE_BASE}/academic/interpret`;
 
   let response: Response;
   try {
     response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: buildModeHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
         ...request,
         include_writing_support: request.include_writing_support ?? true,

@@ -14,6 +14,29 @@
 
 const GENETICS_BASE = "https://vivasense-genetics-docker.onrender.com";
 
+function getVivaSenseMode() {
+  try {
+    const v = localStorage.getItem("vivasense_mode");
+    if (v === "pro") return "pro";
+  } catch {
+    // ignore storage errors and default to free
+  }
+  return "free";
+}
+
+function getAdvancedModuleFromEndpoint(endpoint) {
+  const normalized = String(endpoint || "").toLowerCase();
+  if (normalized.includes("path-analysis")) return "path-analysis";
+  if (normalized.includes("/analysis/pca") || normalized.includes("/analyze/genetics/multivariate")) return "pca";
+  if (normalized.includes("/analysis/genetic-parameters") || normalized.includes("variance-components")) return "genetic-parameters";
+  if (normalized.includes("/analysis/anova") || normalized.includes("/analyze/genetics/trial") || normalized.includes("/analyze/genetics/ammi") || normalized.includes("/analyze/genetics/gge")) return "combined-anova";
+  if (normalized.includes("/analysis/cluster") || normalized.includes("clustering")) return "clustering";
+  if (normalized.includes("/analysis/selection-index") || normalized.includes("selection-index") || normalized.includes("mgidi")) return "selection-index";
+  if (normalized.includes("/export/") || normalized.includes("/download-results") || normalized.includes("/export-word")) return "export-word";
+  if (normalized.includes("/academic/interpret")) return "advanced-interpretation";
+  return null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // TRAIT NAME MAPPING — display labels → CSV column names
 // ─────────────────────────────────────────────────────────────────────────────
@@ -93,6 +116,19 @@ function buildGeneticsFormData(file, selectedTraits = [], opts = {}) {
  */
 async function postGeneticsEndpoint(endpoint, formData) {
   const url = `${GENETICS_BASE}${endpoint}`;
+
+  const advancedModule = getAdvancedModuleFromEndpoint(endpoint);
+  const mode = getVivaSenseMode();
+  if (advancedModule && mode !== "pro") {
+    console.log(`[PRO GUARD] mode = free, blocked module = ${advancedModule}`);
+    const err = new Error("Upgrade to access this feature");
+    err.code = "PRO_FEATURE";
+    err.feature = advancedModule;
+    throw err;
+  }
+  if (advancedModule && mode === "pro") {
+    console.log(`[PRO GUARD] mode = pro, allowed module = ${advancedModule}`);
+  }
 
   let response;
   try {

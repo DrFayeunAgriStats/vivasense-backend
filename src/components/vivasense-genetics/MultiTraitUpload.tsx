@@ -22,6 +22,8 @@ import {
   UploadAnalysisResponse,
   UploadDatasetContext,
 } from "@/services/geneticsUploadApi";
+import { ProFeatureError } from "@/services/featureMode";
+import { ProFeatureModal } from "./ProFeatureModal";
 
 type Step = "idle" | "confirming" | "analyzing" | "results";
 
@@ -41,6 +43,7 @@ export function MultiTraitUpload({ onDatasetReady }: MultiTraitUploadProps = {})
   const [results, setResults] = useState<UploadAnalysisResponse | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [datasetToken, setDatasetToken] = useState<string | null>(null);
+  const [showProModal, setShowProModal] = useState(false);
 
   // ── Step 1: File selected → preview fetched ──────────────────────────────
 
@@ -158,6 +161,12 @@ export function MultiTraitUpload({ onDatasetReady }: MultiTraitUploadProps = {})
       setResults(data);
       setStep("results");
     } catch (err) {
+      if (err instanceof ProFeatureError) {
+        setShowProModal(true);
+        setAnalysisError(null);
+        setStep("confirming");
+        return;
+      }
       setAnalysisError(err instanceof Error ? err.message : "Analysis failed");
       setStep("confirming"); // go back so user can retry
     }
@@ -172,6 +181,7 @@ export function MultiTraitUpload({ onDatasetReady }: MultiTraitUploadProps = {})
     setResults(null);
     setAnalysisError(null);
     setDatasetToken(null);
+    setShowProModal(false);
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -217,6 +227,11 @@ export function MultiTraitUpload({ onDatasetReady }: MultiTraitUploadProps = {})
           <ResultsDisplay results={results} onReset={reset} />
         )}
       </div>
+
+      <ProFeatureModal
+        open={showProModal}
+        onClose={() => setShowProModal(false)}
+      />
     </div>
   );
 }
