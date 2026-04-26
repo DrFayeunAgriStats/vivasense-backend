@@ -147,7 +147,6 @@ PRO_GATED_PATHS = {
     "/analysis/selection-index",
     "/analysis/path-analysis",
     "/analysis/path-analysis/preflight",
-    "/genetics/analyze-upload",
     "/genetics/download-results",
     "/genetics/export-word",
     "/export/descriptive-stats-word",
@@ -163,9 +162,46 @@ def _is_pro_gated_path(path: str) -> bool:
     return path in PRO_GATED_PATHS
 
 
+async def _is_pro_analyze_upload_request(request: Request) -> bool:
+    if request.url.path != "/genetics/analyze-upload" or request.method.upper() != "POST":
+        return False
+
+    module_query = (request.query_params.get("module") or "").strip().lower()
+    body_module = ""
+    body_mode = ""
+    body_env_col = None
+
+    try:
+        raw = await request.body()
+        if raw:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                body_module = str(parsed.get("module") or "").strip().lower()
+                body_mode = str(parsed.get("mode") or "").strip().lower()
+                body_env_col = parsed.get("environment_column")
+    except Exception:
+        pass
+
+    # Body module takes priority; fallback to query; endpoint default is genetic_parameters.
+    actual_module = body_module or module_query or "genetic_parameters"
+
+    if actual_module == "genetic_parameters":
+        return True
+
+    if actual_module == "anova":
+        has_environment_factor = isinstance(body_env_col, str) and body_env_col.strip() != ""
+        return body_mode == "multi" or has_environment_factor
+
+    return False
+
+
 @app.middleware("http")
 async def vivasense_mode_gate(request: Request, call_next):
-    if _is_pro_gated_path(request.url.path):
+    requires_pro = _is_pro_gated_path(request.url.path)
+    if not requires_pro:
+        requires_pro = await _is_pro_analyze_upload_request(request)
+
+    if requires_pro:
         mode = request.headers.get("X-VivaSense-Mode", "free").lower().strip()
         if mode != "pro":
             return JSONResponse(

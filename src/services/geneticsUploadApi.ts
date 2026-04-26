@@ -53,6 +53,7 @@ export interface UploadAnalysisRequest {
   mode: "single" | "multi";
   random_environment?: boolean;
   selection_intensity: number;
+  module?: "anova" | "genetic_parameters" | "correlation" | "heatmap";
 }
 
 export interface SummaryTableRow {
@@ -188,7 +189,16 @@ export async function previewUpload(file: File): Promise<UploadPreviewResponse> 
 export async function analyzeUpload(
   request: UploadAnalysisRequest
 ): Promise<UploadAnalysisResponse> {
-  guardProModule("combined-anova");
+  const selectedModule = request.module ?? "genetic_parameters";
+  const hasEnvironmentFactor = (request.environment_column ?? "").trim().length > 0;
+  const isCombinedAnova = selectedModule === "anova" && (request.mode === "multi" || hasEnvironmentFactor);
+
+  if (selectedModule === "genetic_parameters") {
+    guardProModule("genetic-parameters");
+  } else if (isCombinedAnova) {
+    guardProModule("combined-anova");
+  }
+
   // Temporary debug log — remove after integration is confirmed working.
   console.log("[analyzeUpload] request fields:", {
     file_type: request.file_type,
@@ -204,7 +214,7 @@ export async function analyzeUpload(
       : "(empty — file encoding failed)",
   });
 
-  const analyzeUrl = `${ENGINE_BASE}/genetics/analyze-upload`;
+  const analyzeUrl = `${ENGINE_BASE}/genetics/analyze-upload${request.module ? `?module=${encodeURIComponent(request.module)}` : ""}`;
   console.log("[geneticsUploadApi] POST", analyzeUrl);
 
   let response: Response;
