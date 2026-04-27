@@ -27,6 +27,13 @@ import { ProFeatureModal } from "./ProFeatureModal";
 
 type Step = "idle" | "confirming" | "analyzing" | "results";
 
+export interface FileStatusInfo {
+  state: "none" | "invalid" | "loaded";
+  filename?: string;
+  n_rows?: number;
+  n_columns?: number;
+}
+
 interface MultiTraitUploadProps {
   /**
    * Called once the user confirms column mapping, before analysis begins.
@@ -34,9 +41,14 @@ interface MultiTraitUploadProps {
    * it can run correlation without requiring a second file upload.
    */
   onDatasetReady?: (ctx: UploadDatasetContext) => void;
+  /**
+   * Called whenever the upload state changes so the parent (DataSourceTabs)
+   * can update the top status bar without reaching into this component's state.
+   */
+  onFileStatus?: (info: FileStatusInfo) => void;
 }
 
-export function MultiTraitUpload({ onDatasetReady }: MultiTraitUploadProps = {}) {
+export function MultiTraitUpload({ onDatasetReady, onFileStatus }: MultiTraitUploadProps = {}) {
   const [step, setStep] = useState<Step>("idle");
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<UploadPreviewResponse | null>(null);
@@ -44,10 +56,37 @@ export function MultiTraitUpload({ onDatasetReady }: MultiTraitUploadProps = {})
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [datasetToken, setDatasetToken] = useState<string | null>(null);
   const [showProModal, setShowProModal] = useState(false);
+  // State 1B: file parsed successfully but contained zero valid rows.
+  const [invalidFile, setInvalidFile] = useState(false);
+  // Latches true after first valid upload; never reset — used to detect replacements.
+  const [datasetWasLoaded, setDatasetWasLoaded] = useState(false);
+  // Shown at the top of the config step when the user uploads a second file.
+  const [replacementNotice, setReplacementNotice] = useState(false);
 
   // ── Step 1: File selected → preview fetched ──────────────────────────────
 
   const handlePreviewReady = async (f: File, p: UploadPreviewResponse) => {
+    // State 1B: preview succeeded but file has no usable rows.
+    if (p.n_rows === 0) {
+      setInvalidFile(true);
+      onFileStatus?.({ state: "invalid" });
+      return;
+    }
+    setInvalidFile(false);
+
+    // Show replacement notice when a dataset was already loaded before.
+    if (datasetWasLoaded) {
+      setReplacementNotice(true);
+    }
+    setDatasetWasLoaded(true);
+
+    onFileStatus?.({
+      state: "loaded",
+      filename: f.name,
+      n_rows: p.n_rows,
+      n_columns: p.n_columns,
+    });
+
     setFile(f);
     setPreview(p);
     if (p.dataset_token) {
@@ -182,6 +221,10 @@ export function MultiTraitUpload({ onDatasetReady }: MultiTraitUploadProps = {})
     setAnalysisError(null);
     setDatasetToken(null);
     setShowProModal(false);
+    setInvalidFile(false);
+    setReplacementNotice(false);
+    onFileStatus?.({ state: "none" });
+    // datasetWasLoaded intentionally kept — next upload will be a replacement.
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -194,16 +237,28 @@ export function MultiTraitUpload({ onDatasetReady }: MultiTraitUploadProps = {})
       )}
 
       <div className="mt-4">
-        {(step === "idle") && (
-          <FileUpload
-            previewFn={previewUpload}
-            onPreviewStart={() => {}}
-            onPreviewReady={handlePreviewReady}
-          />
+        {step === "idle" && (
+          <>
+            <FileUpload
+              previewFn={previewUpload}
+              onPreviewStart={() => setInvalidFile(false)}
+              onPreviewReady={handlePreviewReady}
+            />
+            {invalidFile && (
+              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                Uploaded file contains no valid data. Please check the format or try a different file.
+              </div>
+            )}
+          </>
         )}
 
         {(step === "confirming" || step === "analyzing") && preview && (
           <>
+            {replacementNotice && (
+              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
+                New file loaded — please reconfigure your analysis.
+              </div>
+            )}
             {analysisError && (
               <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
                 <p className="font-medium">Analysis error</p>

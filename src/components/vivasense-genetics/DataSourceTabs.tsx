@@ -29,6 +29,7 @@
 
 import React, { useEffect, useState } from "react";
 import { UploadDatasetContext } from "@/services/geneticsUploadApi";
+import { FileStatusInfo } from "@/components/vivasense-genetics/MultiTraitUpload";
 import {
   getVivaSenseMode,
   initializeVivaSenseMode,
@@ -72,6 +73,7 @@ export function DataSourceTabs({
   const [active, setActive] = useState<TabId>("manual");
   const [datasetContext, setDatasetContext] = useState<UploadDatasetContext | null>(null);
   const [mode, setMode] = useState<VivaSenseMode>(() => initializeVivaSenseMode());
+  const [fileStatus, setFileStatus] = useState<FileStatusInfo>({ state: "none" });
 
   useEffect(() => {
     // Hard-refresh guard: initialize only when key is missing; keep existing "pro".
@@ -126,17 +128,22 @@ export function DataSourceTabs({
       : []),
   ];
 
-  // Inject onDatasetReady into uploadContent so MultiTraitUpload can signal
-  // when the user has confirmed a column mapping.
+  // Inject onDatasetReady and onFileStatus into uploadContent so MultiTraitUpload
+  // can signal when the dataset state changes without requiring extra prop drilling.
   const uploadWithCallback = React.cloneElement(uploadContent, {
     onDatasetReady: (ctx: UploadDatasetContext) => setDatasetContext(ctx),
+    onFileStatus:   (info: FileStatusInfo) => setFileStatus(info),
   });
 
   return (
     <div className="w-full">
-      <div className="mb-3 flex justify-end">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        {/* Dataset status bar */}
+        <DatasetStatusBar status={fileStatus} />
+
+        {/* Free / Pro badge */}
         <span
-          className="inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold"
+          className="shrink-0 inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold"
           style={{ borderColor: "#1B5E20", color: "#1B5E20", backgroundColor: "#E8F5E9" }}
         >
           {modeLabel(mode)}
@@ -192,5 +199,41 @@ export function DataSourceTabs({
         )}
       </div>
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dataset status bar
+// ─────────────────────────────────────────────────────────────────────────────
+
+function DatasetStatusBar({ status }: { status: FileStatusInfo }) {
+  if (status.state === "loaded") {
+    return (
+      <span className="flex items-center gap-1.5 text-xs text-emerald-700">
+        <span aria-hidden="true">✓</span>
+        <span className="font-medium">{status.filename}</span>
+        <span className="text-emerald-500">|</span>
+        <span>{status.n_rows?.toLocaleString()} rows</span>
+        <span className="text-emerald-500">·</span>
+        <span>{status.n_columns} columns</span>
+      </span>
+    );
+  }
+
+  if (status.state === "invalid") {
+    return (
+      <span className="flex items-center gap-1.5 text-xs text-red-600">
+        <span aria-hidden="true">✕</span>
+        File could not be read — try another file
+      </span>
+    );
+  }
+
+  // state === "none"
+  return (
+    <span className="flex items-center gap-1.5 text-xs text-amber-600">
+      <span aria-hidden="true">⚠</span>
+      No dataset loaded — Upload to begin
+    </span>
   );
 }

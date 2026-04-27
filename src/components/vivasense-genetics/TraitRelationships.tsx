@@ -126,6 +126,9 @@ function buildCorrelationPreview(
 export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) {
   const [step, setStep] = useState<TRStep>("setup");
   const [selectedTraits, setSelectedTraits] = useState<string[]>([]);
+  // Becomes true after the user first changes the trait selection; gates the
+  // validation message so it doesn't show before any interaction.
+  const [traitsTouched, setTraitsTouched] = useState(false);
   const [method, setMethod] = useState<"pearson" | "spearman">("pearson");
   const [userObjective, setUserObjective] = useState<"Field understanding" | "Genotype comparison" | "Breeding decision">("Field understanding");
   const [results, setResults] = useState<CorrelationResponse | null>(null);
@@ -151,6 +154,7 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
   useEffect(() => {
     if (datasetContext) {
       setSelectedTraits(datasetContext.availableTraitColumns);
+      setTraitsTouched(false);
       setResults(null);
       setError(null);
       setStep("setup");
@@ -160,10 +164,12 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
-  const toggleTrait = (t: string) =>
+  const toggleTrait = (t: string) => {
+    setTraitsTouched(true);
     setSelectedTraits((prev) =>
       prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]
     );
+  };
 
   const canRun = datasetContext !== null && selectedTraits.length >= 2;
 
@@ -335,7 +341,7 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
             <div className="flex gap-2 text-xs">
               <button
                 type="button"
-                onClick={() => setSelectedTraits(traits)}
+                onClick={() => { setTraitsTouched(true); setSelectedTraits(traits); }}
                 className="text-emerald-600 hover:underline"
               >
                 All
@@ -343,7 +349,7 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
               <span className="text-gray-300">|</span>
               <button
                 type="button"
-                onClick={() => setSelectedTraits([])}
+                onClick={() => { setTraitsTouched(true); setSelectedTraits([]); }}
                 className="text-gray-400 hover:underline"
               >
                 None
@@ -378,6 +384,13 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
                 </label>
               ))}
             </div>
+          )}
+
+          {/* Inline validation — only shown after user has interacted */}
+          {traitsTouched && selectedTraits.length < 2 && (
+            <p className="mt-2 text-xs text-red-600">
+              Select at least 2 traits to continue
+            </p>
           )}
         </div>
 
