@@ -377,6 +377,71 @@ export function FieldLayoutGenerator() {
     img.src = url;
   }, [snap.design, snap.seed]);
 
+  const handleExportCSV = useCallback(() => {
+    if (!layout) return;
+
+    function csvCell(value: string): string {
+      return /[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+    }
+    function row(...cells: string[]): string {
+      return cells.map(csvCell).join(",");
+    }
+
+    const lines: string[] = [
+      // Metadata rows — preserved as the first lines so the seed is always
+      // recoverable from the file without parsing the filename.
+      row(`# VivaSense Field Layout Data Collection Sheet`),
+      row(`# Design: ${snap.design}`, `Treatments: ${snap.nTreatments}`, `Replications: ${snap.nReps}`, `Seed: ${snap.seed}`),
+      row(`# Plot size: ${snap.plotW} x ${snap.plotL} m`),
+      row(), // blank separator
+      // Column headers
+      row(
+        "Plot No.", "Replication", "Treatment Code", "Treatment Name",
+        "Row", "Column", "Plot Width", "Plot Length", "Unit",
+        "Trait 1", "Trait 2", "Trait 3", "Remarks",
+      ),
+    ];
+
+    // For CRD there is no block structure — derive rep number as the
+    // sequential occurrence of each treatment across the global grid.
+    const repCount: Record<number, number> = {};
+
+    layout.forEach((rowCells, rowIdx) => {
+      rowCells.forEach((cell, colIdx) => {
+        let replication: number;
+        if (snap.design === "RCBD") {
+          replication = cell.blockNumber;
+        } else {
+          repCount[cell.treatmentIndex] = (repCount[cell.treatmentIndex] ?? 0) + 1;
+          replication = repCount[cell.treatmentIndex];
+        }
+        lines.push(
+          row(
+            String(cell.plotNumber),
+            String(replication),
+            `T${cell.treatmentIndex + 1}`,
+            snap.names[cell.treatmentIndex] ?? `T${cell.treatmentIndex + 1}`,
+            String(rowIdx + 1),
+            String(colIdx + 1),
+            String(snap.plotW),
+            String(snap.plotL),
+            "m",
+            "", "", "", "", // Trait 1, Trait 2, Trait 3, Remarks — left blank for field entry
+          ),
+        );
+      });
+    });
+
+    const csv = lines.join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.download = `VivaSense_DataCollection_${snap.design}_${snap.nTreatments}T_${snap.nReps}R_Seed${snap.seed}.csv`;
+    link.href = url;
+    link.click();
+    URL.revokeObjectURL(url);
+  }, [layout, snap]);
+
   // ─────────────────────────────────────────────────────────────────────────
   // Render
   // ─────────────────────────────────────────────────────────────────────────
@@ -611,14 +676,23 @@ export function FieldLayoutGenerator() {
             ))}
           </div>
 
-          {/* PNG export */}
-          <button
-            type="button"
-            onClick={handleExportPNG}
-            className="inline-flex items-center gap-2 rounded-lg border border-emerald-600 px-5 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50 transition-colors"
-          >
-            <span aria-hidden="true">↓</span> Export as PNG
-          </button>
+          {/* Export buttons */}
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={handleExportPNG}
+              className="inline-flex items-center gap-2 rounded-lg border border-emerald-600 px-5 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50 transition-colors"
+            >
+              <span aria-hidden="true">↓</span> Export as PNG
+            </button>
+            <button
+              type="button"
+              onClick={handleExportCSV}
+              className="inline-flex items-center gap-2 rounded-lg border border-emerald-600 bg-emerald-600 px-5 py-2 text-sm font-medium text-white hover:bg-emerald-700 transition-colors"
+            >
+              <span aria-hidden="true">↓</span> Download Data Collection Excel
+            </button>
+          </div>
 
         </div>
       )}
