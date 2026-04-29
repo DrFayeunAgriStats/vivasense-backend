@@ -44,7 +44,8 @@ function fmt(val: number | null | undefined, decimals = 3): string {
   return val.toFixed(decimals);
 }
 
-function precisionBadge(cls: string) {
+function precisionBadge(cls: string | null | undefined) {
+  if (!cls) return <span className="text-gray-400 text-xs">—</span>;
   const map: Record<string, string> = {
     excellent: "bg-emerald-100 text-emerald-800",
     good: "bg-green-100 text-green-800",
@@ -92,10 +93,10 @@ function TraitRow({
         <td className="px-4 py-2.5 text-sm text-gray-600 text-right">{fmt(row.median)}</td>
         <td className="px-4 py-2.5 text-sm text-right">{precisionBadge(row.precision_class)}</td>
         <td className="px-4 py-2.5 text-sm text-gray-500 text-right">
-          {row.missing_count > 0 && (
+          {(row.missing_count ?? 0) > 0 && (
             <span className="text-amber-600 font-medium">{row.missing_count}</span>
           )}
-          {row.missing_count === 0 && <span className="text-gray-300">0</span>}
+          {(row.missing_count ?? 0) === 0 && <span className="text-gray-300">0</span>}
         </td>
       </tr>
 
@@ -284,7 +285,7 @@ function ResultsPanel({
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {results.summary_table.map((row) => (
+            {(results.summary_table ?? [] as TraitDescriptiveResult[]).map((row: TraitDescriptiveResult) => (
               <TraitRow key={row.trait} row={row} isCaution={cautionSet.has(row.trait)} />
             ))}
           </tbody>
