@@ -7,4 +7,4 @@
  * fallback and send requests to the wrong server.
  */
 
-export const API_BASE = "https://vivasense-backend-r.onrender.com";
+export const API_BASE = import.meta.env.VITE_API_URL || "https://vivasense-genetics-docker.onrender.com";

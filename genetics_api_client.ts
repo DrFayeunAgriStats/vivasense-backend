@@ -10,8 +10,7 @@
  *   import { runVarianceComponents } from "@/genetics_api_client";
  */
 
-// ── API base — hardcoded so env-var misconfiguration cannot break requests ──
-const GENETICS_BASE = "https://vivasense-genetics-docker.onrender.com";
+const GENETICS_BASE = import.meta.env.VITE_API_URL || "https://vivasense-genetics-docker.onrender.com";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TRAIT NAME MAPPING — display labels → CSV column names
