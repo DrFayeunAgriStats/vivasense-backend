@@ -528,17 +528,6 @@ function TraitDetails({
 // ─────────────────────────────────────────────────────────────────────────────
 
 function AnovaTableSection({ at }: { at: AnovaTable }) {
-  const rows = (at.source ?? [])
-    .map((src, i) => ({
-      source: src,
-      df: at.df?.[i] ?? null,
-      ss: at.ss?.[i] ?? null,
-      ms: at.ms?.[i] ?? null,
-      f_value: at.f_value?.[i] ?? null,
-      p_value: at.p_value?.[i] ?? null,
-    }))
-    .filter((row) => row.source !== "(Intercept)");
-
   return (
     <div>
       <div className="overflow-x-auto rounded-lg border border-gray-200">
@@ -553,22 +542,23 @@ function AnovaTableSection({ at }: { at: AnovaTable }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => {
-              const { text: pText, stars } = fmtP(row.p_value);
+            {at.source.map((src, i) => {
+              const { text: pText, stars } = fmtP(at.p_value[i]);
+              const isError = src === "Residuals";
               return (
-                <tr key={row.source} className={row.source === "Residuals" ? "bg-gray-50/60" : "bg-white"}>
+                <tr key={src} className={isError ? "bg-gray-50/60" : "bg-white"}>
                   <td className="px-3 py-1.5 font-medium text-gray-700">
-                    {ANOVA_LABELS[row.source] ?? row.source}
+                    {ANOVA_LABELS[src] ?? src}
                   </td>
-                  <td className="px-3 py-1.5 text-gray-600">{row.df}</td>
+                  <td className="px-3 py-1.5 text-gray-600">{at.df[i]}</td>
                   <td className="px-3 py-1.5 text-gray-600">
-                    {row.ss != null ? row.ss.toFixed(2) : "—"}
-                  </td>
-                  <td className="px-3 py-1.5 text-gray-600">
-                    {row.ms != null ? row.ms.toFixed(2) : "—"}
+                    {at.ss[i] != null ? at.ss[i]!.toFixed(2) : "—"}
                   </td>
                   <td className="px-3 py-1.5 text-gray-600">
-                    {row.f_value != null ? row.f_value.toFixed(3) : "—"}
+                    {at.ms[i] != null ? at.ms[i]!.toFixed(2) : "—"}
+                  </td>
+                  <td className="px-3 py-1.5 text-gray-600">
+                    {at.f_value[i] != null ? at.f_value[i]!.toFixed(3) : "—"}
                   </td>
                   <td className="px-3 py-1.5 text-gray-600">
                     {pText}
