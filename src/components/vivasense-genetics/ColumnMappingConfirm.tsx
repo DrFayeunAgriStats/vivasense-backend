@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { UploadPreviewResponse } from "@/services/geneticsUploadApi";
+import { VsSpinner } from "./VsSpinner";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -91,8 +92,28 @@ export function ColumnMappingConfirm({
   const touch = (field: string) =>
     setTouched((prev) => new Set([...prev, field]));
 
-  // ── Derived visibility ────────────────────────────────────────────────────
+  // ── Data quality score ────────────────────────────────────────────────────
+  // Heuristic: start at 100, subtract for warnings and data gaps
+  const missingWarnings = warnings.filter(
+    (w) => /missing|null|empty|blank/i.test(w)
+  ).length;
+  const qualityScore =
+    warnings.length === 0 && n_rows >= 10 && numericColumns.length >= 1
+      ? "excellent"
+      : missingWarnings > 0 || warnings.length > 2
+      ? "poor"
+      : warnings.length > 0 || n_rows < 10
+      ? "moderate"
+      : "good";
 
+  const qualityConfig = {
+    excellent: { label: "Ready", bar: "bg-emerald-500", text: "text-emerald-700", border: "border-emerald-200", bg: "bg-emerald-50", width: "w-full" },
+    good:      { label: "Ready", bar: "bg-emerald-400", text: "text-emerald-700", border: "border-emerald-200", bg: "bg-emerald-50", width: "w-4/5" },
+    moderate:  { label: "Check Required", bar: "bg-amber-400", text: "text-amber-700", border: "border-amber-200", bg: "bg-amber-50", width: "w-3/5" },
+    poor:      { label: "Issues Detected", bar: "bg-red-400", text: "text-red-700", border: "border-red-200", bg: "bg-red-50", width: "w-2/5" },
+  }[qualityScore];
+
+  // ── Derived visibility ────────────────────────────────────────────────────
   const showReplication = design !== "CRD";
   const showSplitPlot   = design === "Split-Plot";
   const showEnvironment = design === "MET";
@@ -172,17 +193,60 @@ export function ColumnMappingConfirm({
   return (
     <div className="space-y-6">
 
-      {/* Dataset summary */}
-      <div className="flex items-center gap-3 rounded-lg bg-emerald-50 border border-emerald-200 p-3">
-        <span className="text-2xl">📊</span>
-        <div>
-          <p className="font-medium text-emerald-800">
-            {n_rows} rows · {n_columns} columns detected
-          </p>
-          <p className="text-sm text-emerald-600">
-            {numericColumns.length} numeric · {categoricalColumns.length} categorical
-          </p>
+      {/* ── Data quality card ─────────────────────────────────────────────── */}
+      <div className={`rounded-xl border ${qualityConfig.border} ${qualityConfig.bg} p-4 space-y-3`}>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <span className="text-2xl">📊</span>
+            <div>
+              <p className={`font-semibold text-sm ${qualityConfig.text}`}>
+                Dataset Quality — <span className="font-bold">{qualityConfig.label}</span>
+              </p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {n_rows} rows · {n_columns} columns
+              </p>
+            </div>
+          </div>
+          <div className="text-right text-xs text-gray-500 shrink-0">
+            <span className={`inline-block font-semibold ${qualityConfig.text}`}>
+              {numericColumns.length} numeric
+            </span>
+            {" · "}
+            {categoricalColumns.length} categorical
+          </div>
         </div>
+
+        {/* Readiness bar */}
+        <div className="space-y-1">
+          <div className="flex justify-between text-xs text-gray-400">
+            <span>Data readiness</span>
+            <span className={qualityConfig.text}>{qualityConfig.label}</span>
+          </div>
+          <div className="h-1.5 w-full rounded-full bg-gray-200/70 overflow-hidden">
+            <div className={`h-full rounded-full transition-all ${qualityConfig.bar} ${qualityConfig.width}`} />
+          </div>
+        </div>
+
+        {/* Column type legend */}
+        {(numericColumns.length > 0 || categoricalColumns.length > 0) && (
+          <div className="flex flex-wrap gap-1.5">
+            {numericColumns.slice(0, 6).map((c) => (
+              <span key={c} className="inline-block rounded-full bg-emerald-100 text-emerald-700 text-xs px-2 py-0.5">
+                {c}
+              </span>
+            ))}
+            {numericColumns.length > 6 && (
+              <span className="inline-block rounded-full bg-emerald-100 text-emerald-600 text-xs px-2 py-0.5">
+                +{numericColumns.length - 6} more
+              </span>
+            )}
+            {categoricalColumns.slice(0, 4).map((c) => (
+              <span key={c} className="inline-block rounded-full bg-gray-100 text-gray-500 text-xs px-2 py-0.5">
+                {c}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Server-side warnings */}
@@ -503,7 +567,7 @@ export function ColumnMappingConfirm({
         >
           {loading ? (
             <span className="flex items-center justify-center gap-2">
-              <span className="h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+              <VsSpinner size="sm" className="border-white" />
               Running analysis…
             </span>
           ) : (

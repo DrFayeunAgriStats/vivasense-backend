@@ -67,11 +67,13 @@ function precisionBadge(cls: string) {
 function TraitRow({
   row,
   isCaution,
+  defaultOpen = false,
 }: {
   row: TraitDescriptiveResult;
   isCaution: boolean;
+  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
 
   return (
     <>
@@ -178,6 +180,21 @@ function ResultsPanel({
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
 
+  // Top 3 traits by highest CV — auto-expand these rows
+  const top3ByCV = new Set(
+    [...results.summary_table]
+      .filter((r) => r.cv_percent != null)
+      .sort((a, b) => (b.cv_percent ?? 0) - (a.cv_percent ?? 0))
+      .slice(0, 3)
+      .map((r) => r.trait)
+  );
+
+  // Summary banner counts
+  const lowPrecisionCount = results.summary_table.filter(
+    (r) => r.precision_class === "low" || r.precision_class === "poor"
+  ).length;
+  const highCVCount = results.caution_traits.length;
+
   const handleExport = async () => {
     if (!isPro) {
       onProBlocked();
@@ -238,6 +255,30 @@ function ResultsPanel({
         </div>
       )}
 
+      {/* ── Summary banner ── */}
+      {(highCVCount > 0 || lowPrecisionCount > 0) ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 flex items-start gap-2.5">
+          <span className="text-amber-500 text-base mt-0.5 shrink-0">⚠</span>
+          <div>
+            <p className="text-sm font-semibold text-amber-800">
+              {highCVCount} trait{highCVCount !== 1 ? "s" : ""} require{highCVCount === 1 ? "s" : ""} attention
+            </p>
+            <p className="text-xs text-amber-700 mt-0.5 leading-relaxed">
+              {highCVCount > 0 && `${highCVCount} trait${highCVCount !== 1 ? "s" : ""} have CV ≥ 20% (high variability).`}
+              {lowPrecisionCount > 0 && ` ${lowPrecisionCount} trait${lowPrecisionCount !== 1 ? "s" : ""} classified as low/poor precision.`}
+              {" "}Top traits by CV are expanded below for quick review.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 flex items-center gap-2.5">
+          <span className="text-emerald-500 text-base shrink-0">✓</span>
+          <p className="text-sm font-medium text-emerald-800">
+            All {results.overview.n_traits} traits show acceptable precision (CV &lt; 20%).
+          </p>
+        </div>
+      )}
+
       {/* Reliable / Caution */}
       <div className="grid sm:grid-cols-2 gap-3">
         {results.reliable_traits.length > 0 && (
@@ -285,7 +326,12 @@ function ResultsPanel({
           </thead>
           <tbody className="divide-y divide-gray-100">
             {results.summary_table.map((row) => (
-              <TraitRow key={row.trait} row={row} isCaution={cautionSet.has(row.trait)} />
+              <TraitRow
+                key={row.trait}
+                row={row}
+                isCaution={cautionSet.has(row.trait)}
+                defaultOpen={top3ByCV.has(row.trait)}
+              />
             ))}
           </tbody>
         </table>

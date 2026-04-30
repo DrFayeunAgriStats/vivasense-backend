@@ -295,6 +295,7 @@ export function ResultsDisplay({ results, onReset }: ResultsDisplayProps) {
                   key={row.trait}
                   row={row}
                   isEven={i % 2 === 0}
+                  isFirst={i === 0}
                   traitResult={results.trait_results[row.trait]}
                 />
               ))}
@@ -333,14 +334,25 @@ export function ResultsDisplay({ results, onReset }: ResultsDisplayProps) {
 function SummaryRow({
   row,
   isEven,
+  isFirst,
   traitResult,
 }: {
   row: SummaryTableRow;
   isEven: boolean;
+  isFirst: boolean;
   traitResult: TraitResult | undefined;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(isFirst);
   const bg = isEven ? "bg-white" : "bg-gray-50/50";
+
+  // Show first sentence of interpretation as a hint below the trait name when collapsed
+  const interpHint = (() => {
+    const interp = (traitResult?.analysis_result as Record<string, unknown> | undefined)
+      ?.interpretation as string | undefined;
+    if (!interp || expanded) return null;
+    const first = interp.split(/\.\s/)[0];
+    return first ? `${first}.` : null;
+  })();
 
   if (row.status === "failed") {
     const errorMsg = row.error ?? traitResult?.error ?? "unknown error";
@@ -360,7 +372,12 @@ function SummaryRow({
   return (
     <>
       <tr className={bg}>
-        <td className="px-4 py-3 font-medium text-gray-800">{row.trait}</td>
+        <td className="px-4 py-3">
+          <p className="font-medium text-gray-800 leading-tight">{row.trait}</p>
+          {interpHint && (
+            <p className="mt-0.5 text-xs text-gray-400 leading-snug line-clamp-1 max-w-xs">{interpHint}</p>
+          )}
+        </td>
         <Td>{row.grand_mean != null ? row.grand_mean.toFixed(2) : "—"}</Td>
         <Td>
           <HeritabilityCell h2={row.h2} />

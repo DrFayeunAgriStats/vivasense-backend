@@ -1,5 +1,6 @@
 import React, { useCallback, useState } from "react";
 import { UploadPreviewResponse } from "@/services/geneticsUploadApi";
+import { VsSpinner } from "./VsSpinner";
 
 interface FileUploadProps {
   onPreviewReady: (file: File, preview: UploadPreviewResponse) => void;
@@ -58,17 +59,26 @@ export function FileUpload({ onPreviewReady, onPreviewStart, previewFn }: FileUp
 
   return (
     <div className="w-full">
+      <div className="mb-4 rounded-2xl border border-emerald-100 bg-gradient-to-r from-emerald-50 via-white to-teal-50 p-4">
+        <p className="text-sm font-semibold text-emerald-900">Upload Dataset</p>
+        <p className="mt-1 text-xs text-emerald-800/80">
+          Start with a CSV or Excel file. VivaSense will preview your columns and guide mapping before analysis.
+        </p>
+      </div>
+
       <label
         onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
         className={[
-          "flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed p-10 cursor-pointer transition-colors",
+          "group relative flex flex-col items-center justify-center gap-3 overflow-hidden rounded-2xl border-2 border-dashed p-10 cursor-pointer transition-all duration-200",
           dragging
-            ? "border-emerald-500 bg-emerald-50"
-            : "border-gray-300 bg-gray-50 hover:border-emerald-400 hover:bg-emerald-50/50",
+            ? "border-emerald-500 bg-emerald-50 shadow-lg shadow-emerald-200/60"
+            : "border-gray-300 bg-gradient-to-b from-white to-gray-50 hover:border-emerald-400 hover:shadow-md hover:shadow-emerald-100",
         ].join(" ")}
       >
+        <div className="pointer-events-none absolute -right-10 -top-10 h-36 w-36 rounded-full bg-emerald-100/60 blur-2xl transition-opacity group-hover:opacity-100 opacity-70" />
+
         <input
           type="file"
           accept=".csv,.xlsx,.xls"
@@ -79,21 +89,28 @@ export function FileUpload({ onPreviewReady, onPreviewStart, previewFn }: FileUp
 
         {loading ? (
           <>
-            <div className="h-10 w-10 rounded-full border-4 border-emerald-600 border-t-transparent animate-spin" />
+            <VsSpinner size="lg" monogram />
             <p className="text-sm text-gray-500">Reading file…</p>
           </>
         ) : (
           <>
             <UploadIcon />
             <div className="text-center">
-              <p className="font-medium text-gray-700">
+              <p className="font-semibold text-gray-800">
                 Drag &amp; drop your file here, or{" "}
                 <span className="text-emerald-600 underline">browse</span>
               </p>
-              <p className="mt-1 text-sm text-gray-400">
+              <p className="mt-1 text-sm text-gray-500">
                 Supports .csv, .xlsx — max 10 MB
               </p>
             </div>
+
+            <div className="flex flex-wrap items-center justify-center gap-2 text-xs text-gray-600">
+              <span className="rounded-full border border-emerald-200 bg-white px-2.5 py-1">CSV</span>
+              <span className="rounded-full border border-emerald-200 bg-white px-2.5 py-1">XLSX</span>
+              <span className="rounded-full border border-gray-200 bg-white px-2.5 py-1">Auto column detection</span>
+            </div>
+
             {selectedFile && (
               <div className="flex items-center gap-2 rounded-lg bg-emerald-100 px-3 py-1.5 text-sm text-emerald-700">
                 <FileIcon />
@@ -108,7 +125,7 @@ export function FileUpload({ onPreviewReady, onPreviewStart, previewFn }: FileUp
       </label>
 
       {error && (
-        <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
+        <p className="mt-2 flex items-center gap-1 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700">
           <span>⚠</span> {error}
         </p>
       )}

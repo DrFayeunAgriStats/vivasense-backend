@@ -14,6 +14,7 @@
  */
 
 import React, { useEffect, useRef, useState } from "react";
+import { VsSpinner } from "./VsSpinner";
 import {
   getAcademicInterpretation,
   AcademicInterpretationResponse,
@@ -105,7 +106,7 @@ export function AcademicInterpretationPanel({
         {/* ── Loading ─────────────────────────────────────────────────────── */}
         {loading && (
           <div className="flex items-center gap-2 text-sm text-violet-600">
-            <span className="animate-spin">⟳</span>
+            <VsSpinner size="sm" />
             Generating academic interpretation…
           </div>
         )}

@@ -23,6 +23,7 @@ import {
   CorrelationStats,
   exportCorrelationWord,
 } from "@/services/traitRelationshipsApi";
+import { VsSpinner } from "./VsSpinner";
 import { CorrelationHeatmap } from "./CorrelationHeatmap";
 import { WordExportPreviewModal } from "@/components/export/WordExportPreviewModal";
 import { logDebug } from "@/utils/normalizeModuleData";
@@ -494,7 +495,7 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
   if (step === "correlating") {
     return (
       <div className="flex flex-col items-center justify-center py-16 gap-4">
-        <div className="h-10 w-10 rounded-full border-4 border-emerald-600 border-t-transparent animate-spin" />
+        <VsSpinner size="lg" monogram />
         <p className="text-sm text-gray-500">
           Computing {method === "spearman" ? "Spearman" : "Pearson"}{" "}
           correlations for {selectedTraits.length} trait

@@ -231,10 +231,8 @@ export function MultiTraitUpload({ onDatasetReady, onFileStatus }: MultiTraitUpl
 
   return (
     <div className="w-full">
-      {/* Step indicator */}
-      {step !== "idle" && (
-        <StepIndicator current={step} />
-      )}
+      {/* Step indicator — always visible */}
+      <StepIndicator current={step} />
 
       <div className="mt-4">
         {step === "idle" && (
@@ -304,23 +302,26 @@ const STEPS: { key: Step | "idle"; label: string }[] = [
 
 function StepIndicator({ current }: { current: Step }) {
   const currentIdx = STEPS.findIndex((s) => s.key === current);
+  // -1 shouldn't happen but clamp to 0 so "idle" fallback still shows step 1 active
+  const activeIdx = currentIdx < 0 ? 0 : currentIdx;
 
   return (
-    <nav aria-label="Progress" className="flex items-center gap-0">
+    <nav aria-label="Progress" className="rounded-2xl border border-gray-100 bg-gradient-to-r from-white via-gray-50 to-white p-3">
+      <div className="flex items-center gap-0">
       {STEPS.map((step, idx) => {
-        const done = idx < currentIdx;
-        const active = idx === currentIdx;
+        const done = idx < activeIdx;
+        const active = idx === activeIdx;
         return (
           <React.Fragment key={step.key}>
             <div className="flex flex-col items-center">
               <div
                 className={[
-                  "flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold transition-colors",
+                  "flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold transition-colors",
                   done
                     ? "bg-emerald-600 text-white"
                     : active
                     ? "bg-emerald-100 text-emerald-700 ring-2 ring-emerald-500"
-                    : "bg-gray-100 text-gray-400",
+                    : "bg-gray-100 text-gray-500",
                 ].join(" ")}
               >
                 {done ? "✓" : idx + 1}
@@ -338,13 +339,14 @@ function StepIndicator({ current }: { current: Step }) {
               <div
                 className={[
                   "h-0.5 flex-1 mx-1 mb-4 transition-colors",
-                  idx < currentIdx ? "bg-emerald-500" : "bg-gray-200",
+                  idx < activeIdx ? "bg-emerald-500" : "bg-gray-200",
                 ].join(" ")}
               />
             )}
           </React.Fragment>
         );
       })}
+      </div>
     </nav>
   );
 }
