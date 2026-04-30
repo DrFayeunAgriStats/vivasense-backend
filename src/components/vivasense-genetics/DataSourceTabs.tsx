@@ -30,7 +30,6 @@
 import React, { useEffect, useState } from "react";
 import { UploadDatasetContext } from "@/services/geneticsUploadApi";
 import { FileStatusInfo } from "@/components/vivasense-genetics/MultiTraitUpload";
-import { FieldLayoutGenerator } from "@/components/vivasense-genetics/FieldLayoutGenerator";
 import {
   getVivaSenseMode,
   initializeVivaSenseMode,
@@ -39,7 +38,7 @@ import {
   VivaSenseMode,
 } from "@/services/featureMode";
 
-type TabId = "field-layout" | "manual" | "upload" | "relationships" | "descriptive";
+type TabId = "manual" | "upload" | "relationships" | "descriptive";
 
 interface DataSourceTabsProps {
   /** The existing manual input form / component */
@@ -71,7 +70,7 @@ export function DataSourceTabs({
   traitRelationshipsContent,
   descriptiveStatsContent,
 }: DataSourceTabsProps) {
-  const [active, setActive] = useState<TabId>("field-layout");
+  const [active, setActive] = useState<TabId>("upload");
   const [datasetContext, setDatasetContext] = useState<UploadDatasetContext | null>(null);
   const [mode, setMode] = useState<VivaSenseMode>(() => initializeVivaSenseMode());
   const [fileStatus, setFileStatus] = useState<FileStatusInfo>({ state: "none" });
@@ -101,13 +100,6 @@ export function DataSourceTabs({
   };
 
   const tabs: TabDef[] = [
-    {
-      id: "field-layout",
-      label: "Field Layout",
-      icon: "🌾",
-      description: "Generate CRD / RCBD field plans",
-      badge: "free",
-    },
     {
       id: "manual",
       label: "Single Trait",
@@ -229,9 +221,6 @@ export function DataSourceTabs({
 
         {/* Content pane */}
         <div className="flex-1 min-w-0">
-          <div className={active === "field-layout" ? "block" : "hidden"}>
-            <FieldLayoutGenerator />
-          </div>
           <div className={active === "manual" ? "block" : "hidden"}>
             {manualContent}
           </div>
