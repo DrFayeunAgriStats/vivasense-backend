@@ -44,3 +44,14 @@ node_modules/
 # OS
 .DS_Store
 Thumbs.db
+.vercel
+.env*.local
+
+# Temporary scratch files
+tmp_*.py
+tmp_*.ps1
+tmp_*.csv
+tmp_*.txt
+tmp_*.json
+
+src/
