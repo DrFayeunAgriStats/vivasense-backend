@@ -47,7 +47,11 @@ from genetics_schemas import AnovaTable, MeanSeparation, GeneticsResult, Genetic
 from multitrait_upload_schemas import UploadAnalysisResponse, SummaryTableRow, TraitResult
 from trait_relationships_schemas import CorrelationResponse
 import result_cache
-from genetics_interpretation import generate_genetics_interpretation, _describe_env_effects
+from genetics_interpretation import (
+    generate_genetics_interpretation,
+    _describe_env_effects,
+    _describe_gcv_pcv,
+)
 from interpretation import InterpretationEngine
 
 logger = logging.getLogger(__name__)
@@ -896,6 +900,7 @@ def _add_genetic_parameters_section(doc: Document, result: GeneticsResult) -> No
             _sig(t) for t in ["genotype:environment", "environment:genotype", "GxE", "gxe"]
         )
 
+        env_sentence = None
         if diff < 1.0:
             anova_f_env, anova_p_env, anova_f_gxe, anova_p_gxe = _anova_env_effect_stats(_at)
             env_sentence = _describe_env_effects(
@@ -904,12 +909,8 @@ def _add_genetic_parameters_section(doc: Document, result: GeneticsResult) -> No
                 f_gxe=float(anova_f_gxe) if anova_f_gxe is not None else 0.0,
                 p_gxe=float(anova_p_gxe) if anova_p_gxe is not None else None,
             )
-            comment = (
-                f"GCV ({_fmt(gcv, 2)}%) ≈ PCV ({_fmt(pcv, 2)}%) — "
-                "limited variance inflation between the genetic and phenotypic "
-                "coefficients of variation in this experiment. "
-                f"{env_sentence}"
-            )
+            gcv_pcv_sentence = _describe_gcv_pcv(gcv, pcv, "this trait")
+            comment = gcv_pcv_sentence
         elif gcv < pcv:
             comment = (
                 f"GCV ({_fmt(gcv, 2)}%) < PCV ({_fmt(pcv, 2)}%) — "
@@ -921,6 +922,9 @@ def _add_genetic_parameters_section(doc: Document, result: GeneticsResult) -> No
                 "verify variance component estimates."
             )
         _add_body(doc, comment)
+        if env_sentence:
+            doc.add_paragraph()
+            _add_body(doc, env_sentence)
 
 
 # ============================================================================

@@ -10,6 +10,41 @@ from interpretation_sections import GeneticsInterpretationSections
 from interpretation import InterpretationEngine
 
 
+def _describe_gcv_pcv(gcv: float, pcv: float, trait_name: str) -> str:
+    if gcv <= 0:
+        return ""
+    inflation_pct = ((pcv - gcv) / gcv) * 100
+
+    if inflation_pct < 3:
+        return (
+            f"GCV ({gcv:.2f}%) and PCV ({pcv:.2f}%) are nearly identical "
+            f"(difference: {inflation_pct:.1f}%), indicating negligible environmental "
+            f"variance inflation. The genetic signal for {trait_name} is exceptionally "
+            f"clean - direct phenotypic selection will closely track underlying genotypic value."
+        )
+    elif inflation_pct < 10:
+        return (
+            f"GCV ({gcv:.2f}%) is slightly lower than PCV ({pcv:.2f}%) "
+            f"(inflation: {inflation_pct:.1f}%), suggesting a small but non-trivial "
+            f"environmental contribution to phenotypic variance in {trait_name}. "
+            f"Selection efficiency remains high given the elevated H2."
+        )
+    elif inflation_pct < 20:
+        return (
+            f"PCV ({pcv:.2f}%) is moderately higher than GCV ({gcv:.2f}%) "
+            f"(inflation: {inflation_pct:.1f}%), indicating meaningful environmental "
+            f"effects on {trait_name} expression. Selection in controlled or "
+            f"multi-location environments is advisable."
+        )
+    else:
+        return (
+            f"PCV ({pcv:.2f}%) substantially exceeds GCV ({gcv:.2f}%) "
+            f"(inflation: {inflation_pct:.1f}%), indicating strong environmental masking "
+            f"of genetic differences for {trait_name}. Replicated multi-environment "
+            f"evaluation is essential before selection decisions are made."
+        )
+
+
 def _describe_env_effects(f_env: float, p_env: float, f_gxe: float, p_gxe: float) -> str:
     env_sig = p_env is not None and p_env < 0.05
     gxe_sig = p_gxe is not None and p_gxe < 0.05
@@ -342,43 +377,23 @@ def generate_genetics_interpretation(
     # ── GCV vs PCV addendum ──────────────────────────────────────────────
     if gcv is not None and pcv is not None:
         try:
-            diff = float(pcv) - float(gcv)
-            env_active = gxe_significant or environment_significant
-            if diff <= 2:
-                anova_f_env = float(anova_f_env) if anova_f_env is not None else 0.0
-                anova_p_env = float(anova_p_env) if anova_p_env is not None else None
-                anova_f_gxe = float(anova_f_gxe) if anova_f_gxe is not None else 0.0
-                anova_p_gxe = float(anova_p_gxe) if anova_p_gxe is not None else None
-                env_sentence = _describe_env_effects(
-                    f_env=anova_f_env,
-                    p_env=anova_p_env,
-                    f_gxe=anova_f_gxe,
-                    p_gxe=anova_p_gxe,
-                )
-                interpretation += (
-                    f" The GCV ({gcv:.2f}%) is similar to the PCV ({pcv:.2f}%), "
-                    "indicating limited variance inflation between the genetic and phenotypic coefficients of variation "
-                    "in this experiment. "
-                    f"{env_sentence}"
-                )
-            elif diff <= 7:
-                if env_active:
-                    interpretation += (
-                        f" The GCV ({gcv:.2f}%) is moderately lower than the PCV ({pcv:.2f}%), "
-                        "suggesting appreciable environmental influence on trait expression. "
-                        "This is consistent with the ANOVA evidence of significant environmental or "
-                        "genotype-by-environment effects."
-                    )
-                else:
-                    interpretation += (
-                        f" The GCV ({gcv:.2f}%) is moderately lower than the PCV ({pcv:.2f}%), "
-                        "suggesting appreciable but not dominant environmental influence."
-                    )
-            else:
-                interpretation += (
-                    f" The GCV ({gcv:.2f}%) is substantially lower than the PCV ({pcv:.2f}%), "
-                    "indicating that environmental factors strongly affect trait expression."
-                )
+            gcv_pcv_sentence = _describe_gcv_pcv(gcv, pcv, trait_name)
+            anova_f_env = float(anova_f_env) if anova_f_env is not None else 0.0
+            anova_p_env = float(anova_p_env) if anova_p_env is not None else None
+            anova_f_gxe = float(anova_f_gxe) if anova_f_gxe is not None else 0.0
+            anova_p_gxe = float(anova_p_gxe) if anova_p_gxe is not None else None
+            env_sentence = _describe_env_effects(
+                f_env=anova_f_env,
+                p_env=anova_p_env,
+                f_gxe=anova_f_gxe,
+                p_gxe=anova_p_gxe,
+            )
+            if gcv_pcv_sentence and env_sentence:
+                interpretation += f"\n\n{gcv_pcv_sentence}\n\n{env_sentence}"
+            elif gcv_pcv_sentence:
+                interpretation += f"\n\n{gcv_pcv_sentence}"
+            elif env_sentence:
+                interpretation += f"\n\n{env_sentence}"
         except (TypeError, ValueError):
             pass
 
