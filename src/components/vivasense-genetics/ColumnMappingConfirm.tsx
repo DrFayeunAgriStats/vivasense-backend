@@ -8,6 +8,8 @@ import { VsSpinner } from "./VsSpinner";
 
 type ExperimentalDesign = "CRD" | "RCBD" | "Factorial" | "Split-Plot" | "MET";
 
+const ADVANCED_SETTINGS_SESSION_KEY = "vivasense:column-mapping:advanced-settings:open";
+
 interface ColumnMapping {
   genotypeColumn: string;
   repColumn: string;
@@ -79,7 +81,16 @@ export function ColumnMappingConfirm({
 
   // ── Section C ─────────────────────────────────────────────────────────────
 
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    try {
+      return window.sessionStorage.getItem(ADVANCED_SETTINGS_SESSION_KEY) === "open";
+    } catch {
+      return false;
+    }
+  });
   const [meanSeparation, setMeanSeparation] = useState(false);
   const [meanSepMethod, setMeanSepMethod] = useState<"tukey" | "lsd">("tukey");
   const [includeInteraction, setIncludeInteraction] = useState(false);
@@ -192,6 +203,23 @@ export function ColumnMappingConfirm({
       selectedTraits,
       mode:              design === "MET" ? "multi" : "single",
       randomEnvironment: false,
+    });
+  };
+
+  const toggleAdvancedOpen = () => {
+    setAdvancedOpen((current) => {
+      const next = !current;
+      if (typeof window !== "undefined") {
+        try {
+          window.sessionStorage.setItem(
+            ADVANCED_SETTINGS_SESSION_KEY,
+            next ? "open" : "closed"
+          );
+        } catch {
+          // Ignore storage failures and keep the in-memory toggle working.
+        }
+      }
+      return next;
     });
   };
 
@@ -435,7 +463,8 @@ export function ColumnMappingConfirm({
       <div className="rounded-lg border border-gray-200">
         <button
           type="button"
-          onClick={() => setAdvancedOpen((o) => !o)}
+          onClick={toggleAdvancedOpen}
+          aria-expanded={advancedOpen}
           className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 rounded-lg transition-colors"
         >
           Advanced Settings

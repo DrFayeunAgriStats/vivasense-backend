@@ -23,6 +23,9 @@ import {
   ValidationResult,
 } from "@/services/academicApi";
 
+const WRITING_SUPPORT_SESSION_KEY = "vivasense:academic-interpretation:writing-support:open";
+const VALIDATION_REPORT_SESSION_KEY = "vivasense:academic-interpretation:validation-report:open";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // MAIN PANEL
 // ─────────────────────────────────────────────────────────────────────────────
@@ -45,9 +48,61 @@ export function AcademicInterpretationPanel({
   const [data, setData] = useState<AcademicInterpretationResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showWriting, setShowWriting] = useState(false);
-  const [showValidator, setShowValidator] = useState(false);
+  const [showWriting, setShowWriting] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    try {
+      return window.sessionStorage.getItem(WRITING_SUPPORT_SESSION_KEY) === "open";
+    } catch {
+      return false;
+    }
+  });
+  const [showValidator, setShowValidator] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    try {
+      return window.sessionStorage.getItem(VALIDATION_REPORT_SESSION_KEY) === "open";
+    } catch {
+      return false;
+    }
+  });
   const fetchedRef = useRef(false);
+
+  const toggleWriting = () => {
+    setShowWriting((current) => {
+      const next = !current;
+      if (typeof window !== "undefined") {
+        try {
+          window.sessionStorage.setItem(
+            WRITING_SUPPORT_SESSION_KEY,
+            next ? "open" : "closed"
+          );
+        } catch {
+          // Ignore storage failures and keep the in-memory toggle working.
+        }
+      }
+      return next;
+    });
+  };
+
+  const toggleValidator = () => {
+    setShowValidator((current) => {
+      const next = !current;
+      if (typeof window !== "undefined") {
+        try {
+          window.sessionStorage.setItem(
+            VALIDATION_REPORT_SESSION_KEY,
+            next ? "open" : "closed"
+          );
+        } catch {
+          // Ignore storage failures and keep the in-memory toggle working.
+        }
+      }
+      return next;
+    });
+  };
 
   useEffect(() => {
     // Prevent double-fetch in StrictMode
@@ -173,7 +228,8 @@ export function AcademicInterpretationPanel({
               <div>
                 <button
                   type="button"
-                  onClick={() => setShowWriting((p) => !p)}
+                  onClick={toggleWriting}
+                  aria-expanded={showWriting}
                   className="flex items-center gap-1.5 text-xs font-semibold text-violet-700 hover:text-violet-900"
                 >
                   <span className={`transition-transform ${showWriting ? "rotate-90" : ""}`}>▶</span>
@@ -192,7 +248,8 @@ export function AcademicInterpretationPanel({
               <div>
                 <button
                   type="button"
-                  onClick={() => setShowValidator((p) => !p)}
+                  onClick={toggleValidator}
+                  aria-expanded={showValidator}
                   className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600"
                 >
                   <span className={`transition-transform ${showValidator ? "rotate-90" : ""}`}>▶</span>
