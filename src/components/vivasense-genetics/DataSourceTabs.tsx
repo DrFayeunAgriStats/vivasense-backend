@@ -109,6 +109,7 @@ export function DataSourceTabs({
   const showAnova = typeof anovaContent === "function";
   const showGenetics = typeof geneticsContent === "function";
   const showAdvanced = typeof advancedContent === "function";
+
   type TabDef = {
     id: TabId;
     label: string;

@@ -54,6 +54,13 @@ export interface UploadAnalysisRequest {
   random_environment?: boolean;
   selection_intensity: number;
   module?: "anova" | "genetic_parameters" | "correlation" | "heatmap";
+  // Optional ANOVA-specific routing hints.
+  design_type?: "crd" | "rcbd" | "factorial" | "factorial_rcbd" | "split_plot_rcbd";
+  treatment_column?: string;
+  factor_a_column?: string;
+  factor_b_column?: string;
+  main_plot_column?: string;
+  sub_plot_column?: string;
 }
 
 export interface SummaryTableRow {
