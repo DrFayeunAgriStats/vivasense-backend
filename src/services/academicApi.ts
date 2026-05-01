@@ -10,6 +10,7 @@
 import { API_BASE } from "./apiConfig";
 import { buildModeHeaders } from "./featureMode";
 import { guardProModule } from "./featureMode";
+import { requestWithResilience } from "./httpClient";
 
 const ENGINE_BASE: string = API_BASE;
 
@@ -115,13 +116,15 @@ export async function getAcademicInterpretation(
 
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await requestWithResilience(url, {
       method: "POST",
       headers: buildModeHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
         ...request,
         include_writing_support: request.include_writing_support ?? true,
       }),
+      timeoutMs: 180000,
+      retries: 0,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

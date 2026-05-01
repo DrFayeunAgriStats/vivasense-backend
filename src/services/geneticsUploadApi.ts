@@ -11,6 +11,7 @@
 
 import { API_BASE } from "./apiConfig";
 import { buildModeHeaders, guardProModule } from "./featureMode";
+import { requestWithResilience } from "./httpClient";
 const ENGINE_BASE: string = API_BASE;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -167,10 +168,12 @@ export async function previewUpload(file: File): Promise<UploadPreviewResponse> 
 
   let response: Response;
   try {
-    response = await fetch(previewUrl, {
+    response = await requestWithResilience(previewUrl, {
       method: "POST",
       headers: buildModeHeaders(),
       body: fd,
+      timeoutMs: 60000,
+      retries: 0,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -226,10 +229,12 @@ export async function analyzeUpload(
 
   let response: Response;
   try {
-    response = await fetch(analyzeUrl, {
+    response = await requestWithResilience(analyzeUrl, {
       method: "POST",
       headers: buildModeHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(request),
+      timeoutMs: 180000,
+      retries: 0,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -292,10 +297,12 @@ export async function exportWordReport(
 
   let response: Response;
   try {
-    response = await fetch(exportUrl, {
+    response = await requestWithResilience(exportUrl, {
       method: "POST",
       headers: buildModeHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(payload),
+      timeoutMs: 180000,
+      retries: 0,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -418,10 +425,12 @@ export async function confirmDataset(
   const url = `${ENGINE_BASE}/upload/dataset`;
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await requestWithResilience(url, {
       method: "POST",
       headers: buildModeHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(request),
+      timeoutMs: 60000,
+      retries: 0,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -474,10 +483,12 @@ export async function runDescriptiveStats(request: {
   const url = `${ENGINE_BASE}/analysis/descriptive-stats`;
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await requestWithResilience(url, {
       method: "POST",
       headers: buildModeHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(request),
+      timeoutMs: 90000,
+      retries: 0,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -537,10 +548,12 @@ export async function exportDescriptiveStats(currentData: DescriptiveStatsRespon
 
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await requestWithResilience(url, {
       method: "POST",
       headers: buildModeHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(payload),
+      timeoutMs: 180000,
+      retries: 0,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

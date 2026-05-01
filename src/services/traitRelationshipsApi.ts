@@ -8,6 +8,7 @@
 
 import { API_BASE } from "./apiConfig";
 import { buildModeHeaders, guardProModule } from "./featureMode";
+import { requestWithResilience } from "./httpClient";
 const ENGINE_BASE: string = API_BASE;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -153,10 +154,12 @@ export async function computeCorrelation(
 
   let response: Response;
   try {
-    response = await fetch(correlationUrl, {
+    response = await requestWithResilience(correlationUrl, {
       method: "POST",
       headers: buildModeHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(request),
+      timeoutMs: 180000,
+      retries: 0,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -189,10 +192,12 @@ export async function exportCorrelationWord(
   const url = `${ENGINE_BASE}/export/correlation-word`;
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await requestWithResilience(url, {
       method: "POST",
       headers: buildModeHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(results),
+      timeoutMs: 180000,
+      retries: 0,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

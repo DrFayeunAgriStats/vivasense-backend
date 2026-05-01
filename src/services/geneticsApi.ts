@@ -9,6 +9,7 @@
 
 import { API_BASE } from "./apiConfig";
 import { buildModeHeaders } from "./featureMode";
+import { requestWithResilience } from "./httpClient";
 const ENGINE_BASE: string = API_BASE;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -67,10 +68,12 @@ export async function analyzeGenetics(
 ): Promise<GeneticsResponse> {
   let response: Response;
   try {
-    response = await fetch(`${ENGINE_BASE}/genetics/analyze`, {
+    response = await requestWithResilience(`${ENGINE_BASE}/genetics/analyze`, {
       method: "POST",
       headers: buildModeHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(request),
+      timeoutMs: 120000,
+      retries: 0,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -94,10 +97,12 @@ export async function validateGenetics(
 ): Promise<ValidationResponse> {
   let response: Response;
   try {
-    response = await fetch(`${ENGINE_BASE}/genetics/validate`, {
+    response = await requestWithResilience(`${ENGINE_BASE}/genetics/validate`, {
       method: "POST",
       headers: buildModeHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(request),
+      timeoutMs: 60000,
+      retries: 0,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -118,8 +123,10 @@ export async function validateGenetics(
  */
 export async function checkHealth(): Promise<boolean> {
   try {
-    const response = await fetch(`${ENGINE_BASE}/health`, {
+    const response = await requestWithResilience(`${ENGINE_BASE}/health`, {
       headers: buildModeHeaders(),
+      timeoutMs: 15000,
+      retries: 1,
     });
     return response.ok;
   } catch {
