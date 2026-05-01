@@ -1,7 +1,7 @@
 /**
  * DataSourceTabs
  * ==============
- * Wraps manual input, file upload, and (optionally) trait relationships.
+ * Wraps the shared upload workflow and downstream analysis modules.
  *
  * Dataset context sharing
  * -----------------------
@@ -16,9 +16,8 @@
  *   import { MultiTraitUpload }   from "./MultiTraitUpload";
  *   import { TraitRelationships } from "./TraitRelationships";
  *
- *   // Replace the bare <DynamicInputForm ... /> with:
+ *   // Mount the shared upload workflow with downstream analysis modules:
  *   <DataSourceTabs
- *     manualContent={<DynamicInputForm ... />}
  *     uploadContent={<MultiTraitUpload />}
  *     traitRelationshipsContent={(ctx) => <TraitRelationships datasetContext={ctx} />}
  *   />
@@ -39,11 +38,9 @@ import {
   VivaSenseMode,
 } from "@/services/featureMode";
 
-type TabId = "manual" | "upload" | "anova" | "genetics" | "relationships" | "descriptive" | "advanced";
+type TabId = "upload" | "anova" | "genetics" | "relationships" | "descriptive" | "advanced";
 
 interface DataSourceTabsProps {
-  /** The existing manual input form / component */
-  manualContent: React.ReactNode;
   /**
    * The MultiTraitUpload component (or any element that accepts an optional
    * `onDatasetReady` prop).  DataSourceTabs injects `onDatasetReady` via
@@ -81,7 +78,6 @@ interface DataSourceTabsProps {
 }
 
 export function DataSourceTabs({
-  manualContent,
   uploadContent,
   traitRelationshipsContent,
   descriptiveStatsContent,
@@ -113,7 +109,6 @@ export function DataSourceTabs({
   const showAnova = typeof anovaContent === "function";
   const showGenetics = typeof geneticsContent === "function";
   const showAdvanced = typeof advancedContent === "function";
-
   type TabDef = {
     id: TabId;
     label: string;
@@ -123,13 +118,6 @@ export function DataSourceTabs({
   };
 
   const tabs: TabDef[] = [
-    {
-      id: "manual",
-      label: "Single Trait",
-      icon: "✏️",
-      description: "Enter data for one trait",
-      badge: "free",
-    },
     {
       id: "upload",
       label: "Multi-Trait File",
@@ -285,9 +273,6 @@ export function DataSourceTabs({
 
         {/* Content pane */}
         <div className="flex-1 min-w-0">
-          <div className={active === "manual" ? "block" : "hidden"}>
-            {manualContent}
-          </div>
           <div className={active === "upload" ? "block" : "hidden"}>
             {uploadWithCallback}
           </div>
