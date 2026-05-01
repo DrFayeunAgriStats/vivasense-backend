@@ -48,6 +48,7 @@ from multitrait_upload_schemas import UploadAnalysisResponse, SummaryTableRow, T
 from trait_relationships_schemas import CorrelationResponse
 import result_cache
 from genetics_interpretation import generate_genetics_interpretation
+from interpretation import InterpretationEngine
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Export"])
@@ -346,20 +347,32 @@ def _add_summary_table(doc: Document, data: UploadAnalysisResponse) -> None:
         headers = ["Trait", "Mean", "H²", "GCV %", "PCV %", "GAM %", "Class", "Status"]
         
     rows_data = [
-        ([
-             row.trait,
-             _fmt(row.grand_mean),
-             row.status,
-         ] if is_anova else [
-             row.trait,
-             _fmt(row.grand_mean),
-             _fmt(row.h2, 3),
-             _fmt(row.gcv, 2),
-             _fmt(row.pcv, 2),
-             _fmt(row.gam_percent, 2),
-             row.heritability_class or "—",
-             row.status,
-         ])
+        (
+            [
+                row.trait,
+                _fmt(row.grand_mean),
+                _fmt(row.h2, 3),
+                _fmt(row.gcv, 2),
+                _fmt(row.pcv, 2),
+                _fmt(row.gam_percent, 2),
+                (
+                    row.gam_class
+                    or (
+                        InterpretationEngine.classify_gam(row.gam_percent)
+                        if row.gam_percent is not None
+                        else None
+                    )
+                    or "—"
+                ),
+                row.status,
+            ]
+            if not is_anova
+            else [
+                row.trait,
+                _fmt(row.grand_mean),
+                row.status,
+            ]
+        )
         for row in data.summary_table
     ]
     _add_stat_table(doc, headers, rows_data, numeric_cols={1} if is_anova else {1, 2, 3, 4, 5})

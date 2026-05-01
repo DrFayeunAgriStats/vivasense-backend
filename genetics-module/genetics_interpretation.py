@@ -7,6 +7,7 @@ Returns strict GeneticsInterpretationSections objects, never freeform prose.
 
 from typing import Optional, Tuple
 from interpretation_sections import GeneticsInterpretationSections
+from interpretation import InterpretationEngine
 
 
 def generate_genetics_interpretation_sections(
@@ -369,15 +370,5 @@ def _classify_heritability(h2) -> str:
 
 
 def _classify_gam(gam_percent) -> str:
-    """Classify genetic advance as % of mean into low, moderate, high, or not_computed."""
-    if gam_percent is None:
-        return "not_computed"
-    try:
-        gam_percent = float(gam_percent)
-    except (TypeError, ValueError):
-        return "not_computed"
-    if gam_percent < 5:
-        return "low"
-    if gam_percent < 10:
-        return "moderate"
-    return "high"
+    """Classify GAM using the shared InterpretationEngine thresholds."""
+    return InterpretationEngine.classify_gam(gam_percent)

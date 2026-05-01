@@ -474,15 +474,18 @@ def _build_summary_row(trait: str, result_dict: Dict[str, Any], actual_module: s
         hp = res.get("heritability") or {}
         gp = res.get("genetic_parameters") or {}
     h2 = hp.get("h2_broad_sense")
+    gam_percent = gp.get("GAM_percent")
     h2_class = InterpretationEngine.classify_heritability(h2) if h2 is not None else None
+    gam_class = InterpretationEngine.classify_gam(gam_percent) if gam_percent is not None else None
     return SummaryTableRow(
         trait=trait,
         grand_mean=res.get("grand_mean"),
         h2=h2,
         gcv=gp.get("GCV"),
         pcv=gp.get("PCV"),
-        gam_percent=gp.get("GAM_percent"),
+        gam_percent=gam_percent,
         heritability_class=h2_class,
+        gam_class=gam_class,
         status="success",
     )
 

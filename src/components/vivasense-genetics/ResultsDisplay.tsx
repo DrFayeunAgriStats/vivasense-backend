@@ -92,7 +92,7 @@ function buildReportPreview(results: UploadAnalysisResponse): {
         value: [
           r?.grand_mean != null ? `Mean: ${(r.grand_mean as number).toFixed(2)}` : null,
           r?.h2 != null ? `H²: ${(r.h2 as number).toFixed(3)}` : null,
-          r?.heritability_class ? `(${r.heritability_class})` : null,
+          r?.gam_class ? `(GAM class: ${r.gam_class})` : null,
           r?.gcv != null ? `GCV: ${(r.gcv as number).toFixed(1)}%` : null,
           r?.gam_percent != null ? `GAM: ${(r.gam_percent as number).toFixed(1)}%` : null,
         ]
@@ -386,7 +386,7 @@ function SummaryRow({
         <Td>{row.pcv != null ? row.pcv.toFixed(1) : "—"}</Td>
         <Td>{row.gam_percent != null ? row.gam_percent.toFixed(1) : "—"}</Td>
         <td className="px-4 py-3">
-          <ClassBadge cls={row.heritability_class} />
+          <ClassBadge cls={row.gam_class} />
         </td>
         <td className="px-4 py-3">
           {hasDetails && (

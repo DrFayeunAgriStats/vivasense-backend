@@ -445,7 +445,7 @@ def _build_gp_writing(
         ).format(trait=trait),
         values_to_fill=[
             "GAM% value from Genetic Parameters table",
-            "GAM classification: 'high' (≥ 10%), 'moderate' (5–9.99%), or 'low' (< 5%)",
+            "GAM classification: 'high' (> 10%), 'moderate' (5–10%), or 'low' (< 5%)",
             "h² value",
             "write 'is' if both h² and GAM are moderate or high, 'is not' if both are low",
             "write 'substantial' / 'moderate' / 'limited' matching the GAM class",

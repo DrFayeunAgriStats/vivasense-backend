@@ -72,6 +72,7 @@ export interface SummaryTableRow {
   pcv?: number;
   gam_percent?: number;
   heritability_class?: "high" | "moderate" | "low";
+  gam_class?: "high" | "moderate" | "low";
   status: "success" | "failed";
   error?: string;
 }

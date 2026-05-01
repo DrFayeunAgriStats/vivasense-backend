@@ -37,7 +37,7 @@ class InterpretationEngine:
             return "not_computed"
         if gam_percent < 5:
             return "low"
-        if gam_percent < 10:
+        if gam_percent <= 10:
             return "moderate"
         return "high"
 

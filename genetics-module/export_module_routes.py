@@ -63,6 +63,7 @@ from module_schemas import (
 )
 from guided_writing import build_guided_writing
 from academic_schemas import GuidedWritingBlock
+from interpretation import InterpretationEngine
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Export"])
@@ -433,11 +434,8 @@ def _add_gp_tables(doc: Document, tr: GeneticParametersTraitResult) -> None:
     if ga is not None:
         ga_rows.append(["Genetic Advance (GA, absolute)", _fmt(ga, 4)])
     if gam is not None:
-        gam_class = (
-            "High"     if gam > 10
-            else "Moderate" if gam >= 5
-            else "Low"
-        )
+        gam_class = InterpretationEngine.classify_gam(gam)
+        gam_class = gam_class.capitalize() if gam_class != "not_computed" else "—"
         ga_rows.append(["Genetic Advance as % of Mean (GAM %)", f"{_fmt(gam, 2)}  [{gam_class}]"])
     if ga_rows:
         _add_stat_table(doc, ["Parameter", "Value"], ga_rows, numeric_cols={1})

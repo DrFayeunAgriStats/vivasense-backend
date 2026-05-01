@@ -41,6 +41,7 @@ from academic_schemas import (
 )
 from academic_validator import AcademicValidator
 from guided_writing import build_guided_writing
+from interpretation import InterpretationEngine
 
 logger = logging.getLogger(__name__)
 
@@ -895,9 +896,9 @@ class _GpFallback:
             "low" if h2 is not None else "not computed"
         )
         gam_class = (
-            "high" if gam is not None and gam >= 10 else
-            "moderate" if gam is not None and gam >= 5 else
-            "low" if gam is not None else "not computed"
+            InterpretationEngine.classify_gam(gam)
+            if gam is not None
+            else "not computed"
         )
 
         n_g = result.get("n_genotypes")

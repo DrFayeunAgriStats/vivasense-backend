@@ -149,6 +149,7 @@ class SummaryTableRow(BaseModel):
     pcv: Optional[float] = None
     gam_percent: Optional[float] = None
     heritability_class: Optional[str] = None  # "high" | "moderate" | "low"
+    gam_class: Optional[str] = None  # "high" | "moderate" | "low"
     status: str  # "success" | "failed"
     error: Optional[str] = None
 
