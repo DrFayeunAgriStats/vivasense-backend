@@ -104,6 +104,7 @@ app.add_middleware(
     allow_origins=[
         "https://www.fieldtoinsightacademy.com.ng",
         "https://fieldtoinsightacademy.com.ng",
+        "http://localhost:8080",
         "http://localhost:5173",
     ],
     allow_credentials=True,

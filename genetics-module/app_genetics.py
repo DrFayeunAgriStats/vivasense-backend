@@ -9,7 +9,7 @@ Handles:
 - Error handling and response formatting
 """
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -218,6 +218,7 @@ app.add_middleware(
     allow_origins=[
         "https://www.fieldtoinsightacademy.com.ng",
         "https://fieldtoinsightacademy.com.ng",
+        "http://localhost:8080",
         "http://localhost:5173",
     ],
     allow_credentials=True,
@@ -736,6 +737,12 @@ async def health_check():
         "version": "1.0.0",
         "r_engine_ready": r_engine is not None
     }
+
+
+@app.head("/health", tags=["Health"])
+async def health_check_head():
+    """Health check probe support for HEAD requests."""
+    return Response(status_code=200)
 
 
 @app.get("/", tags=["Documentation"])
