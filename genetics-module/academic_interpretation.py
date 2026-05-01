@@ -1060,6 +1060,31 @@ async def interpret_module(
             text_for_validation = _split[0]
             validation = AcademicValidator.validate(text_for_validation, module_type)
 
+            # Section-presence checks should reflect the actual generated output,
+            # not the truncated pre-guided subset used for forbidden-phrase checks.
+            # This avoids false warnings like MISSING_SECTION_EXAMINER_CHECKPOINT.
+            if validation.violations:
+                full_lower = ai_text.lower()
+                reconciled_violations = []
+                for v in validation.violations:
+                    if v.rule_id.startswith("MISSING_SECTION_"):
+                        m = re.search(r"\(section '([^']+)' not found\)", v.excerpt, re.IGNORECASE)
+                        section_keyword = m.group(1).lower() if m else ""
+                        if section_keyword and section_keyword in full_lower:
+                            continue
+                    reconciled_violations.append(v)
+
+                if len(reconciled_violations) != len(validation.violations):
+                    block_count = sum(1 for v in reconciled_violations if v.severity == "block")
+                    warning_count = sum(1 for v in reconciled_violations if v.severity == "warn")
+                    validation = ValidationResult(
+                        passed=block_count == 0,
+                        blocked=block_count > 0,
+                        violations=reconciled_violations,
+                        warning_count=warning_count,
+                        block_count=block_count,
+                    )
+
             if validation.blocked:
                 logger.warning(
                     "AI text blocked (%d violations) — attempting repair for %s",
