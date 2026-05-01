@@ -131,7 +131,7 @@ export function AnovaWorkspaceModule({ datasetContext }: AnovaWorkspaceModulePro
         </div>
 
         <p className="mb-3 text-sm text-gray-500">
-          Configure design columns once and run ANOVA across multiple response traits.
+          Configure design columns once, then run ANOVA across selected traits.
         </p>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -184,7 +184,7 @@ export function AnovaWorkspaceModule({ datasetContext }: AnovaWorkspaceModulePro
         <div className="mt-4 space-y-2">
           <div className="flex items-center justify-between">
             <p className="text-sm font-semibold text-gray-700">
-              Response traits
+              Select response traits to analyse
               {selectedTraits.length > 0 && (
                 <span className="ml-2 font-normal text-emerald-600">
                   {selectedTraits.length} selected
@@ -197,15 +197,15 @@ export function AnovaWorkspaceModule({ datasetContext }: AnovaWorkspaceModulePro
                 onClick={selectAllTraits}
                 className="text-emerald-600 hover:underline"
               >
-                All
+                Select all
               </button>
               <span className="text-gray-300">|</span>
               <button
                 type="button"
                 onClick={clearAllTraits}
-                className="text-gray-400 hover:underline"
+                className="text-gray-500 hover:underline"
               >
-                None
+                Clear
               </button>
             </div>
           </div>
@@ -218,7 +218,7 @@ export function AnovaWorkspaceModule({ datasetContext }: AnovaWorkspaceModulePro
                   type="button"
                   onClick={() => toggleTrait(trait)}
                   className={[
-                    "rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
+                    "rounded-full border px-3 py-1 text-sm font-medium transition-colors",
                     active
                       ? "border-emerald-600 bg-emerald-600 text-white"
                       : "border-gray-300 bg-white text-gray-600 hover:border-emerald-400 hover:text-emerald-700",
@@ -238,8 +238,9 @@ export function AnovaWorkspaceModule({ datasetContext }: AnovaWorkspaceModulePro
         </div>
 
         {error && (
-          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-            {error}
+          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3">
+            <p className="text-sm font-medium text-red-700">Analysis failed</p>
+            <p className="mt-0.5 break-all text-xs font-mono text-red-600">{error}</p>
           </div>
         )}
 
@@ -258,7 +259,7 @@ export function AnovaWorkspaceModule({ datasetContext }: AnovaWorkspaceModulePro
             {running ? (
               <span className="inline-flex items-center gap-2">
                 <VsSpinner size="sm" className="border-white" />
-                Running ANOVA...
+                Running...
               </span>
             ) : (
               `Run ANOVA - ${selectedTraits.length} trait${selectedTraits.length !== 1 ? "s" : ""}`

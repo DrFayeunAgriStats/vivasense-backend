@@ -92,7 +92,7 @@ export function GeneticsWorkspaceModule({ datasetContext }: GeneticsWorkspaceMod
           </span>
         </div>
 
-        <p className="mb-3 text-sm text-gray-600">
+        <p className="mb-3 text-sm text-gray-500">
           Run broad-sense heritability, GCV, PCV, and GAM across multiple traits in one pass.
         </p>
 
@@ -106,13 +106,13 @@ export function GeneticsWorkspaceModule({ datasetContext }: GeneticsWorkspaceMod
             onChange={(e) => setSelectionIntensity(Number(e.target.value) || 1.4)}
             className="w-full max-w-xs rounded-lg border border-gray-300 px-3 py-2 text-sm"
           />
-          <p className="mt-1 text-xs text-gray-500">Default 1.4 (~20% selection). Use 2.06 for 5% selection.</p>
+          <p className="mt-1 text-xs text-gray-400">Default 1.4 (~20% selection). Use 2.06 for 5% selection.</p>
         </div>
 
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <p className="text-sm font-semibold text-gray-700">
-              Traits
+              Select traits to analyse
               {selectedTraits.length > 0 && (
                 <span className="ml-2 font-normal text-emerald-600">
                   {selectedTraits.length} selected
@@ -125,15 +125,15 @@ export function GeneticsWorkspaceModule({ datasetContext }: GeneticsWorkspaceMod
                 onClick={selectAllTraits}
                 className="text-emerald-600 hover:underline"
               >
-                All
+                Select all
               </button>
               <span className="text-gray-300">|</span>
               <button
                 type="button"
                 onClick={clearAllTraits}
-                className="text-gray-400 hover:underline"
+                className="text-gray-500 hover:underline"
               >
-                None
+                Clear
               </button>
             </div>
           </div>
@@ -146,7 +146,7 @@ export function GeneticsWorkspaceModule({ datasetContext }: GeneticsWorkspaceMod
                   type="button"
                   onClick={() => toggleTrait(trait)}
                   className={[
-                    "rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
+                    "rounded-full border px-3 py-1 text-sm font-medium transition-colors",
                     active
                       ? "border-emerald-600 bg-emerald-600 text-white"
                       : "border-gray-300 bg-white text-gray-600 hover:border-emerald-400 hover:text-emerald-700",
@@ -166,8 +166,9 @@ export function GeneticsWorkspaceModule({ datasetContext }: GeneticsWorkspaceMod
         </div>
 
         {error && (
-          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-            {error}
+          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3">
+            <p className="text-sm font-medium text-red-700">Analysis failed</p>
+            <p className="mt-0.5 break-all text-xs font-mono text-red-600">{error}</p>
           </div>
         )}
 
@@ -186,7 +187,7 @@ export function GeneticsWorkspaceModule({ datasetContext }: GeneticsWorkspaceMod
             {running ? (
               <span className="inline-flex items-center gap-2">
                 <VsSpinner size="sm" className="border-white" />
-                Computing parameters...
+                Running...
               </span>
             ) : (
               `Compute Genetic Parameters - ${selectedTraits.length} trait${selectedTraits.length !== 1 ? "s" : ""}`
