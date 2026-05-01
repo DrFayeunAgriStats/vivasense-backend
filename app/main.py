@@ -1,8 +1,8 @@
 """
-VivaSense Backend — main entry point for Render (uvicorn app.main:app).
+VivaSense Backend — FastAPI app entry point used by container startup.
 
-Native-Python-safe: all genetics imports are guarded so the app always
-starts and /health always returns 200, even if R or optional deps are absent.
+All genetics imports are guarded so the app always starts and /health
+always returns 200, even if R or optional deps are absent.
 """
 import logging
 import json

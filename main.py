@@ -1,6 +1,6 @@
 """
-Entry point for Render's `uvicorn main:app` start command.
-Changes working directory to genetics-module/ so that relative
+Container entry point that re-exports the FastAPI app.
+Changes working directory to genetics-module/ so relative
 R script paths (e.g. source("vivasense_genetics.R")) resolve correctly.
 """
 import os

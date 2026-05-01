@@ -1,1 +1,1 @@
-from app_genetics import app  # noqa: F401  – re-export for `uvicorn main:app`
+from app_genetics import app  # noqa: F401  – container entrypoint re-export
