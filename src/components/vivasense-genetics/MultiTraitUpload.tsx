@@ -63,6 +63,7 @@ export function MultiTraitUpload({ onDatasetReady, onFileStatus }: MultiTraitUpl
   const [datasetWasLoaded, setDatasetWasLoaded] = useState(false);
   // Shown at the top of the config step when the user uploads a second file.
   const [replacementNotice, setReplacementNotice] = useState(false);
+  const [showFieldLayoutGenerator, setShowFieldLayoutGenerator] = useState(false);
 
   // ── Step 1: File selected → preview fetched ──────────────────────────────
 
@@ -283,19 +284,37 @@ export function MultiTraitUpload({ onDatasetReady, onFileStatus }: MultiTraitUpl
       </div>
 
       <section className="mt-8 rounded-xl border border-gray-200 bg-white p-5">
-        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h3 className="text-base font-semibold text-gray-800">Field Layout Generator</h3>
             <p className="mt-1 text-sm text-gray-500">
               Generate a CRD or RCBD field plan for trial setup and data collection before analysis.
             </p>
           </div>
-          <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
-            Free Tool
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+              Free Tool
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowFieldLayoutGenerator((current) => !current)}
+              aria-expanded={showFieldLayoutGenerator}
+              className="inline-flex items-center rounded-full border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:border-emerald-300 hover:text-emerald-700"
+            >
+              {showFieldLayoutGenerator ? "Hide Generator" : "Open Generator"}
+            </button>
+          </div>
         </div>
 
-        <FieldLayoutGenerator />
+        {showFieldLayoutGenerator ? (
+          <div className="mt-4">
+            <FieldLayoutGenerator />
+          </div>
+        ) : (
+          <p className="mt-4 rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+            Open the generator when you need a randomized CRD or RCBD field plan for trial setup.
+          </p>
+        )}
       </section>
 
       <ProFeatureModal
