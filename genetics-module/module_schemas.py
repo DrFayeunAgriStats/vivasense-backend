@@ -208,6 +208,10 @@ class GeneticParametersTraitResult(BaseModel):
     # layer can apply conditional GCV/PCV commentary without re-running the model.
     environment_significant: Optional[bool] = None
     gxe_significant: Optional[bool] = None
+    anova_f_env: Optional[float] = None
+    anova_p_env: Optional[float] = None
+    anova_f_gxe: Optional[float] = None
+    anova_p_gxe: Optional[float] = None
     data_warnings: List[str] = Field(default_factory=list)
     error: Optional[str] = None
 

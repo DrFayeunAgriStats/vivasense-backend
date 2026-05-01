@@ -24,7 +24,7 @@ import io
 import logging
 import math
 import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 import matplotlib
@@ -47,7 +47,7 @@ from genetics_schemas import AnovaTable, MeanSeparation, GeneticsResult, Genetic
 from multitrait_upload_schemas import UploadAnalysisResponse, SummaryTableRow, TraitResult
 from trait_relationships_schemas import CorrelationResponse
 import result_cache
-from genetics_interpretation import generate_genetics_interpretation
+from genetics_interpretation import generate_genetics_interpretation, _describe_env_effects
 from interpretation import InterpretationEngine
 
 logger = logging.getLogger(__name__)
@@ -87,6 +87,32 @@ _ANOVA_LABELS: Dict[str, str] = {
     "genotype:environment": "G×E Interaction",
     "Residuals": "Error",
 }
+
+
+def _anova_env_effect_stats(at: Optional[AnovaTable]) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
+    if at is None or not hasattr(at, "source"):
+        return None, None, None, None
+
+    def _get_fp(source_name: str) -> Tuple[Optional[float], Optional[float]]:
+        try:
+            idx = at.source.index(source_name)
+            f_val = at.f_value[idx] if idx < len(at.f_value) else None
+            p_val = at.p_value[idx] if idx < len(at.p_value) else None
+            return (
+                float(f_val) if f_val is not None else None,
+                float(p_val) if p_val is not None else None,
+            )
+        except (ValueError, IndexError, TypeError):
+            return None, None
+
+    f_env, p_env = _get_fp("environment")
+    f_gxe, p_gxe = None, None
+    for src in ["genotype:environment", "environment:genotype", "GxE", "gxe"]:
+        f_gxe, p_gxe = _get_fp(src)
+        if f_gxe is not None or p_gxe is not None:
+            break
+
+    return f_env, p_env, f_gxe, p_gxe
 
 _HEADER_BG = "F2F2F2"
 
@@ -871,22 +897,19 @@ def _add_genetic_parameters_section(doc: Document, result: GeneticsResult) -> No
         )
 
         if diff < 1.0:
-            if _env_active:
-                comment = (
-                    f"GCV ({_fmt(gcv, 2)}%) ≈ PCV ({_fmt(pcv, 2)}%) — "
-                    "limited variance inflation between the genetic and phenotypic "
-                    "coefficients of variation. However, the ANOVA results indicate "
-                    "significant environmental effects or genotype × environment interaction, "
-                    "suggesting that environmental conditions may still affect trait expression "
-                    "and genotype rankings across environments."
-                )
-            else:
-                comment = (
-                    f"GCV ({_fmt(gcv, 2)}%) ≈ PCV ({_fmt(pcv, 2)}%) — "
-                    "limited variance inflation between the genetic and phenotypic "
-                    "coefficients of variation in this experiment. "
-                    "Environmental effects on this trait appear modest under the conditions tested."
-                )
+            anova_f_env, anova_p_env, anova_f_gxe, anova_p_gxe = _anova_env_effect_stats(_at)
+            env_sentence = _describe_env_effects(
+                f_env=float(anova_f_env) if anova_f_env is not None else 0.0,
+                p_env=float(anova_p_env) if anova_p_env is not None else None,
+                f_gxe=float(anova_f_gxe) if anova_f_gxe is not None else 0.0,
+                p_gxe=float(anova_p_gxe) if anova_p_gxe is not None else None,
+            )
+            comment = (
+                f"GCV ({_fmt(gcv, 2)}%) ≈ PCV ({_fmt(pcv, 2)}%) — "
+                "limited variance inflation between the genetic and phenotypic "
+                "coefficients of variation in this experiment. "
+                f"{env_sentence}"
+            )
         elif gcv < pcv:
             comment = (
                 f"GCV ({_fmt(gcv, 2)}%) < PCV ({_fmt(pcv, 2)}%) — "
@@ -982,12 +1005,17 @@ def _add_interpretation_section(
             # Fallback to generating on the fly
             gcv_val = gp.get("GCV")
             pcv_val = gp.get("PCV")
+            anova_f_env, anova_p_env, anova_f_gxe, anova_p_gxe = _anova_env_effect_stats(result.anova_table)
             interpretation_text, _ = generate_genetics_interpretation(
                 trait_name=trait_name,
                 h2=h2,
                 gam=gam_pct,
                 gcv=gcv_val,
                 pcv=pcv_val,
+                anova_f_env=anova_f_env,
+                anova_p_env=anova_p_env,
+                anova_f_gxe=anova_f_gxe,
+                anova_p_gxe=anova_p_gxe,
             )
             logger.info("Generated Genetics interpretation on the fly: %d characters", len(interpretation_text))
         

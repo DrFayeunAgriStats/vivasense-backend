@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import JSONResponse
 
 import dataset_cache
 from multitrait_upload_schemas import (
@@ -43,7 +44,13 @@ from interpretation import InterpretationEngine
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["Multi-Trait Upload"])
+
+
+class UTF8JSONResponse(JSONResponse):
+    media_type = "application/json; charset=utf-8"
+
+
+router = APIRouter(tags=["Multi-Trait Upload"], default_response_class=UTF8JSONResponse)
 
 
 # ============================================================================

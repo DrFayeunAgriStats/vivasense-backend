@@ -63,6 +63,7 @@ from module_schemas import (
 )
 from guided_writing import build_guided_writing
 from academic_schemas import GuidedWritingBlock
+from genetics_interpretation import _describe_env_effects
 from interpretation import InterpretationEngine
 
 logger = logging.getLogger(__name__)
@@ -394,22 +395,18 @@ def _add_gp_tables(doc: Document, tr: GeneticParametersTraitResult) -> None:
             diff = abs(gcv - pcv)
             env_active = bool(tr.gxe_significant or tr.environment_significant)
             if diff < 1.0:
-                if env_active:
-                    cv_comment = (
-                        f"GCV ({_fmt(gcv, 2)}%) ≈ PCV ({_fmt(pcv, 2)}%) — "
-                        "limited variance inflation between the genetic and phenotypic "
-                        "coefficients of variation. However, significant environmental effects "
-                        "or genotype × environment interaction were detected in the ANOVA, "
-                        "indicating that environmental conditions may still affect trait expression "
-                        "and genotype rankings across environments."
-                    )
-                else:
-                    cv_comment = (
-                        f"GCV ({_fmt(gcv, 2)}%) ≈ PCV ({_fmt(pcv, 2)}%) — "
-                        "limited variance inflation between the genetic and phenotypic "
-                        "coefficients of variation in this experiment. "
-                        "Environmental effects on this trait appear modest under the conditions tested."
-                    )
+                env_sentence = _describe_env_effects(
+                    f_env=float(tr.anova_f_env) if tr.anova_f_env is not None else 0.0,
+                    p_env=float(tr.anova_p_env) if tr.anova_p_env is not None else None,
+                    f_gxe=float(tr.anova_f_gxe) if tr.anova_f_gxe is not None else 0.0,
+                    p_gxe=float(tr.anova_p_gxe) if tr.anova_p_gxe is not None else None,
+                )
+                cv_comment = (
+                    f"GCV ({_fmt(gcv, 2)}%) ≈ PCV ({_fmt(pcv, 2)}%) — "
+                    "limited variance inflation between the genetic and phenotypic "
+                    "coefficients of variation in this experiment. "
+                    f"{env_sentence}"
+                )
             elif gcv < pcv:
                 cv_comment = (
                     f"GCV ({_fmt(gcv, 2)}%) < PCV ({_fmt(pcv, 2)}%) — "

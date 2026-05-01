@@ -23,6 +23,7 @@ import logging
 from typing import Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 
 from genetics_schemas import GeneticsResponse
 from multitrait_upload_routes import build_observations, check_balance, read_file
@@ -37,7 +38,13 @@ import dataset_cache
 from genetics_interpretation import generate_genetics_interpretation
 
 logger = logging.getLogger(__name__)
-router = APIRouter(tags=["Analysis"])
+
+
+class UTF8JSONResponse(JSONResponse):
+    media_type = "application/json; charset=utf-8"
+
+
+router = APIRouter(tags=["Analysis"], default_response_class=UTF8JSONResponse)
 
 
 def _get_anova_flags(anova_table) -> Tuple[bool, bool]:
@@ -61,7 +68,39 @@ def _get_anova_flags(anova_table) -> Tuple[bool, bool]:
     return env_sig, gxe_sig
 
 
-def _build_gp_text(trait: str, res) -> Tuple[str, str, bool, bool]:
+def _get_anova_effect_stats(anova_table) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
+    """
+    Return (f_env, p_env, f_gxe, p_gxe) from an AnovaTable when available.
+    """
+    if anova_table is None or not hasattr(anova_table, "source"):
+        return None, None, None, None
+
+    def _get_fp(source_name: str) -> Tuple[Optional[float], Optional[float]]:
+        try:
+            idx = anova_table.source.index(source_name)
+            f_val = anova_table.f_value[idx] if idx < len(anova_table.f_value) else None
+            p_val = anova_table.p_value[idx] if idx < len(anova_table.p_value) else None
+            return (
+                float(f_val) if f_val is not None else None,
+                float(p_val) if p_val is not None else None,
+            )
+        except (ValueError, IndexError, TypeError):
+            return None, None
+
+    f_env, p_env = _get_fp("environment")
+    f_gxe, p_gxe = None, None
+    for src in ["genotype:environment", "environment:genotype", "GxE", "gxe"]:
+        f_gxe, p_gxe = _get_fp(src)
+        if f_gxe is not None or p_gxe is not None:
+            break
+
+    return f_env, p_env, f_gxe, p_gxe
+
+
+def _build_gp_text(
+    trait: str,
+    res,
+) -> Tuple[str, str, bool, bool, Optional[float], Optional[float], Optional[float], Optional[float]]:
     """
     Build academic-grade genetic parameters interpretation text.
     Replaces legacy R engine output with validated interpretation.
@@ -80,6 +119,7 @@ def _build_gp_text(trait: str, res) -> Tuple[str, str, bool, bool]:
         pcv_val = gp.get("PCV")
 
         env_significant, gxe_significant = _get_anova_flags(res.anova_table)
+        f_env, p_env, f_gxe, p_gxe = _get_anova_effect_stats(res.anova_table)
 
         interpretation, breeding_implication = generate_genetics_interpretation(
             trait_name=trait,
@@ -89,6 +129,10 @@ def _build_gp_text(trait: str, res) -> Tuple[str, str, bool, bool]:
             pcv=float(pcv_val) if pcv_val is not None else None,
             gxe_significant=gxe_significant,
             environment_significant=env_significant,
+            anova_f_env=f_env,
+            anova_p_env=p_env,
+            anova_f_gxe=f_gxe,
+            anova_p_gxe=p_gxe,
         )
 
         logger.info(
@@ -97,7 +141,16 @@ def _build_gp_text(trait: str, res) -> Tuple[str, str, bool, bool]:
             trait, len(interpretation), env_significant, gxe_significant,
         )
 
-        return interpretation, breeding_implication, env_significant, gxe_significant
+        return (
+            interpretation,
+            breeding_implication,
+            env_significant,
+            gxe_significant,
+            f_env,
+            p_env,
+            f_gxe,
+            p_gxe,
+        )
     except Exception as exc:
         logger.warning("Failed to build GP interpretation for '%s': %s", trait, exc)
         return (
@@ -105,6 +158,10 @@ def _build_gp_text(trait: str, res) -> Tuple[str, str, bool, bool]:
             "Breeding implication not available.",
             False,
             False,
+            None,
+            None,
+            None,
+            None,
         )
 
 @router.post(
@@ -256,7 +313,7 @@ async def analysis_genetic_parameters(request: ModuleRequest):
             )
 
             # Build interpretation text (now returns ANOVA flags too)
-            interp_text, breeding_text, env_sig, gxe_sig = _build_gp_text(trait, res)
+            interp_text, breeding_text, env_sig, gxe_sig, f_env, p_env, f_gxe, p_gxe = _build_gp_text(trait, res)
 
             result_obj = GeneticParametersTraitResult(
                 trait=trait,
@@ -275,6 +332,10 @@ async def analysis_genetic_parameters(request: ModuleRequest):
                 interpretation=interp_text,
                 environment_significant=env_sig,
                 gxe_significant=gxe_sig,
+                anova_f_env=f_env,
+                anova_p_env=p_env,
+                anova_f_gxe=f_gxe,
+                anova_p_gxe=p_gxe,
                 data_warnings=balance_warnings,
             )
             return trait, "success", result_obj

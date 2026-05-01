@@ -10,6 +10,51 @@ from interpretation_sections import GeneticsInterpretationSections
 from interpretation import InterpretationEngine
 
 
+def _describe_env_effects(f_env: float, p_env: float, f_gxe: float, p_gxe: float) -> str:
+    env_sig = p_env is not None and p_env < 0.05
+    gxe_sig = p_gxe is not None and p_gxe < 0.05
+
+    if not env_sig:
+        env_desc = "Environmental effects were non-significant for this trait"
+    elif f_env > 1000:
+        env_desc = (
+            f"Strong environmental effects were detected (F = {f_env:,.3f}, p < 0.001), "
+            f"indicating substantial variation in trait expression across environments"
+        )
+    elif f_env > 100:
+        env_desc = (
+            f"Moderate-to-strong environmental effects were detected "
+            f"(F = {f_env:,.3f}, p < 0.001)"
+        )
+    elif f_env > 10:
+        env_desc = (
+            f"Moderate environmental effects were detected (F = {f_env:,.3f}, p < 0.001)"
+        )
+    else:
+        env_desc = (
+            f"Modest environmental effects were detected (F = {f_env:,.3f})"
+        )
+
+    if gxe_sig and f_gxe > 10:
+        gxe_desc = (
+            " Significant genotype-by-environment interaction was also detected "
+            f"(GxE F = {f_gxe:,.3f}, p < 0.001), suggesting genotype rankings may not be "
+            "consistent across all environments - stability analysis is recommended."
+        )
+    elif gxe_sig:
+        gxe_desc = (
+            f" A significant but modest GxE interaction was detected "
+            f"(F = {f_gxe:,.3f}, p < 0.05)."
+        )
+    else:
+        gxe_desc = (
+            " GxE interaction was non-significant, indicating relatively consistent "
+            "genotype performance across environments."
+        )
+
+    return env_desc + ". " + gxe_desc
+
+
 def generate_genetics_interpretation_sections(
     trait_name: str,
     h2: Optional[float],
@@ -19,12 +64,16 @@ def generate_genetics_interpretation_sections(
     gxe_significant: bool = False,
     environment_significant: bool = False,
     n_observations: Optional[int] = None,
+    anova_f_env: Optional[float] = None,
+    anova_p_env: Optional[float] = None,
+    anova_f_gxe: Optional[float] = None,
+    anova_p_gxe: Optional[float] = None,
 ) -> GeneticsInterpretationSections:
     """
     Generate VALIDATED genetic parameters interpretation as strict section objects.
     
     All fields populated deterministically from Python logic:
-    - H² classification (high/moderate/low)
+    - H2 classification (high/moderate/low)
     - GAM classification (high/moderate/low)
     - GCV/PCV relationship
     - Risk flags (GxE, small n, etc.)
@@ -47,24 +96,24 @@ def generate_genetics_interpretation_sections(
     # ── Section 2: Heritability Interpretation ───────────────────────────
     if h2_class == "not_computed":
         heritability_interp = (
-            f"Broad-sense heritability (H²) could not be reliably estimated for {trait_name}. "
+            f"Broad-sense heritability (H2) could not be reliably estimated for {trait_name}. "
             "Data limitations prevent interpretation of genetic control."
         )
     elif h2_class == "high":
         heritability_interp = (
-            f"Broad-sense heritability is estimated at H² = {h2:.3f} (high), "
+            f"Broad-sense heritability is estimated at H2 = {h2:.3f} (high), "
             f"indicating that the majority of observed phenotypic variation in {trait_name} "
             "is attributable to genetic differences among genotypes under these conditions."
         )
     elif h2_class == "moderate":
         heritability_interp = (
-            f"Broad-sense heritability is estimated at H² = {h2:.3f} (moderate), "
+            f"Broad-sense heritability is estimated at H2 = {h2:.3f} (moderate), "
             f"indicating that both genetic and environmental factors contribute substantially "
             f"to phenotypic variation in {trait_name}."
         )
     else:  # low
         heritability_interp = (
-            f"Broad-sense heritability is estimated at H² = {h2:.3f} (low), "
+            f"Broad-sense heritability is estimated at H2 = {h2:.3f} (low), "
             f"indicating that environmental factors and/or measurement variation dominate "
             f"the phenotypic variation in {trait_name}."
         )
@@ -106,16 +155,18 @@ def generate_genetics_interpretation_sections(
             variance_interp_parts.append(
                 "limited variance inflation between genetic and phenotypic components."
             )
-            env_active = gxe_significant or environment_significant
-            if env_active:
-                variance_interp_parts.append(
-                    "However, ANOVA results show significant environmental or G×E effects, "
-                    "so environmental factors still influence trait expression and may alter rankings."
+            anova_f_env = float(anova_f_env) if anova_f_env is not None else 0.0
+            anova_p_env = float(anova_p_env) if anova_p_env is not None else None
+            anova_f_gxe = float(anova_f_gxe) if anova_f_gxe is not None else 0.0
+            anova_p_gxe = float(anova_p_gxe) if anova_p_gxe is not None else None
+            variance_interp_parts.append(
+                _describe_env_effects(
+                    f_env=anova_f_env,
+                    p_env=anova_p_env,
+                    f_gxe=anova_f_gxe,
+                    p_gxe=anova_p_gxe,
                 )
-            else:
-                variance_interp_parts.append(
-                    "Environmental effects on this trait appear modest under the tested conditions."
-                )
+            )
         elif diff <= 7:
             variance_interp_parts.append(
                 "moderate variance inflation, suggesting appreciable environmental influence."
@@ -164,7 +215,7 @@ def generate_genetics_interpretation_sections(
     
     if gxe_significant:
         risk_parts.append(
-            f"Significant genotype × environment interaction was detected for {trait_name}, "
+            f"Significant genotype-by-environment interaction was detected for {trait_name}, "
             "indicating that genotype rankings and trait values may vary across environments. "
             "Multi-environment validation is essential before committing to selection decisions."
         )
@@ -214,6 +265,10 @@ def generate_genetics_interpretation(
     gxe_significant: bool = False,
     environment_significant: bool = False,
     n_observations: Optional[int] = None,
+    anova_f_env: Optional[float] = None,
+    anova_p_env: Optional[float] = None,
+    anova_f_gxe: Optional[float] = None,
+    anova_p_gxe: Optional[float] = None,
 ) -> Tuple[str, str]:
     """
     Generate academic-grade genetics interpretation following VivaSense standards.
@@ -227,7 +282,7 @@ def generate_genetics_interpretation(
     h2_class = _classify_heritability(h2)
     gam_class = _classify_gam(gam)
 
-    # ── Joint H² + GAM interpretation ───────────────────────────────────
+    # ── Joint H2 + GAM interpretation ───────────────────────────────────
     if h2_class == "not_computed":
         interpretation = (
             f"Heritability could not be estimated for '{trait_name}'. "
@@ -235,21 +290,21 @@ def generate_genetics_interpretation(
         )
     elif h2_class == "high" and gam_class == "High":
         interpretation = (
-            f"The estimated broad-sense heritability (H² = {h2:.3f}) indicates HIGH genetic control "
+            f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates HIGH genetic control "
             f"of '{trait_name}'. The genetic advance as percent of mean (GAM = {gam:.2f}%) is HIGH, "
             "suggesting substantial expected response to direct selection. "
             "Additive gene effects are likely important; direct phenotypic selection should be effective."
         )
     elif h2_class == "high" and gam_class == "Medium":
         interpretation = (
-            f"The estimated broad-sense heritability (H² = {h2:.3f}) indicates HIGH genetic control "
+            f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates HIGH genetic control "
             f"of '{trait_name}'. The genetic advance as percent of mean (GAM = {gam:.2f}%) is MODERATE, "
             "indicating a meaningful selection response. Direct phenotypic selection should yield steady "
             "genetic progress; both additive and non-additive gene effects likely contribute."
         )
     elif h2_class == "high" and gam_class == "Low":
         interpretation = (
-            f"The estimated broad-sense heritability (H² = {h2:.3f}) indicates HIGH genetic control, "
+            f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates HIGH genetic control, "
             f"yet the genetic advance as percent of mean (GAM = {gam:.2f}%) is LOW for '{trait_name}'. "
             "This dissociation suggests that while phenotypic variation is substantially genetic, the "
             "expected response to selection is limited. Non-additive gene effects or strong inbreeding "
@@ -257,28 +312,28 @@ def generate_genetics_interpretation(
         )
     elif h2_class == "moderate" and gam_class == "High":
         interpretation = (
-            f"The estimated broad-sense heritability (H² = {h2:.3f}) indicates MODERATE genetic control "
+            f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates MODERATE genetic control "
             f"of '{trait_name}', with the genetic advance as percent of mean (GAM = {gam:.2f}%) being HIGH. "
             "Useful selection response is achievable despite environmental influence. "
             "Both genetic and environmental management should be considered."
         )
     elif h2_class == "moderate" and gam_class == "Medium":
         interpretation = (
-            f"The estimated broad-sense heritability (H² = {h2:.3f}) and genetic advance as percent "
+            f"The estimated broad-sense heritability (H2 = {h2:.3f}) and genetic advance as percent "
             f"of mean (GAM = {gam:.2f}%) both indicate MODERATE genetic control for '{trait_name}'. "
             "Selection may be useful, though environmental factors remain important. "
             "Progress should be steady but not rapid."
         )
     elif h2_class == "moderate" and gam_class == "Low":
         interpretation = (
-            f"The estimated broad-sense heritability (H² = {h2:.3f}) suggests MODERATE genetic control "
+            f"The estimated broad-sense heritability (H2 = {h2:.3f}) suggests MODERATE genetic control "
             f"of '{trait_name}', but the genetic advance as percent of mean (GAM = {gam:.2f}%) is LOW. "
             "Direct phenotypic selection may be slow. Consider investigating additive effects more carefully "
             "or combining selection with environmental optimization."
         )
     else:  # low h2
         interpretation = (
-            f"The estimated broad-sense heritability (H² = {h2:.3f}) indicates LOW genetic control of "
+            f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates LOW genetic control of "
             f"'{trait_name}' under the present environment. Phenotypic variation is dominated by environmental "
             "factors and/or measurement variation. Direct phenotypic selection is unlikely to be reliable; "
             "focus on improving growing conditions and management practices."
@@ -290,28 +345,29 @@ def generate_genetics_interpretation(
             diff = float(pcv) - float(gcv)
             env_active = gxe_significant or environment_significant
             if diff <= 2:
-                if env_active:
-                    interpretation += (
-                        f" The GCV ({gcv:.2f}%) is similar to the PCV ({pcv:.2f}%), "
-                        "indicating limited variance inflation between the genetic and phenotypic coefficients of variation. "
-                        "However, the ANOVA results indicate significant environmental effects or genotype × environment "
-                        "interaction for this trait, suggesting that environmental conditions may still influence trait "
-                        "expression and alter genotype rankings across environments. "
-                        "The GCV–PCV comparison alone should not be taken as evidence of negligible environmental effects."
-                    )
-                else:
-                    interpretation += (
-                        f" The GCV ({gcv:.2f}%) is similar to the PCV ({pcv:.2f}%), "
-                        "indicating limited variance inflation between the genetic and phenotypic coefficients of variation "
-                        "in this experiment. Environmental effects on this trait appear modest under the conditions tested."
-                    )
+                anova_f_env = float(anova_f_env) if anova_f_env is not None else 0.0
+                anova_p_env = float(anova_p_env) if anova_p_env is not None else None
+                anova_f_gxe = float(anova_f_gxe) if anova_f_gxe is not None else 0.0
+                anova_p_gxe = float(anova_p_gxe) if anova_p_gxe is not None else None
+                env_sentence = _describe_env_effects(
+                    f_env=anova_f_env,
+                    p_env=anova_p_env,
+                    f_gxe=anova_f_gxe,
+                    p_gxe=anova_p_gxe,
+                )
+                interpretation += (
+                    f" The GCV ({gcv:.2f}%) is similar to the PCV ({pcv:.2f}%), "
+                    "indicating limited variance inflation between the genetic and phenotypic coefficients of variation "
+                    "in this experiment. "
+                    f"{env_sentence}"
+                )
             elif diff <= 7:
                 if env_active:
                     interpretation += (
                         f" The GCV ({gcv:.2f}%) is moderately lower than the PCV ({pcv:.2f}%), "
                         "suggesting appreciable environmental influence on trait expression. "
                         "This is consistent with the ANOVA evidence of significant environmental or "
-                        "genotype × environment effects."
+                        "genotype-by-environment effects."
                     )
                 else:
                     interpretation += (
