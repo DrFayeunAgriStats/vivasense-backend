@@ -379,6 +379,15 @@ def _add_kv(doc: Document, key: str, value: str) -> None:
 # SECTION: CROSS-TRAIT SUMMARY TABLE
 # ============================================================================
 
+def _status_label(raw_status: Any) -> str:
+    status = str(raw_status or "").strip().lower()
+    mapping = {
+        "success": "Analysis complete",
+        "warning": "Check assumptions",
+        "error": "Analysis failed",
+    }
+    return mapping.get(status, str(raw_status or "—"))
+
 def _add_summary_table(doc: Document, data: UploadAnalysisResponse) -> None:
     is_anova = getattr(data, "module", "") == "anova"
     if is_anova:
@@ -404,13 +413,13 @@ def _add_summary_table(doc: Document, data: UploadAnalysisResponse) -> None:
                     )
                     or "—"
                 ),
-                row.status,
+                _status_label(row.status),
             ]
             if not is_anova
             else [
                 row.trait,
                 _fmt(row.grand_mean),
-                row.status,
+                _status_label(row.status),
             ]
         )
         for row in data.summary_table
