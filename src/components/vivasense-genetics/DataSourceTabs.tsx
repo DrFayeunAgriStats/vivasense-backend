@@ -38,7 +38,7 @@ import {
   VivaSenseMode,
 } from "@/services/featureMode";
 
-type TabId = "manual" | "upload" | "relationships" | "descriptive";
+type TabId = "manual" | "upload" | "anova" | "genetics" | "relationships" | "descriptive" | "advanced";
 
 interface DataSourceTabsProps {
   /** The existing manual input form / component */
@@ -62,6 +62,21 @@ interface DataSourceTabsProps {
    * When omitted, the Descriptive Statistics tab is not rendered.
    */
   descriptiveStatsContent?: (ctx: UploadDatasetContext | null) => React.ReactNode;
+  /**
+   * Render-prop for the ANOVA tab.
+   * Receives the current dataset context after upload/confirmation.
+   */
+  anovaContent?: (ctx: UploadDatasetContext | null) => React.ReactNode;
+  /**
+   * Render-prop for the Genetic Parameters tab.
+   * Receives the current dataset context after upload/confirmation.
+   */
+  geneticsContent?: (ctx: UploadDatasetContext | null) => React.ReactNode;
+  /**
+   * Render-prop for the Advanced Analysis tab.
+   * Receives the current dataset context after upload/confirmation.
+   */
+  advancedContent?: (ctx: UploadDatasetContext | null) => React.ReactNode;
 }
 
 export function DataSourceTabs({
@@ -69,6 +84,9 @@ export function DataSourceTabs({
   uploadContent,
   traitRelationshipsContent,
   descriptiveStatsContent,
+  anovaContent,
+  geneticsContent,
+  advancedContent,
 }: DataSourceTabsProps) {
   const [active, setActive] = useState<TabId>("upload");
   const [datasetContext, setDatasetContext] = useState<UploadDatasetContext | null>(null);
@@ -90,6 +108,9 @@ export function DataSourceTabs({
 
   const showRelationships = typeof traitRelationshipsContent === "function";
   const showDescriptive = typeof descriptiveStatsContent === "function";
+  const showAnova = typeof anovaContent === "function";
+  const showGenetics = typeof geneticsContent === "function";
+  const showAdvanced = typeof advancedContent === "function";
 
   type TabDef = {
     id: TabId;
@@ -114,6 +135,28 @@ export function DataSourceTabs({
       description: "CSV / Excel — batch analysis",
       badge: "free",
     },
+    ...(showAnova
+      ? [
+          {
+            id: "anova" as TabId,
+            label: "ANOVA",
+            icon: "🧮",
+            description: "Batch ANOVA across selected traits",
+            badge: "free" as const,
+          },
+        ]
+      : []),
+    ...(showGenetics
+      ? [
+          {
+            id: "genetics" as TabId,
+            label: "Genetic Parameters",
+            icon: "🧬",
+            description: "Heritability, GCV, PCV, GAM",
+            badge: "pro" as const,
+          },
+        ]
+      : []),
     ...(showRelationships
       ? [
           {
@@ -133,6 +176,17 @@ export function DataSourceTabs({
             icon: "📊",
             description: "Summary statistics per trait",
             badge: "free" as const,
+          },
+        ]
+      : []),
+    ...(showAdvanced
+      ? [
+          {
+            id: "advanced" as TabId,
+            label: "Advanced Analysis",
+            icon: "🚀",
+            description: "PCA, BLUP, stability, cluster",
+            badge: "pro" as const,
           },
         ]
       : []),
@@ -227,6 +281,16 @@ export function DataSourceTabs({
           <div className={active === "upload" ? "block" : "hidden"}>
             {uploadWithCallback}
           </div>
+          {showAnova && (
+            <div className={active === "anova" ? "block" : "hidden"}>
+              {anovaContent(datasetContext)}
+            </div>
+          )}
+          {showGenetics && (
+            <div className={active === "genetics" ? "block" : "hidden"}>
+              {geneticsContent(datasetContext)}
+            </div>
+          )}
           {showRelationships && (
             <div className={active === "relationships" ? "block" : "hidden"}>
               {traitRelationshipsContent(datasetContext)}
@@ -235,6 +299,11 @@ export function DataSourceTabs({
           {showDescriptive && (
             <div className={active === "descriptive" ? "block" : "hidden"}>
               {descriptiveStatsContent(datasetContext)}
+            </div>
+          )}
+          {showAdvanced && (
+            <div className={active === "advanced" ? "block" : "hidden"}>
+              {advancedContent(datasetContext)}
             </div>
           )}
         </div>

@@ -62,8 +62,8 @@ export function ColumnMappingConfirm({
 
   // ── Section B ─────────────────────────────────────────────────────────────
 
-  const [responseVariable, setResponseVariable] = useState(
-    detected_columns.traits[0] ?? ""
+  const [selectedTraits, setSelectedTraits] = useState<string[]>(
+    detected_columns.traits
   );
   const [treatmentColumn, setTreatmentColumn] = useState(
     detected_columns.genotype?.column ?? ""
@@ -91,6 +91,13 @@ export function ColumnMappingConfirm({
   const [touched, setTouched] = useState<Set<string>>(new Set());
   const touch = (field: string) =>
     setTouched((prev) => new Set([...prev, field]));
+
+  const toggleTrait = (trait: string) => {
+    setSelectedTraits((prev) =>
+      prev.includes(trait) ? prev.filter((item) => item !== trait) : [...prev, trait]
+    );
+    touch("selectedTraits");
+  };
 
   // ── Data quality score ────────────────────────────────────────────────────
   // Heuristic: start at 100, subtract for warnings and data gaps
@@ -121,7 +128,7 @@ export function ColumnMappingConfirm({
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
-  // Design change: clear conditional fields; retain Response Variable and Treatment.
+  // Design change: clear conditional fields; retain selected traits and treatment.
   const handleDesignChange = (d: ExperimentalDesign) => {
     setDesign(d);
     setReplicationColumn("");
@@ -141,7 +148,7 @@ export function ColumnMappingConfirm({
 
   // Readiness check — all required fields filled.
   const canSubmit =
-    responseVariable !== "" &&
+    selectedTraits.length > 0 &&
     treatmentColumn !== "" &&
     (!showReplication || replicationColumn !== "") &&
     (!showSplitPlot   || (mainPlotFactor !== "" && subPlotFactor !== "")) &&
@@ -150,9 +157,9 @@ export function ColumnMappingConfirm({
   // ── Validation messages (Section D) ──────────────────────────────────────
   // Each message is null when the field is untouched or valid.
   const errors = {
-    responseVariable:
-      touched.has("responseVariable") && responseVariable === ""
-        ? "Select a response variable to continue"
+    selectedTraits:
+      touched.has("selectedTraits") && selectedTraits.length === 0
+        ? "Select at least one trait to continue"
         : null,
     treatmentColumn:
       touched.has("treatmentColumn") && treatmentColumn === ""
@@ -182,7 +189,7 @@ export function ColumnMappingConfirm({
       genotypeColumn:    treatmentColumn,
       repColumn:         showReplication ? replicationColumn : "",
       environmentColumn: showEnvironment ? environmentColumn : "",
-      selectedTraits:    [responseVariable],
+      selectedTraits,
       mode:              design === "MET" ? "multi" : "single",
       randomEnvironment: false,
     });
@@ -285,19 +292,60 @@ export function ColumnMappingConfirm({
       <div className="space-y-4">
         <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Variables</p>
 
-        {/* B1 — Response Variable */}
+        {/* B1 — Response Variables */}
         <FormField
-          label="Response Variable (Trait)"
-          helper="Select the trait to analyse (e.g., Yield, Plant Height)"
+          label="Response Variables (Traits)"
+          helper="Select one or more numeric traits for batch analysis"
           required
-          error={errors.responseVariable}
+          error={errors.selectedTraits}
         >
-          <ColumnSelect
-            value={responseVariable}
-            onChange={(v) => { setResponseVariable(v); touch("responseVariable"); }}
-            options={numericColumns}
-            placeholder="— Select numeric column —"
-          />
+          <div className="space-y-3 rounded-lg border border-gray-200 p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedTraits(numericColumns);
+                  touch("selectedTraits");
+                }}
+                className="rounded-full border border-emerald-300 px-3 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50"
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedTraits([]);
+                  touch("selectedTraits");
+                }}
+                className="rounded-full border border-gray-300 px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
+              >
+                Clear
+              </button>
+              <span className="text-xs text-gray-500">
+                {selectedTraits.length} of {numericColumns.length} selected
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {numericColumns.map((trait) => {
+                const active = selectedTraits.includes(trait);
+                return (
+                  <button
+                    key={trait}
+                    type="button"
+                    onClick={() => toggleTrait(trait)}
+                    className={[
+                      "rounded-full border px-3 py-1.5 text-sm transition-colors",
+                      active
+                        ? "border-emerald-600 bg-emerald-600 text-white"
+                        : "border-gray-300 text-gray-700 hover:border-emerald-300 hover:bg-emerald-50",
+                    ].join(" ")}
+                  >
+                    {trait}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </FormField>
 
         {/* B2 — Treatment / Genotype */}
@@ -513,7 +561,7 @@ export function ColumnMappingConfirm({
           </table>
         </div>
         <p className="mt-1 text-xs text-gray-400">
-          # = numeric column available for Response Variable
+          # = numeric column available for analysis
         </p>
       </details>
 
@@ -527,7 +575,10 @@ export function ColumnMappingConfirm({
               label="Design"
               value={DESIGN_OPTIONS.find((o) => o.value === design)?.desc ?? design}
             />
-            <SummaryRow label="Trait" value={responseVariable} />
+            <SummaryRow
+              label="Traits"
+              value={selectedTraits.length === 1 ? selectedTraits[0] : `${selectedTraits.length} selected`}
+            />
             <SummaryRow
               label="Treatments"
               value="—"
