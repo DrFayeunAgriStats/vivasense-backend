@@ -5,9 +5,241 @@ Generates VALIDATED genetic parameters interpretation sections.
 Returns strict GeneticsInterpretationSections objects, never freeform prose.
 """
 
+from collections import defaultdict
 from typing import Optional, Tuple
 from interpretation_sections import GeneticsInterpretationSections
 from interpretation import InterpretationEngine
+
+
+def build_breeding_synthesis(trait_results: list[dict]) -> str:
+    """
+    Rule-based breeding synthesis engine.
+    Each dict in trait_results must have:
+      trait_name, h2, gam_class, top_genotype, f_gxe, p_gxe,
+      genotype_means (list of dicts: {genotype, mean, rank, group})
+    """
+
+    FORBIDDEN = [
+        "best genotype", "ideal parent", "confirmed donor parent",
+        "recommended for release"
+    ]
+
+    n_traits = len(trait_results)
+    if n_traits == 0:
+        return ""
+
+    genotype_scores = {}
+
+    for trait in trait_results:
+        means = trait.get("genotype_means", [])
+        if not means:
+            continue
+        n_genos = len(means)
+        top_cutoff = max(1, round(n_genos * 0.25))
+
+        for geno_data in means:
+            geno = geno_data["genotype"]
+            rank = geno_data.get("rank", n_genos)
+
+            if rank <= top_cutoff:
+                perf_score = 3
+            elif rank <= n_genos * 0.75:
+                perf_score = 2
+            else:
+                perf_score = 1
+
+            p_gxe = trait.get("p_gxe")
+            if p_gxe is not None and p_gxe < 0.001:
+                sig_score = 3
+            elif p_gxe is not None and p_gxe < 0.05:
+                sig_score = 2
+            else:
+                sig_score = 1
+
+            f_gxe = trait.get("f_gxe", 0) or 0
+            if f_gxe < 5:
+                stab_score = 3
+            elif f_gxe < 15:
+                stab_score = 2
+            else:
+                stab_score = 1
+
+            trait_strength = (
+                0.5 * perf_score +
+                0.2 * sig_score +
+                0.3 * stab_score
+            )
+
+            if geno not in genotype_scores:
+                genotype_scores[geno] = []
+            genotype_scores[geno].append({
+                "trait": trait["trait_name"],
+                "trait_strength": trait_strength,
+                "perf_score": perf_score,
+                "stab_score": stab_score,
+            })
+
+    paragraphs = []
+
+    high_h2_traits = [t["trait_name"] for t in trait_results
+                      if (t.get("h2") or 0) >= 0.80]
+    if len(high_h2_traits) == n_traits:
+        paragraphs.append(
+            f"All {n_traits} traits showed high entry-mean broad-sense heritability "
+            f"(H2 >= 0.80), indicating that genetic differences among genotypes "
+            f"are reliably expressed across the tested environments. "
+            f"Direct phenotypic selection is expected to be effective "
+            f"for all traits evaluated in this study."
+        )
+    elif high_h2_traits:
+        low_h2 = [t["trait_name"] for t in trait_results
+                  if t["trait_name"] not in high_h2_traits]
+        paragraphs.append(
+            f"High heritability was observed for "
+            f"{', '.join(high_h2_traits)}, making these traits most "
+            f"amenable to direct selection. "
+            + (f"{', '.join(low_h2)} showed comparatively lower "
+               f"heritability and may require replicated multi-environment "
+               f"evaluation before selection decisions are finalised."
+               if low_h2 else "")
+        )
+
+    high_gam = [t["trait_name"] for t in trait_results
+                if t.get("gam_class") == "High"]
+    medium_gam = [t["trait_name"] for t in trait_results
+                  if t.get("gam_class") == "Medium"]
+    if high_gam:
+        paragraphs.append(
+            f"High genetic advance (GAM > 10%) was observed for "
+            f"{', '.join(high_gam)}, indicating substantial scope for "
+            f"improvement through selection in this population."
+        )
+    if medium_gam:
+        paragraphs.append(
+            f"Moderate genetic advance (GAM 5-10%) was observed for "
+            f"{', '.join(medium_gam)}, indicating a meaningful but "
+            f"moderate selection response under the current population "
+            f"structure and environments tested."
+        )
+
+    # --- CROSS-TRAIT GENOTYPE SYNTHESIS ---
+    # Step 1: Aggregate scores per genotype across all traits
+    genotype_profile = {}
+    for geno, scores in genotype_scores.items():
+        n_scored = len(scores)
+        if n_scored == 0:
+            continue
+        n_strong = sum(1 for s in scores if s["trait_strength"] >= 2.2)
+        avg_stab = sum(s["stab_score"] for s in scores) / n_scored
+        strong_trait_names = [s["trait"] for s in scores
+                              if s["trait_strength"] >= 2.2]
+        all_trait_names = [s["trait"] for s in scores]
+        genotype_profile[geno] = {
+            "n_traits_total": n_scored,
+            "n_traits_strong": n_strong,
+            "avg_stab": avg_stab,
+            "is_stable": avg_stab >= 2.0,
+            "is_multi_trait": n_strong >= 2,
+            "strong_traits": strong_trait_names,
+            "all_traits": all_trait_names,
+        }
+
+    # Step 2: Classify each genotype and generate ONE paragraph per genotype
+    for geno, profile in sorted(genotype_profile.items()):
+        n_strong = profile["n_traits_strong"]
+        n_total = profile["n_traits_total"]
+        is_stable = profile["is_stable"]
+        strong_traits = profile["strong_traits"]
+        all_traits = profile["all_traits"]
+
+        if n_strong == n_total and n_total >= 2:
+            # Multi-trait elite - strong in ALL evaluated traits
+            if is_stable:
+                paragraphs.append(
+                    f"{geno} consistently ranked among the top-performing "
+                    f"genotypes across all {n_total} evaluated traits "
+                    f"({', '.join(all_traits)}), with relatively consistent "
+                    f"expression across environments. It is a promising "
+                    f"candidate for inclusion in broad-based breeding programmes."
+                )
+            else:
+                paragraphs.append(
+                    f"{geno} consistently ranked among the top-performing "
+                    f"genotypes across all {n_total} evaluated traits "
+                    f"({', '.join(all_traits)}), indicating strong overall "
+                    f"genetic potential. However, significant "
+                    f"genotype-by-environment interaction across traits "
+                    f"suggests that further stability assessment is required "
+                    f"before deployment in breeding programmes."
+                )
+
+        elif n_strong >= 2:
+            # Multi-trait strong - strong in most but not all traits
+            if is_stable:
+                paragraphs.append(
+                    f"{geno} showed strong performance across multiple traits "
+                    f"({', '.join(strong_traits)}), making it a promising "
+                    f"candidate for crossing programmes targeting combined "
+                    f"trait improvement."
+                )
+            else:
+                paragraphs.append(
+                    f"{geno} showed strong performance across multiple traits "
+                    f"({', '.join(strong_traits)}), indicating broad genetic "
+                    f"potential. Genotype-by-environment interaction warrants "
+                    f"stability evaluation before selection decisions are finalised."
+                )
+
+    trait_specific_groups = defaultdict(list)
+
+    for geno, profile in sorted(genotype_profile.items()):
+        if profile["n_traits_strong"] == 1:
+            trait_specific_groups[profile["strong_traits"][0]].append(geno)
+
+    for trait_name, genos in sorted(trait_specific_groups.items()):
+        if len(genos) == 1:
+            paragraphs.append(
+                f"{genos[0]} showed high performance for {trait_name}, "
+                f"although genotype-by-environment interaction suggests "
+                f"its use in breeding should account for specific adaptation."
+            )
+        else:
+            geno_list = " and ".join(genos)
+            paragraphs.append(
+                f"{geno_list} both showed strong performance for "
+                f"{trait_name}, though genotype-by-environment interaction "
+                f"indicates that specific adaptation should be considered "
+                f"in their use for breeding programmes."
+            )
+
+    unstable = [t["trait_name"] for t in trait_results
+                if (t.get("f_gxe") or 0) > 15]
+    if unstable:
+        paragraphs.append(
+            f"Substantial genotype-by-environment interaction was "
+            f"detected for {', '.join(unstable)}. Stability analysis "
+            f"(Eberhart-Russell or GGE biplot) is recommended before "
+            f"finalising genotype selection for "
+            f"{'this trait' if len(unstable) == 1 else 'these traits'}. "
+            f"The nature of this interaction (crossover vs non-crossover) "
+            f"requires further stability analysis such as GGE biplot or "
+            f"Eberhart-Russell regression before genotype rankings can be "
+            f"considered environment-stable."
+        )
+
+    paragraphs.append(
+        "These conclusions are based on data from this specific experiment "
+        "and should be interpreted within that context. Findings should be "
+        "validated across additional environments and seasons before "
+        "breeding decisions are finalised."
+    )
+
+    synthesis = "\n\n".join(paragraphs)
+    lower_synthesis = synthesis.lower()
+    for phrase in FORBIDDEN:
+        if phrase in lower_synthesis:
+            synthesis = synthesis.replace(phrase, "candidate")
+    return synthesis
 
 
 def _describe_gcv_pcv(gcv: float, pcv: float, trait_name: str) -> str:
