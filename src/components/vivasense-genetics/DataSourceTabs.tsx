@@ -30,6 +30,7 @@
 import React, { useEffect, useState } from "react";
 import { UploadDatasetContext } from "@/services/geneticsUploadApi";
 import { FileStatusInfo } from "@/components/vivasense-genetics/MultiTraitUpload";
+import { ProFeatureModal } from "@/components/vivasense-genetics/ProFeatureModal";
 import {
   getVivaSenseMode,
   initializeVivaSenseMode,
@@ -92,6 +93,7 @@ export function DataSourceTabs({
   const [datasetContext, setDatasetContext] = useState<UploadDatasetContext | null>(null);
   const [mode, setMode] = useState<VivaSenseMode>(() => initializeVivaSenseMode());
   const [fileStatus, setFileStatus] = useState<FileStatusInfo>({ state: "none" });
+  const [proModalFeature, setProModalFeature] = useState<string | null>(null);
 
   useEffect(() => {
     // Hard-refresh guard: initialize only when key is missing; keep existing "pro".
@@ -199,6 +201,14 @@ export function DataSourceTabs({
     onFileStatus:   (info: FileStatusInfo) => setFileStatus(info),
   });
 
+  const handleTabClick = (tab: TabDef) => {
+    if (tab.badge === "pro" && mode !== "pro") {
+      setProModalFeature(tab.label);
+      return;
+    }
+    setActive(tab.id);
+  };
+
   return (
     <div className="w-full">
       {/* ── Top bar: dataset status + mode badge ── */}
@@ -236,7 +246,7 @@ export function DataSourceTabs({
               <button
                 key={tab.id}
                 type="button"
-                onClick={() => setActive(tab.id)}
+                onClick={() => handleTabClick(tab)}
                 className={[
                   "group flex shrink-0 items-center gap-2.5 rounded-xl px-3 py-2.5 text-left transition-all",
                   "lg:w-full",
@@ -308,6 +318,18 @@ export function DataSourceTabs({
           )}
         </div>
       </div>
+
+      <ProFeatureModal
+        open={proModalFeature !== null}
+        featureName={proModalFeature ?? undefined}
+        onClose={() => setProModalFeature(null)}
+        onActivated={() => {
+          if (proModalFeature) {
+            const unlocked = tabs.find((tab) => tab.label === proModalFeature);
+            if (unlocked) setActive(unlocked.id);
+          }
+        }}
+      />
     </div>
   );
 }
