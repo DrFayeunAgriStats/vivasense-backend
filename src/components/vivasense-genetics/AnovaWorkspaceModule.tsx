@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   UploadDatasetContext,
   UploadAnalysisResponse,
@@ -26,6 +26,19 @@ export function AnovaWorkspaceModule({ datasetContext }: AnovaWorkspaceModulePro
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<UploadAnalysisResponse | null>(null);
 
+  useEffect(() => {
+    if (!datasetContext) return;
+    setSelectedTraits(datasetContext.availableTraitColumns);
+    setTreatmentColumn(datasetContext.genotypeColumn ?? "");
+    setRepColumn(datasetContext.repColumn ?? "");
+    setFactorA("");
+    setFactorB("");
+    setMainPlot("");
+    setSubPlot("");
+    setError(null);
+    setResults(null);
+  }, [datasetContext]);
+
   const categoricalColumns = useMemo(() => {
     if (!datasetContext) return [];
     const traits = new Set(datasetContext.availableTraitColumns);
@@ -40,8 +53,11 @@ export function AnovaWorkspaceModule({ datasetContext }: AnovaWorkspaceModulePro
 
   if (!datasetContext) {
     return (
-      <div className="rounded-2xl border border-dashed border-gray-300 bg-white p-10 text-center">
-        <p className="text-sm font-medium text-gray-700">Upload and confirm a dataset first to run ANOVA.</p>
+      <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-8 text-center">
+        <p className="text-sm font-medium text-gray-600">No dataset loaded</p>
+        <p className="mt-1 text-xs text-gray-400">
+          Upload a file in the Multi-Trait File tab to run ANOVA.
+        </p>
       </div>
     );
   }
@@ -60,6 +76,9 @@ export function AnovaWorkspaceModule({ datasetContext }: AnovaWorkspaceModulePro
     (design === "crd" || repColumn) &&
     (design !== "factorial" || (factorA && factorB)) &&
     (design !== "split_plot_rcbd" || (mainPlot && subPlot && repColumn));
+
+  const selectAllTraits = () => setSelectedTraits([...traits]);
+  const clearAllTraits = () => setSelectedTraits([]);
 
   const run = async () => {
     if (!valid) return;
@@ -95,13 +114,25 @@ export function AnovaWorkspaceModule({ datasetContext }: AnovaWorkspaceModulePro
 
   return (
     <div className="space-y-5">
+      <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+        <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
+        <p className="text-xs text-emerald-700">
+          Dataset confirmed <span className="font-medium">{datasetContext.file.name}</span>
+          {" "}- {traits.length} numeric trait{traits.length !== 1 ? "s" : ""} available
+        </p>
+      </div>
+
       <div className="rounded-xl border border-gray-200 bg-white p-4">
         <div className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-base font-semibold text-gray-800">ANOVA Workspace</h3>
+          <h3 className="text-base font-semibold text-gray-800">ANOVA Module Setup</h3>
           <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
-            {traits.length} traits detected
+            {design.toUpperCase()} design
           </span>
         </div>
+
+        <p className="mb-3 text-sm text-gray-500">
+          Configure design columns once and run ANOVA across multiple response traits.
+        </p>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <Field label="Design" required>
@@ -152,21 +183,29 @@ export function AnovaWorkspaceModule({ datasetContext }: AnovaWorkspaceModulePro
 
         <div className="mt-4 space-y-2">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-gray-700">Response variables</p>
+            <p className="text-sm font-semibold text-gray-700">
+              Response traits
+              {selectedTraits.length > 0 && (
+                <span className="ml-2 font-normal text-emerald-600">
+                  {selectedTraits.length} selected
+                </span>
+              )}
+            </p>
             <div className="flex gap-2 text-xs">
               <button
                 type="button"
-                onClick={() => setSelectedTraits(traits)}
-                className="rounded-full border border-emerald-300 px-2.5 py-1 text-emerald-700"
+                onClick={selectAllTraits}
+                className="text-emerald-600 hover:underline"
               >
-                Select all
+                All
               </button>
+              <span className="text-gray-300">|</span>
               <button
                 type="button"
-                onClick={() => setSelectedTraits([])}
-                className="rounded-full border border-gray-300 px-2.5 py-1 text-gray-600"
+                onClick={clearAllTraits}
+                className="text-gray-400 hover:underline"
               >
-                Clear
+                None
               </button>
             </div>
           </div>
@@ -179,10 +218,10 @@ export function AnovaWorkspaceModule({ datasetContext }: AnovaWorkspaceModulePro
                   type="button"
                   onClick={() => toggleTrait(trait)}
                   className={[
-                    "rounded-full border px-3 py-1.5 text-sm",
+                    "rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
                     active
                       ? "border-emerald-600 bg-emerald-600 text-white"
-                      : "border-gray-300 text-gray-700 hover:border-emerald-300",
+                      : "border-gray-300 bg-white text-gray-600 hover:border-emerald-400 hover:text-emerald-700",
                   ].join(" ")}
                 >
                   {trait}
@@ -190,6 +229,12 @@ export function AnovaWorkspaceModule({ datasetContext }: AnovaWorkspaceModulePro
               );
             })}
           </div>
+
+          {selectedTraits.length === 0 && (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+              Select at least one trait to run ANOVA.
+            </p>
+          )}
         </div>
 
         {error && (
@@ -203,15 +248,20 @@ export function AnovaWorkspaceModule({ datasetContext }: AnovaWorkspaceModulePro
             type="button"
             onClick={run}
             disabled={!valid || running}
-            className="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+            className={[
+              "w-full rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors",
+              valid && !running
+                ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                : "bg-gray-100 text-gray-400 cursor-not-allowed",
+            ].join(" ")}
           >
             {running ? (
               <span className="inline-flex items-center gap-2">
                 <VsSpinner size="sm" className="border-white" />
-                Running ANOVA…
+                Running ANOVA...
               </span>
             ) : (
-              "Run ANOVA"
+              `Run ANOVA - ${selectedTraits.length} trait${selectedTraits.length !== 1 ? "s" : ""}`
             )}
           </button>
         </div>
