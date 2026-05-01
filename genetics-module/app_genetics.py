@@ -76,6 +76,10 @@ class GeneticsRequest(BaseModel):
         default=False,
         description="Multi-mode only: treat environment as random effect"
     )
+    selection_intensity: Optional[float] = Field(
+        default=1.4,
+        description="Selection intensity (i) used for GA/GAM computation"
+    )
 
     @validator("data")
     def validate_data_not_empty(cls, v):
@@ -431,6 +435,7 @@ class RGeneticsEngine:
         trait_name: str = "Trait",
         random_environment: bool = False,
         crd_mode: bool = False,
+        selection_intensity: float = 1.4,
     ) -> Dict[str, Any]:
         """
         Execute genetics analysis via R subprocess.
@@ -463,6 +468,7 @@ class RGeneticsEngine:
 
                 random_env_str = "TRUE" if random_environment else "FALSE"
                 crd_mode_str   = "TRUE" if crd_mode else "FALSE"
+                selection_intensity_value = float(selection_intensity)
                 # Escape file path for R (converts Windows \ to /)
                 r_json_path = tmp_json_path.replace('\\', '/')
 
@@ -492,7 +498,7 @@ if (requireNamespace("car", quietly = TRUE)) {{
   library(car)
   options(contrasts = c("contr.sum", "contr.poly"))
 }} else {{
-  warning("Package 'car' is not available. Standard ANOVA will be used, which may be biased for unbalanced data.")
+    warning("car package unavailable - falling back to Type I SS (base anova). Results may differ from Type III SS for unbalanced designs.")
 }}
 
 # Run analysis
@@ -501,7 +507,8 @@ result <- genetics_analysis(
     mode = "{mode}",
     trait_name = "{trait_name}",
     random_environment = {random_env_str},
-    crd_mode = {crd_mode_str}
+    crd_mode = {crd_mode_str},
+    selection_intensity = {selection_intensity_value:.6f}
 )
 
 # Export to JSON and output
@@ -534,6 +541,15 @@ cat(json_output)
                 raise RuntimeError("R produced no JSON output. stderr: " + result.stderr[:400])
 
             analysis_result = json.loads(json_output)
+
+            # Surface Type-I fallback warnings from R into API JSON.
+            if isinstance(analysis_result, dict):
+                stderr_text = result.stderr or ""
+                if "Type I" in stderr_text:
+                    analysis_result["anova_type_warning"] = (
+                        "Note: Type I sums of squares used for this analysis. "
+                        "Install the car package for Type III SS (recommended for unbalanced designs)."
+                    )
 
             # InterpretationEngine (genetic parameter narrative) is intentionally
             # NOT called here. run_analysis() is module-agnostic — it services
@@ -641,6 +657,7 @@ async def analyze_genetics(request: GeneticsRequest):
             mode=request.mode,
             trait_name=request.trait_name,
             random_environment=request.random_environment,
+            selection_intensity=request.selection_intensity or 1.4,
         )
         return GeneticsResponse(**result)
 

@@ -97,6 +97,7 @@ class GeneticsResponse(BaseModel):
     variance_warnings: Union[Dict[str, Any], List] = {}
     result: Optional[GeneticsResult] = None
     interpretation: Optional[str] = None
+    anova_type_warning: Optional[str] = None
 
     @field_validator("data_validation", "variance_warnings", mode="before")
     @classmethod

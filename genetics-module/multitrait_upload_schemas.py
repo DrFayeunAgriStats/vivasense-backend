@@ -149,7 +149,7 @@ class SummaryTableRow(BaseModel):
     pcv: Optional[float] = None
     gam_percent: Optional[float] = None
     heritability_class: Optional[str] = None  # "high" | "moderate" | "low"
-    gam_class: Optional[str] = None  # "high" | "moderate" | "low"
+    gam_class: Optional[str] = None  # "High" | "Medium" | "Low"
     status: str  # "success" | "failed"
     error: Optional[str] = None
 
@@ -180,6 +180,13 @@ class UploadAnalysisResponse(BaseModel):
     trait_results: Dict[str, TraitResult]
     dataset_summary: DatasetSummary
     failed_traits: List[str] = Field(default_factory=list)
+    anova_type_warning: Optional[str] = Field(
+        default=None,
+        description=(
+            "Present when R fell back to Type I sums of squares due to missing "
+            "car package."
+        ),
+    )
     export_token: Optional[str] = Field(
         default=None,
         description="Cache token — pass back to /download-results for full export",

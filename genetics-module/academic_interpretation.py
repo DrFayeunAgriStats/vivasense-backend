@@ -111,7 +111,7 @@ Do NOT speculate on why.
 9. When both assumption checks pass, say exactly: \
 "Assumption checks did not indicate a violation."
 10. Never say "p = 0" — the minimum reportable value is "p < 0.001".
-11. Never mention "heritability", "h²", "GCV", "PCV", "GAM", "genetic advance", \
+11. Never mention "heritability", "H²", "GCV", "PCV", "GAM", "genetic advance", \
 "additive gene action", "non-additive", "genetic control", or "direct phenotypic selection".
 
 OUTPUT — produce exactly these 10 sections, labelled EXACTLY as shown \
@@ -194,16 +194,18 @@ NON-NEGOTIABLE RULES:
 2. Never interpret heritability alone — always jointly with GAM.
 3. Never say "genetic superiority", "optimal genotype", \
 "proves high heritability."
-4. Never say "h² explains ___%" — h² is a ratio of variances, \
+4. Never say "H² explains ___%" — H² is a ratio of variances, \
 not a percentage of explained variance.
-5. Include at least one scope phrase: "in this experiment", \
+5. Always use H² (capital H) for broad-sense heritability. Never use h² \
+for broad-sense reporting; h² is reserved for narrow-sense heritability.
+6. Include at least one scope phrase: "in this experiment", \
 "within this environment", or "under the conditions of this study."
-6. Do not use recommendation language ("breeding program should", \
+7. Do not use recommendation language ("breeding program should", \
 "select this genotype", "recommend farmers").
-7. When σ²G < 0, flag it explicitly — do not silently ignore it.
-8. Never report h² > 1 without flagging it as a model issue.
-9. GAM classification: low < 5%, moderate 5–10%, high > 10%.
-10. Never say "p = 0" — use "p < 0.001."
+8. When σ²G < 0, flag it explicitly — do not silently ignore it.
+9. Never report H² > 1 without flagging it as a model issue.
+10. GAM classification: low < 5%, moderate 5–10%, high > 10%.
+11. Never say "p = 0" — use "p < 0.001."
 
 OUTPUT — produce exactly these 10 sections:
 
@@ -220,18 +222,18 @@ OUTPUT — produce exactly these 10 sections:
 
 Section content:
 
-1. DATA QUALITY NOTE — flag negative variance, h² > 1, or unusual \
+1. DATA QUALITY NOTE — flag negative variance, H² > 1, or unusual \
 patterns. If none: "No data quality concerns detected."
 
 2. OVERALL FINDING — 1–2 sentences. State the experimental structure \
-(number of genotypes and environments). State h² value and class \
+(number of genotypes and environments). State H² value and class \
 (high/moderate/low). State GAM% and class. Both in one finding.
 
-3. HERITABILITY INTERPRETATION — explain what the h² value means \
+3. HERITABILITY INTERPRETATION — explain what the H² value means \
 for genetic control in this experiment. Never interpret alone.
 
 4. JOINT H² AND GAM INTERPRETATION — interpret the combination. \
-High h² + High GAM = additive effects likely, direct selection \
+High H² + High GAM = additive effects likely, direct selection \
 effective. Other combinations interpreted accordingly.
 
 5. GCV VS PCV INTERPRETATION — compare GCV to PCV. Explain what \
@@ -239,8 +241,8 @@ the gap (or lack of gap) means for environmental influence.
 
 6. GUIDED WRITING SUPPORT — exactly 3 sentence starters with ___ \
 blanks. Student fills every blank.
-  Starter 1: Heritability statement (h², class)
-  Starter 2: Joint h² + GAM statement
+    Starter 1: Heritability statement (H², class)
+    Starter 2: Joint H² + GAM statement
   Starter 3: Breeding implication statement
 
 7. SCOPE STATEMENT — exact text: "These results apply to this \
@@ -249,8 +251,8 @@ Single-experiment results cannot support general management \
 or breeding recommendations."
 
 8. EXAMINER CHECKPOINT — exactly 5 lines starting with ☐:
-  ☐ h² value and classification both stated
-  ☐ GAM% stated jointly with h² — not reported alone
+    ☐ H² value and classification both stated
+    ☐ GAM% stated jointly with H² — not reported alone
   ☐ GCV and PCV compared, not listed separately
   ☐ Breeding implication scoped to "this environment" or "this experiment"
   ☐ Any negative variance component warning cited if present
@@ -919,18 +921,18 @@ class _GpFallback:
 
         s["overall_finding"] = (
             f"For {trait}{exp_str}: "
-            f"h² = {_fmt(h2, 4)} ({h2_class} heritability), "
+            f"H² = {_fmt(h2, 4)} ({h2_class} heritability), "
             f"GAM = {_fmt(gam, 2)}% ({gam_class} genetic advance)."
         )
 
         s["heritability_interpretation"] = (
-            f"Broad-sense heritability h² = {_fmt(h2, 4)} indicates {h2_class} "
+            f"Broad-sense heritability H² = {_fmt(h2, 4)} indicates {h2_class} "
             f"genetic control of {trait} within this environment. "
             "Interpret heritability jointly with GAM (see next section)."
         )
 
         s["joint_h²_and_gam_interpretation"] = (
-            f"h² = {_fmt(h2, 4)} ({h2_class}) and GAM = {_fmt(gam, 2)}% ({gam_class}). "
+            f"H² = {_fmt(h2, 4)} ({h2_class}) and GAM = {_fmt(gam, 2)}% ({gam_class}). "
             "Refer to the Genetic Parameters table and interpretation section for details."
         )
 
@@ -1148,8 +1150,8 @@ async def interpret_module(
         "Assumption test results (Shapiro-Wilk, Levene) referenced",
         "At least one scope phrase present in the write-up",
     ] if module_type == "anova" else [
-        "h² value and classification both stated",
-        "GAM% stated jointly with h² — not reported alone",
+        "H² value and classification both stated",
+        "GAM% stated jointly with H² — not reported alone",
         "GCV and PCV both cited and compared",
         "Breeding implication scoped to 'this environment'",
         "Any negative variance component warning cited if present",

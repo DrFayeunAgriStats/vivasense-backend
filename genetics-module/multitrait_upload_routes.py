@@ -678,6 +678,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
     summary_table: List[SummaryTableRow] = []
     trait_results: Dict[str, TraitResult] = {}
     failed_traits: List[str] = []
+    anova_type_warning: Optional[str] = None
 
     env_col_for_mode = request.environment_column if request.mode == "multi" else None
     # factor_column is only applicable in single-env mode
@@ -724,6 +725,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                     trait_name=trait,
                     random_environment=request.random_environment,
                     crd_mode=crd_mode,
+                    selection_intensity=request.selection_intensity,
                 )
 
                 # R returns status="ERROR" when computation fails
@@ -780,6 +782,8 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                 analysis_result=validated,
                 data_warnings=balance_warnings,
             )
+            if not anova_type_warning and getattr(validated, "anova_type_warning", None):
+                anova_type_warning = validated.anova_type_warning
             summary_table.append(_build_summary_row(trait, result_dict, actual_module))
         else:
             failed_traits.append(trait)
@@ -815,6 +819,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
         trait_results=trait_results,
         dataset_summary=dataset_summary,
         failed_traits=failed_traits,
+        anova_type_warning=anova_type_warning,
         dataset_token=dataset_token,
     )
 

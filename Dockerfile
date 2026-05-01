@@ -37,6 +37,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # ── Install R packages at build time (not at runtime) ─────────────────────────
 RUN Rscript install_r_packages.R
 
+# Fail the image build immediately if 'car' is unavailable at runtime.
+RUN Rscript -e "if (!requireNamespace('car', quietly=TRUE)) stop('R package car missing in image')"
+
 # ── Copy the rest of the application ─────────────────────────────────────────
 COPY . .
 

@@ -424,11 +424,11 @@ def _build_gp_writing(
         purpose="Heritability statement",
         template=(
             "For {trait} {exp_str}, the estimated broad-sense heritability was ___ "
-            "(h² = ___), indicating ___ genetic control."
+            "(H² = ___), indicating ___ genetic control."
         ).format(trait=trait, exp_str=exp_str),
         values_to_fill=[
-            "heritability classification: 'high' (h² ≥ 0.60), 'moderate' (0.30–0.59), or 'low' (< 0.30)",
-            "h² value from Genetic Parameters table",
+            "heritability classification: 'high' (H² ≥ 0.60), 'moderate' (0.30–0.59), or 'low' (< 0.30)",
+            "H² value from Genetic Parameters table",
             "same classification word as above",
         ],
         hint="Genetic Parameters → Heritability (H²) row",
@@ -439,15 +439,15 @@ def _build_gp_writing(
         purpose="Joint heritability and genetic advance",
         template=(
             "The genetic advance as percent of mean (GAM = ___%) was ___, "
-            "and together with h² = ___, this combination suggests that "
+            "and together with H² = ___, this combination suggests that "
             "direct phenotypic selection ___ expected to produce "
             "___ progress for {trait} in this experiment."
         ).format(trait=trait),
         values_to_fill=[
             "GAM% value from Genetic Parameters table",
             "GAM classification: 'high' (> 10%), 'moderate' (5–10%), or 'low' (< 5%)",
-            "h² value",
-            "write 'is' if both h² and GAM are moderate or high, 'is not' if both are low",
+            "H² value",
+            "write 'is' if both H² and GAM are moderate or high, 'is not' if both are low",
             "write 'substantial' / 'moderate' / 'limited' matching the GAM class",
         ],
         hint="Genetic Advance Estimates table → GAM%",
@@ -475,20 +475,20 @@ def _build_gp_writing(
     starters.append(SentenceStarter(
         purpose="Breeding implication",
         template=(
-            "Based on the h² and GAM values observed in this experiment, "
+            "Based on the H² and GAM values observed in this experiment, "
             "direct phenotypic selection for {trait} ___ likely to be "
             "___ under the environmental conditions of this study."
         ).format(trait=trait),
         values_to_fill=[
-            "write 'is' or 'is not' based on combined h² and GAM levels",
+            "write 'is' or 'is not' based on combined H² and GAM levels",
             "write 'effective' / 'moderately effective' / 'ineffective' matching the parameter levels",
         ],
         hint="Interpretation section of the Genetic Parameters output",
     ))
 
     checkpoint = [
-        "h² value and classification (high/moderate/low) both stated",
-        "GAM% and its class stated jointly with h² — not reported alone",
+        "H² value and classification (high/moderate/low) both stated",
+        "GAM% and its class stated jointly with H² — not reported alone",
         "GCV and PCV both cited and compared — not listed separately without comparison",
         "Breeding implication scoped to 'this environment' or 'this experiment'",
         "Any negative variance component warning cited if present in the output",

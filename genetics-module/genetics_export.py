@@ -125,6 +125,46 @@ def _sig_label(p: Optional[float]) -> str:
     return "ns"
 
 
+_SELECTION_INTENSITY_TABLE = {
+    5: 2.06,
+    7: 1.755,
+    10: 1.40,
+    15: 1.268,
+    20: 1.11,
+    30: 0.966,
+}
+
+
+def _selection_percent_for_intensity(selection_intensity: Optional[float]) -> Optional[int]:
+    if selection_intensity is None:
+        return None
+    try:
+        si = float(selection_intensity)
+    except (TypeError, ValueError):
+        return None
+
+    closest_pct = min(
+        _SELECTION_INTENSITY_TABLE,
+        key=lambda pct: abs(_SELECTION_INTENSITY_TABLE[pct] - si),
+    )
+    return int(closest_pct)
+
+
+def _selection_intensity_disclosure(selection_intensity: Optional[float]) -> str:
+    if selection_intensity is None:
+        selection_intensity = 1.4
+    pct = _selection_percent_for_intensity(selection_intensity)
+    if pct is None:
+        return (
+            f"Genetic Advance estimated using i = {_fmt(selection_intensity, 2, thousands=False)} "
+            "(Falconer & Mackay, 1996)."
+        )
+    return (
+        f"Genetic Advance estimated using i = {_fmt(selection_intensity, 2, thousands=False)} "
+        f"corresponding to {pct}% selection intensity (Falconer & Mackay, 1996)."
+    )
+
+
 # ============================================================================
 # TABLE HELPERS (python-docx XML)
 # ============================================================================
@@ -537,7 +577,7 @@ def _add_executive_summary(
             else "—"
         )
         fields += [
-            ("Heritability (H²)", f"{_fmt(h2, 3)} [{h2_class}]"),
+            ("Heritability, broad-sense (H²)", f"{_fmt(h2, 3)} [{h2_class}]"),
             ("GCV (%)", _fmt(gcv, 2)),
             ("PCV (%)", _fmt(pcv, 2)),
             ("GAM (%)", _fmt(gam_pct, 2)),
@@ -738,7 +778,7 @@ def _add_genetic_parameters_section(doc: Document, result: GeneticsResult) -> No
     if sigma2_p  is not None: vc_rows.append(["Phenotypic Variance",  "σ²p",  _fmt(sigma2_p,  4)])
     if h2        is not None:
         h2_cls = "High" if h2 >= 0.6 else "Moderate" if h2 >= 0.3 else "Low"
-        vc_rows.append([f"Heritability (H²) [{h2_cls}]", "h²", _fmt(h2, 4)])
+        vc_rows.append([f"Heritability, broad-sense (H²) [{h2_cls}]", "H²", _fmt(h2, 4)])
 
     if vc_rows:
         _add_stat_table(doc, ["Component", "Symbol", "Value"], vc_rows, numeric_cols={2})
@@ -747,8 +787,8 @@ def _add_genetic_parameters_section(doc: Document, result: GeneticsResult) -> No
     # Formulas
     _add_heading(doc, "Formulas", level=3)
     for fml in [
-        "h² = σ²g / σ²p",
-        "GA = h² × i × σp",
+        "H² = σ²g / σ²p",
+        "GA = H² × i × σp",
         "GAM (%) = (GA / Grand Mean) × 100",
         f"Where: i = {_fmt(sel_i, 2, thousands=False)} (selection intensity), σp = √σ²p",
     ]:
@@ -758,6 +798,7 @@ def _add_genetic_parameters_section(doc: Document, result: GeneticsResult) -> No
             p.runs[0].font.size = Pt(10)
         p.paragraph_format.space_before = Pt(2)
         p.paragraph_format.space_after = Pt(2)
+    _add_body(doc, _selection_intensity_disclosure(sel_i), italic=True)
     doc.add_paragraph()
 
     # Genetic advance table

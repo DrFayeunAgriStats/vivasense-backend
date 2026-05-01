@@ -24,7 +24,7 @@ def generate_genetics_interpretation_sections(
     Generate VALIDATED genetic parameters interpretation as strict section objects.
     
     All fields populated deterministically from Python logic:
-    - h² classification (high/moderate/low)
+    - H² classification (high/moderate/low)
     - GAM classification (high/moderate/low)
     - GCV/PCV relationship
     - Risk flags (GxE, small n, etc.)
@@ -47,24 +47,24 @@ def generate_genetics_interpretation_sections(
     # ── Section 2: Heritability Interpretation ───────────────────────────
     if h2_class == "not_computed":
         heritability_interp = (
-            f"Broad-sense heritability (h²) could not be reliably estimated for {trait_name}. "
+            f"Broad-sense heritability (H²) could not be reliably estimated for {trait_name}. "
             "Data limitations prevent interpretation of genetic control."
         )
     elif h2_class == "high":
         heritability_interp = (
-            f"Broad-sense heritability is estimated at h² = {h2:.3f} (high), "
+            f"Broad-sense heritability is estimated at H² = {h2:.3f} (high), "
             f"indicating that the majority of observed phenotypic variation in {trait_name} "
             "is attributable to genetic differences among genotypes under these conditions."
         )
     elif h2_class == "moderate":
         heritability_interp = (
-            f"Broad-sense heritability is estimated at h² = {h2:.3f} (moderate), "
+            f"Broad-sense heritability is estimated at H² = {h2:.3f} (moderate), "
             f"indicating that both genetic and environmental factors contribute substantially "
             f"to phenotypic variation in {trait_name}."
         )
     else:  # low
         heritability_interp = (
-            f"Broad-sense heritability is estimated at h² = {h2:.3f} (low), "
+            f"Broad-sense heritability is estimated at H² = {h2:.3f} (low), "
             f"indicating that environmental factors and/or measurement variation dominate "
             f"the phenotypic variation in {trait_name}."
         )
@@ -74,13 +74,13 @@ def generate_genetics_interpretation_sections(
         genetic_advance_interp = (
             f"Genetic advance for {trait_name} could not be estimated due to data limitations."
         )
-    elif gam_class == "high":
+    elif gam_class == "High":
         genetic_advance_interp = (
             f"The genetic advance as a percent of the mean (GAM) is {gam:.2f}% (high), "
             f"suggesting that direct phenotypic selection should produce substantial response "
             f"in {trait_name} in the next generation."
         )
-    elif gam_class == "moderate":
+    elif gam_class == "Medium":
         genetic_advance_interp = (
             f"The genetic advance as a percent of the mean (GAM) is {gam:.2f}% (moderate), "
             f"indicating that phenotypic selection should produce meaningful but not rapid "
@@ -227,58 +227,58 @@ def generate_genetics_interpretation(
     h2_class = _classify_heritability(h2)
     gam_class = _classify_gam(gam)
 
-    # ── Joint h² + GAM interpretation ───────────────────────────────────
+    # ── Joint H² + GAM interpretation ───────────────────────────────────
     if h2_class == "not_computed":
         interpretation = (
             f"Heritability could not be estimated for '{trait_name}'. "
             "Data limitations prevent reliable genetic interpretation."
         )
-    elif h2_class == "high" and gam_class == "high":
+    elif h2_class == "high" and gam_class == "High":
         interpretation = (
-            f"The estimated broad-sense heritability (h² = {h2:.3f}) indicates HIGH genetic control "
+            f"The estimated broad-sense heritability (H² = {h2:.3f}) indicates HIGH genetic control "
             f"of '{trait_name}'. The genetic advance as percent of mean (GAM = {gam:.2f}%) is HIGH, "
             "suggesting substantial expected response to direct selection. "
             "Additive gene effects are likely important; direct phenotypic selection should be effective."
         )
-    elif h2_class == "high" and gam_class == "moderate":
+    elif h2_class == "high" and gam_class == "Medium":
         interpretation = (
-            f"The estimated broad-sense heritability (h² = {h2:.3f}) indicates HIGH genetic control "
+            f"The estimated broad-sense heritability (H² = {h2:.3f}) indicates HIGH genetic control "
             f"of '{trait_name}'. The genetic advance as percent of mean (GAM = {gam:.2f}%) is MODERATE, "
             "indicating a meaningful selection response. Direct phenotypic selection should yield steady "
             "genetic progress; both additive and non-additive gene effects likely contribute."
         )
-    elif h2_class == "high" and gam_class == "low":
+    elif h2_class == "high" and gam_class == "Low":
         interpretation = (
-            f"The estimated broad-sense heritability (h² = {h2:.3f}) indicates HIGH genetic control, "
+            f"The estimated broad-sense heritability (H² = {h2:.3f}) indicates HIGH genetic control, "
             f"yet the genetic advance as percent of mean (GAM = {gam:.2f}%) is LOW for '{trait_name}'. "
             "This dissociation suggests that while phenotypic variation is substantially genetic, the "
             "expected response to selection is limited. Non-additive gene effects or strong inbreeding "
             "depression may be responsible."
         )
-    elif h2_class == "moderate" and gam_class == "high":
+    elif h2_class == "moderate" and gam_class == "High":
         interpretation = (
-            f"The estimated broad-sense heritability (h² = {h2:.3f}) indicates MODERATE genetic control "
+            f"The estimated broad-sense heritability (H² = {h2:.3f}) indicates MODERATE genetic control "
             f"of '{trait_name}', with the genetic advance as percent of mean (GAM = {gam:.2f}%) being HIGH. "
             "Useful selection response is achievable despite environmental influence. "
             "Both genetic and environmental management should be considered."
         )
-    elif h2_class == "moderate" and gam_class == "moderate":
+    elif h2_class == "moderate" and gam_class == "Medium":
         interpretation = (
-            f"The estimated broad-sense heritability (h² = {h2:.3f}) and genetic advance as percent "
+            f"The estimated broad-sense heritability (H² = {h2:.3f}) and genetic advance as percent "
             f"of mean (GAM = {gam:.2f}%) both indicate MODERATE genetic control for '{trait_name}'. "
             "Selection may be useful, though environmental factors remain important. "
             "Progress should be steady but not rapid."
         )
-    elif h2_class == "moderate" and gam_class == "low":
+    elif h2_class == "moderate" and gam_class == "Low":
         interpretation = (
-            f"The estimated broad-sense heritability (h² = {h2:.3f}) suggests MODERATE genetic control "
+            f"The estimated broad-sense heritability (H² = {h2:.3f}) suggests MODERATE genetic control "
             f"of '{trait_name}', but the genetic advance as percent of mean (GAM = {gam:.2f}%) is LOW. "
             "Direct phenotypic selection may be slow. Consider investigating additive effects more carefully "
             "or combining selection with environmental optimization."
         )
     else:  # low h2
         interpretation = (
-            f"The estimated broad-sense heritability (h² = {h2:.3f}) indicates LOW genetic control of "
+            f"The estimated broad-sense heritability (H² = {h2:.3f}) indicates LOW genetic control of "
             f"'{trait_name}' under the present environment. Phenotypic variation is dominated by environmental "
             "factors and/or measurement variation. Direct phenotypic selection is unlikely to be reliable; "
             "focus on improving growing conditions and management practices."

@@ -443,7 +443,7 @@ def _add_gp_tables(doc: Document, tr: GeneticParametersTraitResult) -> None:
         # Formulas
         _add_heading(doc, "Formulas Used", level=3)
         for fml in [
-            "GA  = h² × i × σp",
+            "GA  = H² × i × σp",
             "GAM (%) = (GA / Grand Mean) × 100",
             "Where: i = selection intensity, σp = √σ²p (phenotypic SD)",
         ]:

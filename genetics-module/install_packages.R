@@ -5,6 +5,7 @@ options(repos = c(CRAN = "https://cloud.r-project.org/"))
 
 # Required packages for ANOVA and Genetic Parameters modules
 required_packages <- c(
+  "car",
   "agricolae",
   "dplyr",
   "jsonlite",

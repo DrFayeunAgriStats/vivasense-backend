@@ -16,9 +16,9 @@ classify_heritability <- function(h2) {
 
 classify_gam <- function(gam_percent) {
   if (is.na(gam_percent)) return("not_computed")
-  if (gam_percent < 5)  return("low")      # < 5%  : low genetic advance
-  if (gam_percent <= 10) return("moderate") # 5–10% : moderate genetic advance
-  return("high")                           # > 10% : high genetic advance
+  if (gam_percent < 5)  return("Low")      # < 5%  : low genetic advance
+  if (gam_percent <= 10) return("Medium") # 5–10% : moderate genetic advance
+  return("High")                           # > 10% : high genetic advance
 }
 
 classify_cv <- function(cv) {
@@ -80,7 +80,7 @@ interpret_single_environment_strict <- function(result, warnings_vc) {
     sprintf("  Genotypic variance (\u03c3\u00b2G):      %.4f\n", vc$sigma2_genotype),
     sprintf("  Phenotypic variance (\u03c3\u00b2P):     %.4f\n", vc$sigma2_phenotypic),
     sprintf("  Environmental variance (\u03c3\u00b2E):  %.4f\n", vc$sigma2_error),
-    "  Broad-sense heritability (h\u00b2): ", h2_str, "\n"
+    "  Broad-sense heritability (H\\u00b2): ", h2_str, "\n"
   )
 
   if (!is.na(gp$GCV)) {
@@ -112,43 +112,43 @@ interpret_single_environment_strict <- function(result, warnings_vc) {
     interp <- ""
     
     # High h2 + High GAM
-    if (h2_class == "high" && gam_class == "high") {
+    if (h2_class == "high" && gam_class == "High") {
       interp <- paste0(
-        sprintf("The estimated broad-sense heritability (h\u00b2 = %.3f) indicates HIGH genetic control of the trait within this environment. ", h2),
+        sprintf("The estimated broad-sense heritability (H\\u00b2 = %.3f) indicates HIGH genetic control of the trait within this environment. ", h2),
         sprintf("The corresponding genetic advance as percent of mean (GAM = %.2f%%) is HIGH, suggesting substantial expected response to direct selection. ", gp$GAM_percent),
-        "The joint pattern of high h\u00b2 and high GAM indicates that additive gene effects are likely important; direct phenotypic selection should be effective."
+        "The joint pattern of high H\\u00b2 and high GAM indicates that additive gene effects are likely important; direct phenotypic selection should be effective."
       )
-    } else if (h2_class == "high" && gam_class == "moderate") {
+    } else if (h2_class == "high" && gam_class == "Medium") {
       interp <- paste0(
-        sprintf("The estimated broad-sense heritability (h\u00b2 = %.3f) indicates HIGH genetic control within this environment. ", h2),
+        sprintf("The estimated broad-sense heritability (H\\u00b2 = %.3f) indicates HIGH genetic control within this environment. ", h2),
         sprintf("The genetic advance as percent of mean (GAM = %.2f%%) is MODERATE, indicating a meaningful selection response. ", gp$GAM_percent),
         "Direct phenotypic selection should yield steady genetic progress. Both additive and non-additive gene effects likely contribute to trait variation."
       )
-    } else if (h2_class == "high" && gam_class == "low") {
+    } else if (h2_class == "high" && gam_class == "Low") {
       interp <- paste0(
-        sprintf("The estimated broad-sense heritability (h\u00b2 = %.3f) indicates HIGH genetic control, yet the genetic advance as percent of mean (GAM = %.2f%%) is LOW. ", h2, gp$GAM_percent),
+        sprintf("The estimated broad-sense heritability (H\\u00b2 = %.3f) indicates HIGH genetic control, yet the genetic advance as percent of mean (GAM = %.2f%%) is LOW. ", h2, gp$GAM_percent),
         "This dissociation suggests that while phenotypic variation is substantially genetic, the expected response to selection is limited. ",
         "Non-additive gene effects, low effective population size, or strong inbreeding depression may be responsible."
       )
-    } else if (h2_class == "moderate" && gam_class == "high") {
+    } else if (h2_class == "moderate" && gam_class == "High") {
       interp <- paste0(
-        sprintf("The estimated broad-sense heritability (h\u00b2 = %.3f) indicates MODERATE genetic control, with the genetic advance as percent of mean (GAM = %.2f%%) being HIGH. ", h2, gp$GAM_percent),
+        sprintf("The estimated broad-sense heritability (H\\u00b2 = %.3f) indicates MODERATE genetic control, with the genetic advance as percent of mean (GAM = %.2f%%) being HIGH. ", h2, gp$GAM_percent),
         "This combination suggests that while environmental influence is substantial, useful progress from direct selection is achievable. ",
         "Both genetic and environmental management should be considered."
       )
-    } else if (h2_class == "moderate" && gam_class == "moderate") {
+    } else if (h2_class == "moderate" && gam_class == "Medium") {
       interp <- paste0(
-        sprintf("The estimated broad-sense heritability (h\u00b2 = %.3f) and genetic advance as percent of mean (GAM = %.2f%%) both indicate MODERATE genetic control. ", h2, gp$GAM_percent),
+        sprintf("The estimated broad-sense heritability (H\\u00b2 = %.3f) and genetic advance as percent of mean (GAM = %.2f%%) both indicate MODERATE genetic control. ", h2, gp$GAM_percent),
         "Selection may be useful, though environmental factors remain important. Progress should be expected to be steady but not rapid."
       )
-    } else if (h2_class == "moderate" && gam_class == "low") {
+    } else if (h2_class == "moderate" && gam_class == "Low") {
       interp <- paste0(
-        sprintf("The estimated broad-sense heritability (h\u00b2 = %.3f) suggests MODERATE genetic control, but the genetic advance as percent of mean (GAM = %.2f%%) is LOW. ", h2, gp$GAM_percent),
+        sprintf("The estimated broad-sense heritability (H\\u00b2 = %.3f) suggests MODERATE genetic control, but the genetic advance as percent of mean (GAM = %.2f%%) is LOW. ", h2, gp$GAM_percent),
         "Direct phenotypic selection may be slow. Consider investigating additive effects more carefully or combining selection with environmental optimization."
       )
     } else {
       interp <- paste0(
-        sprintf("The estimated broad-sense heritability (h\u00b2 = %.3f) indicates LOW genetic control under the present environment. ", h2),
+        sprintf("The estimated broad-sense heritability (H\\u00b2 = %.3f) indicates LOW genetic control under the present environment. ", h2),
         "Phenotypic variation is dominated by environmental factors and/or measurement variation. ",
         "Direct phenotypic selection is unlikely to be reliable; focus on improving growing conditions and management practices."
       )
@@ -268,7 +268,7 @@ interpret_multi_environment_strict <- function(result, warnings_vc) {
     sprintf("  Genotypic variance (\u03c3\u00b2G):                      %.4f\n", vc$sigma2_genotype),
     sprintf("  Genotype-by-environment variance (\u03c3\u00b2G\u00d7E): %.4f\n", vc$sigma2_ge),
     sprintf("  Phenotypic variance on entry-mean basis (\u03c3\u00b2P): %.4f\n", vc$sigma2_phenotypic),
-    "  Broad-sense heritability (h\u00b2):              ", h2_str, "\n",
+    "  Broad-sense heritability (H\\u00b2):              ", h2_str, "\n",
     "  Heritability formula: ", result$heritability$formula, "\n"
   )
 
@@ -293,31 +293,31 @@ interpret_multi_environment_strict <- function(result, warnings_vc) {
     )
   } else {
     interp <- paste0(
-      sprintf("The estimated broad-sense heritability across environments (h\u00b2 = %.3f) is classified as %s. ", h2, h2_class),
+      sprintf("The estimated broad-sense heritability across environments (H\\u00b2 = %.3f) is classified as %s. ", h2, h2_class),
       sprintf("The genetic advance as percent of mean (GAM = %.2f%%) is classified as %s. ", gp$GAM_percent, gam_class)
     )
 
-    if (h2_class == "high" && gam_class == "high") {
+    if (h2_class == "high" && gam_class == "High") {
       interp <- paste0(interp,
-        "The combination of high h\u00b2 and high GAM indicates strong genetic control with substantial expected response to selection. ",
+        "The combination of high H\\u00b2 and high GAM indicates strong genetic control with substantial expected response to selection. ",
         "Additive gene effects appear important; direct selection across environments should be effective."
       )
-    } else if (h2_class == "high" && gam_class == "moderate") {
+    } else if (h2_class == "high" && gam_class == "Medium") {
       interp <- paste0(interp,
-        "High h\u00b2 with moderate GAM indicates heritable control with a meaningful selection response across environments. ",
+        "High H\\u00b2 with moderate GAM indicates heritable control with a meaningful selection response across environments. ",
         "Steady genetic progress is expected from direct selection; non-additive effects may limit the rate of improvement."
       )
-    } else if (h2_class == "moderate" && gam_class == "high") {
+    } else if (h2_class == "moderate" && gam_class == "High") {
       interp <- paste0(interp,
-        "Moderate h\u00b2 with high GAM indicates that useful selection response is achievable despite environmental influence."
+        "Moderate H\\u00b2 with high GAM indicates that useful selection response is achievable despite environmental influence."
       )
-    } else if (h2_class == "moderate" && gam_class == "moderate") {
+    } else if (h2_class == "moderate" && gam_class == "Medium") {
       interp <- paste0(interp,
-        "Moderate h\u00b2 and moderate GAM indicate steady but not rapid genetic progress is achievable under selection."
+        "Moderate H\\u00b2 and moderate GAM indicate steady but not rapid genetic progress is achievable under selection."
       )
     } else if (h2_class == "low") {
       interp <- paste0(interp,
-        "Low h\u00b2 indicates that genetic control is weak under the present environmental conditions. ",
+        "Low H\\u00b2 indicates that genetic control is weak under the present environmental conditions. ",
         "Environmental and/or G\u00d7E effects dominate trait expression; direct selection is less reliable."
       )
     }

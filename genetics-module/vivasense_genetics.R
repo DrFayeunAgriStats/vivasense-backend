@@ -8,8 +8,9 @@ suppressPackageStartupMessages({
   library(agricolae)
   library(dplyr)
   library(tidyr)
-  library(car)
 })
+
+HAS_CAR <- requireNamespace("car", quietly = TRUE)
 
 # ============================================================================
 # MEAN SEPARATION HELPER
@@ -84,6 +85,44 @@ compute_mean_separation <- function(model, trait_name = "Trait",
   )
 }
 
+# Standard Falconer & Mackay (1996) selection intensity constants by
+# proportion selected (%) used for nearest-match disclosure.
+SELECTION_INTENSITY_TABLE <- c(
+  "5" = 2.06,
+  "7" = 1.755,
+  "10" = 1.40,
+  "15" = 1.268,
+  "20" = 1.11,
+  "30" = 0.966
+)
+
+normalize_selection_intensity <- function(selection_intensity = 1.40) {
+  si <- suppressWarnings(as.numeric(selection_intensity))
+  if (is.na(si) || si <= 0) {
+    return(1.40)
+  }
+  si
+}
+
+selection_intensity_to_percent <- function(selection_intensity) {
+  si <- normalize_selection_intensity(selection_intensity)
+  vals <- as.numeric(SELECTION_INTENSITY_TABLE)
+  keys <- names(SELECTION_INTENSITY_TABLE)
+  idx <- which.min(abs(vals - si))
+  as.integer(keys[idx])
+}
+
+compute_genetic_advance <- function(h2, sigma_p, i = 1.40) {
+  if (is.na(h2) || is.na(sigma_p)) {
+    return(NA_real_)
+  }
+  if (!is.finite(h2) || !is.finite(sigma_p) || sigma_p < 0) {
+    return(NA_real_)
+  }
+  GA <- h2 * normalize_selection_intensity(i) * sigma_p
+  return(GA)
+}
+
 # ============================================================================
 # LAYER 1: COMPUTATION LAYER
 # Core mathematical and statistical functions
@@ -99,7 +138,10 @@ compute_mean_separation <- function(model, trait_name = "Trait",
 #' @return list with variance components and heritability estimates
 #'
 compute_single_environment <- function(data, trait_name = "Trait",
-                                       crd_mode = FALSE) {
+                                       crd_mode = FALSE,
+                                       selection_intensity = 1.40) {
+
+  selection_intensity <- normalize_selection_intensity(selection_intensity)
 
   has_splitplot <- all(c("main_plot", "sub_plot") %in% colnames(data))
 
@@ -223,8 +265,13 @@ compute_single_environment <- function(data, trait_name = "Trait",
     # Subplot residual is the canonical error term for CV and mean separation
     ms_error <- sub_table["Residuals", "Mean Sq"]
   } else {
-    anova_raw <- car::Anova(model, type = "III")
-    anova_raw[["Mean Sq"]] <- anova_raw[["Sum Sq"]] / anova_raw[["Df"]]
+    if (HAS_CAR) {
+      anova_raw <- car::Anova(model, type = "III")
+      anova_raw[["Mean Sq"]] <- anova_raw[["Sum Sq"]] / anova_raw[["Df"]]
+    } else {
+      warning("car package unavailable - falling back to Type I SS (base anova). Results may differ from Type III SS for unbalanced designs.")
+      anova_raw <- anova(model)
+    }
     anova_table <- anova_raw
 
     ms_genotype <- if ("genotype" %in% rownames(anova_table)) {
@@ -296,12 +343,16 @@ compute_single_environment <- function(data, trait_name = "Trait",
 
     # Genotypic CV, Phenotypic CV, and Genetic Advance at Mean
     gcv <- NA_real_; pcv <- NA_real_; gam <- NA_real_; gam_percent <- NA_real_
-    if (mean_is_valid && !is.na(sigma2_genotype) && !is.na(sigma2_phenotypic)) {
+    if (mean_is_valid && !is.na(sigma2_genotype) && !is.na(sigma2_phenotypic) && !is.na(h2)) {
       gcv         <- (sqrt(max(0, sigma2_genotype)) / grand_mean) * 100
       pcv         <- (sqrt(sigma2_phenotypic) / grand_mean) * 100
-      # Genetic Advance at Mean (i = 1.4 for ~30% selection intensity)
-      gam         <- 1.4 * sqrt(max(0, sigma2_genotype))
-      gam_percent <- (gam / grand_mean) * 100
+      # Genetic Advance using Falconer form: GA = H² × i × σp
+      gam         <- compute_genetic_advance(
+        h2 = h2,
+        sigma_p = sqrt(max(0, sigma2_phenotypic)),
+        i = selection_intensity
+      )
+      gam_percent <- ifelse(is.na(gam), NA_real_, (gam / grand_mean) * 100)
     }
 
     variance_components_out <- list(
@@ -319,7 +370,8 @@ compute_single_environment <- function(data, trait_name = "Trait",
       PCV                = pcv,
       GAM                = gam,
       GAM_percent        = gam_percent,
-      selection_intensity = 1.4
+      selection_intensity = selection_intensity,
+      selection_percent = selection_intensity_to_percent(selection_intensity)
     )
     flags_out <- list(
       negative_sigma2_genotype = negative_sigma2g,
@@ -375,7 +427,10 @@ compute_single_environment <- function(data, trait_name = "Trait",
 #' @return list with variance components for combined analysis
 #'
 compute_multi_environment <- function(data, trait_name = "Trait",
-                                       random_environment = FALSE) {
+                                       random_environment = FALSE,
+                                       selection_intensity = 1.40) {
+
+  selection_intensity <- normalize_selection_intensity(selection_intensity)
 
   # Ensure factors — handles both lowercase (from Python) and Title Case
   data$genotype    <- factor(data$genotype)
@@ -507,9 +562,13 @@ compute_multi_environment <- function(data, trait_name = "Trait",
     gcv <- (sqrt(max(0, sigma2_genotype)) / grand_mean) * 100
     pcv <- (sqrt(sigma2_phenotypic) / grand_mean) * 100
     
-    # Genetic Advance
-    gam <- 1.4 * sqrt(max(0, sigma2_genotype))
-    gam_percent <- (gam / grand_mean) * 100
+    # Genetic Advance using Falconer form: GA = H² × i × σp
+    gam <- compute_genetic_advance(
+      h2 = h2,
+      sigma_p = sqrt(max(0, sigma2_phenotypic)),
+      i = selection_intensity
+    )
+    gam_percent <- ifelse(is.na(gam), NA_real_, (gam / grand_mean) * 100)
   }
   
   df_err   <- anova_table["Residuals", "Df"]
@@ -544,7 +603,8 @@ compute_multi_environment <- function(data, trait_name = "Trait",
       PCV = pcv,
       GAM = gam,
       GAM_percent = gam_percent,
-      selection_intensity = 1.4
+      selection_intensity = selection_intensity,
+      selection_percent = selection_intensity_to_percent(selection_intensity)
     ),
     flags = list(
       negative_sigma2_genotype = negative_sigma2g,
@@ -792,7 +852,10 @@ genetics_analysis <- function(data,
                               mode = "single",
                               trait_name = "Trait",
                               random_environment = FALSE,
-                              crd_mode = FALSE) {
+                              crd_mode = FALSE,
+                              selection_intensity = 1.40) {
+
+  selection_intensity <- normalize_selection_intensity(selection_intensity)
 
   # Validate input data
   data_validation <- validate_input_data(data, env_mode = mode,
@@ -812,7 +875,8 @@ genetics_analysis <- function(data,
   if (mode == "single") {
     result <- tryCatch(
       compute_single_environment(data, trait_name = trait_name,
-                                 crd_mode = crd_mode),
+                                 crd_mode = crd_mode,
+                                 selection_intensity = selection_intensity),
       error = function(e) {
         message(sprintf("[ERROR] single-env computation failed for %s: %s",
                         trait_name, conditionMessage(e)))
@@ -822,7 +886,8 @@ genetics_analysis <- function(data,
   } else if (mode == "multi") {
     result <- tryCatch(
       compute_multi_environment(data, trait_name = trait_name,
-                                random_environment = random_environment),
+                                random_environment = random_environment,
+                                selection_intensity = selection_intensity),
       error = function(e) {
         message(sprintf("[ERROR] multi-env computation failed for %s: %s", trait_name, conditionMessage(e)))
         return(list(.__error__ = conditionMessage(e)))
