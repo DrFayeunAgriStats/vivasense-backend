@@ -795,18 +795,46 @@ def _add_genetic_parameters_section(doc: Document, result: GeneticsResult) -> No
 
     # Formulas
     _add_heading(doc, "Formulas", level=3)
-    for fml in [
-        "H² = σ²g / σ²p",
-        "GA = H² × i × σp",
-        "GAM (%) = (GA / Grand Mean) × 100",
-        f"Where: i = {_fmt(sel_i, 2, thousands=False)} (selection intensity), σp = √σ²p",
-    ]:
+    n_envs = result.n_environments if isinstance(result.n_environments, int) else None
+    is_multi_environment = bool(n_envs and n_envs > 1)
+    if is_multi_environment:
+        formula_lines = [
+            "For multi-environment trials:",
+            "σ²p = σ²g + (σ²ge / e) + (σ²e / (r × e))",
+            "",
+            "where:",
+            "σ²g  = genotypic variance",
+            "σ²ge = genotype × environment interaction variance",
+            "σ²e  = error variance",
+            "e    = number of environments",
+            "r    = number of replications per environment",
+            "",
+            "H²   = σ²g / σ²p   (broad-sense heritability of genotype means)",
+            "GA   = H² × i × σp  (expected gain from selection based on genotype means)",
+            "GAM% = (GA / Grand Mean) × 100",
+            "σp   = √σ²p (phenotypic standard deviation of genotype means)",
+            "i    = selection intensity (Falconer & Mackay, 1996)",
+        ]
+    else:
+        formula_lines = [
+            "For single-environment analyses:",
+            "σ²p = σ²g + (σ²e / r)",
+            "H²  = σ²g / σ²p",
+        ]
+
+    for fml in formula_lines:
         p = doc.add_paragraph(fml, style="No Spacing")
         if p.runs:
             p.runs[0].font.name = "Courier New"
             p.runs[0].font.size = Pt(10)
         p.paragraph_format.space_before = Pt(2)
         p.paragraph_format.space_after = Pt(2)
+
+    _add_body(
+        doc,
+        "Variance components estimated following Comstock and Robinson (1952) and Singh and Chaudhary (1985).",
+        italic=True,
+    )
     _add_body(doc, _selection_intensity_disclosure(sel_i), italic=True)
     doc.add_paragraph()
 
