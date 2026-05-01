@@ -28,6 +28,8 @@ import { ProFeatureModal } from "./ProFeatureModal";
 
 type Step = "idle" | "confirming" | "analyzing" | "results";
 
+const FIELD_LAYOUT_SESSION_KEY = "vivasense:field-layout-generator:open";
+
 export interface FileStatusInfo {
   state: "none" | "invalid" | "loaded";
   filename?: string;
@@ -63,7 +65,33 @@ export function MultiTraitUpload({ onDatasetReady, onFileStatus }: MultiTraitUpl
   const [datasetWasLoaded, setDatasetWasLoaded] = useState(false);
   // Shown at the top of the config step when the user uploads a second file.
   const [replacementNotice, setReplacementNotice] = useState(false);
-  const [showFieldLayoutGenerator, setShowFieldLayoutGenerator] = useState(false);
+  const [showFieldLayoutGenerator, setShowFieldLayoutGenerator] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    try {
+      return window.sessionStorage.getItem(FIELD_LAYOUT_SESSION_KEY) === "open";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleFieldLayoutGenerator = () => {
+    setShowFieldLayoutGenerator((current) => {
+      const next = !current;
+      if (typeof window !== "undefined") {
+        try {
+          window.sessionStorage.setItem(
+            FIELD_LAYOUT_SESSION_KEY,
+            next ? "open" : "closed"
+          );
+        } catch {
+          // Ignore storage failures and keep the in-memory toggle working.
+        }
+      }
+      return next;
+    });
+  };
 
   // ── Step 1: File selected → preview fetched ──────────────────────────────
 
@@ -297,7 +325,7 @@ export function MultiTraitUpload({ onDatasetReady, onFileStatus }: MultiTraitUpl
             </span>
             <button
               type="button"
-              onClick={() => setShowFieldLayoutGenerator((current) => !current)}
+              onClick={toggleFieldLayoutGenerator}
               aria-expanded={showFieldLayoutGenerator}
               className="inline-flex items-center rounded-full border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:border-emerald-300 hover:text-emerald-700"
             >
