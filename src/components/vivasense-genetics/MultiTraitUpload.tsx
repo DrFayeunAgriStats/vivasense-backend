@@ -12,6 +12,7 @@ import React, { useState } from "react";
 import { FileUpload } from "./FileUpload";
 import { ColumnMappingConfirm } from "./ColumnMappingConfirm";
 import { ResultsDisplay } from "./ResultsDisplay";
+import { FieldLayoutGenerator } from "./FieldLayoutGenerator";
 import {
   previewUpload,
   analyzeUpload,
@@ -280,6 +281,22 @@ export function MultiTraitUpload({ onDatasetReady, onFileStatus }: MultiTraitUpl
           <ResultsDisplay results={results} onReset={reset} />
         )}
       </div>
+
+      <section className="mt-8 rounded-xl border border-gray-200 bg-white p-5">
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-base font-semibold text-gray-800">Field Layout Generator</h3>
+            <p className="mt-1 text-sm text-gray-500">
+              Generate a CRD or RCBD field plan for trial setup and data collection before analysis.
+            </p>
+          </div>
+          <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+            Free Tool
+          </span>
+        </div>
+
+        <FieldLayoutGenerator />
+      </section>
 
       <ProFeatureModal
         open={showProModal}
