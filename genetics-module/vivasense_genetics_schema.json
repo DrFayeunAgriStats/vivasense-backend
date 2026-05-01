@@ -11,7 +11,7 @@
       "description": "Local development server"
     },
     {
-      "url": "https://vivasense-r-api.onrender.com",
+      "url": "https://vivasense-genetics-docker.onrender.com",
       "description": "Production server"
     }
   ],

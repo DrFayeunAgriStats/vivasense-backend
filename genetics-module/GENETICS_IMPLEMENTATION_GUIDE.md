@@ -460,10 +460,10 @@ git push origin main
 
 ```bash
 # Health check
-curl https://vivasense-r-api.onrender.com/health
+curl https://vivasense-genetics-docker.onrender.com/health
 
 # Test analysis
-curl -X POST https://vivasense-r-api.onrender.com/genetics/analyze \
+curl -X POST https://vivasense-genetics-docker.onrender.com/genetics/analyze \
   -H "Content-Type: application/json" \
   -d @test_request.json
 ```

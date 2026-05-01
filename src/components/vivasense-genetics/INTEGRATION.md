@@ -33,13 +33,13 @@ Do not copy `INTEGRATION.md` or `test_upload_integration.py`.
 
 ## Environment variable
 
-In Lovable → Settings → Environment Variables:
+In Lovable/Vercel environment variables:
 
 ```
-VITE_GENETICS_ENGINE_BASE = https://vivasense-genetics.onrender.com
+VITE_API_URL = https://vivasense-genetics-docker.onrender.com
 ```
 
-`geneticsUploadApi.ts` falls back to this URL when the variable is unset.
+`apiConfig.ts` uses this value and all genetics clients consume it.
 
 ---
 

@@ -3,7 +3,7 @@
  * ====================================================
  * Calls POST /genetics/correlation.
  *
- * Uses the same VITE_GENETICS_ENGINE_BASE env variable as geneticsUploadApi.ts.
+ * Uses the same VITE_API_URL base configuration as geneticsUploadApi.ts.
  */
 
 import { API_BASE } from "./apiConfig";
@@ -162,7 +162,7 @@ export async function computeCorrelation(
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(
       `Network error during correlation analysis: ${msg}. ` +
-        "Verify VITE_GENETICS_ENGINE_BASE is set correctly."
+        "Verify VITE_API_URL is set correctly."
     );
   }
 

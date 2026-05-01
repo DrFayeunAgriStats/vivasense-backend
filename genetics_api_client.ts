@@ -3,8 +3,8 @@
  * ==============================
  * Add this file to your Lovable project root as: src/genetics_api_client.ts
  *
- * In Lovable → Settings → Environment Variables, add:
- *   VITE_GENETICS_ENGINE_BASE = https://vivasense-genetics.onrender.com
+ * In Lovable/Vercel environment variables, set:
+ *   VITE_API_URL = https://vivasense-genetics-docker.onrender.com
  *
  * Then import in your components:
  *   import { runVarianceComponents } from "@/genetics_api_client";

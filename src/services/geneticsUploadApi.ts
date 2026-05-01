@@ -5,8 +5,8 @@
  *   POST /genetics/upload-preview   – file preview + column detection
  *   POST /genetics/analyze-upload   – trait-by-trait analysis
  *
- * In Lovable → Settings → Environment Variables, add:
- *   VITE_GENETICS_ENGINE_BASE = https://vivasense-genetics.onrender.com
+ * In Lovable/Vercel environment variables, set:
+ *   VITE_API_URL = https://vivasense-genetics-docker.onrender.com
  */
 
 import { API_BASE } from "./apiConfig";
@@ -176,7 +176,7 @@ export async function previewUpload(file: File): Promise<UploadPreviewResponse> 
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(
       `Network error reaching genetics engine: ${msg}. ` +
-        "Verify VITE_GENETICS_ENGINE_BASE is set correctly."
+        "Verify VITE_API_URL is set correctly."
     );
   }
 

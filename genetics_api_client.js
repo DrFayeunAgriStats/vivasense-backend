@@ -3,8 +3,8 @@
  * ============================================================
  * Paste this file into your Lovable project (or import from fia_api_client.js).
  *
- * Set in Lovable → Settings → Environment Variables:
- *   VITE_GENETICS_ENGINE_BASE = https://vivasense-genetics.onrender.com
+ * Set in Lovable/Vercel environment variables:
+ *   VITE_API_URL = https://vivasense-genetics-docker.onrender.com
  *
  * CORRECT TRAIT FORMAT:
  *   formData.append('traits', selectedTraits.join(','));
