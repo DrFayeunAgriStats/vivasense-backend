@@ -8,7 +8,11 @@
   ],
   "rewrites": [
     {
-      "source": "/((?!.*\\.[^/]+$).*)",
+      "source": "/vivasense",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/vivasense/:path*",
       "destination": "/index.html"
     }
   ]
