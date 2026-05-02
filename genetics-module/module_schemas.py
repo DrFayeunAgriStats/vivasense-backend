@@ -247,7 +247,7 @@ class CorrelationModuleRequest(ModuleRequest):
 
 class CorrelationModuleResponse(BaseModel):
     """Response from POST /analysis/correlation."""
-    dataset_token: str
+    dataset_token: Optional[str] = None
     trait_names: List[str]
     method: str
     phenotypic: CorrelationStats
