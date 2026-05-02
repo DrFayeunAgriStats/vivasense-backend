@@ -1,5 +1,15 @@
 {
+  "redirects": [
+    {
+      "source": "/vivasense/workspace/:path*",
+      "destination": "/vivasense/genetics/:path*",
+      "permanent": true
+    }
+  ],
   "rewrites": [
-    { "source": "/(.*)", "destination": "/" }
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
   ]
 }
