@@ -12,6 +12,61 @@ suppressPackageStartupMessages({
 
 HAS_CAR <- requireNamespace("car", quietly = TRUE)
 
+# Guard against near-zero error variance causing F-ratio overflow
+MIN_ERROR_MS <- 1e-10
+
+safe_f_ratio <- function(ms_effect, ms_error) {
+  if (is.na(ms_error) || ms_error < MIN_ERROR_MS) {
+    return(NA_real_)
+  }
+  return(ms_effect / ms_error)
+}
+
+sanitize_anova_f_values <- function(anova_table) {
+  if (is.null(anova_table) || !is.data.frame(anova_table)) {
+    return(anova_table)
+  }
+  if (!("Mean Sq" %in% names(anova_table)) || !("F value" %in% names(anova_table))) {
+    return(anova_table)
+  }
+
+  rn <- rownames(anova_table)
+  residual_rows <- grep("Residuals|Within", rn, ignore.case = TRUE)
+  residual_ms <- if (length(residual_rows) > 0) {
+    suppressWarnings(as.numeric(anova_table[residual_rows[length(residual_rows)], "Mean Sq"]))
+  } else {
+    NA_real_
+  }
+
+  wp_error_ms <- if ("whole_plot_error" %in% rn) {
+    suppressWarnings(as.numeric(anova_table["whole_plot_error", "Mean Sq"]))
+  } else {
+    NA_real_
+  }
+
+  for (i in seq_len(nrow(anova_table))) {
+    term <- rn[i]
+    ms_effect <- suppressWarnings(as.numeric(anova_table[i, "Mean Sq"]))
+
+    if (grepl("Residuals|Within|whole_plot_error", term, ignore.case = TRUE)) {
+      anova_table[i, "F value"] <- NA_real_
+      if ("Pr(>F)" %in% names(anova_table)) {
+        anova_table[i, "Pr(>F)"] <- NA_real_
+      }
+      next
+    }
+
+    denom <- if (identical(term, "main_plot")) wp_error_ms else residual_ms
+    f_val <- safe_f_ratio(ms_effect, denom)
+    anova_table[i, "F value"] <- f_val
+    if (is.na(f_val) && ("Pr(>F)" %in% names(anova_table))) {
+      anova_table[i, "Pr(>F)"] <- NA_real_
+    }
+  }
+
+  anova_table
+}
+
 # ============================================================================
 # MEAN SEPARATION HELPER
 # ============================================================================
@@ -292,6 +347,8 @@ compute_single_environment <- function(data, trait_name = "Trait",
     }
   }
 
+  anova_table <- sanitize_anova_f_values(anova_table)
+
   # Grand mean — needed for both split-plot and genotype-based paths
   grand_mean    <- mean(data$trait_value, na.rm = TRUE)
   mean_is_valid <- !is.na(grand_mean) && grand_mean != 0
@@ -499,6 +556,8 @@ compute_multi_environment <- function(data, trait_name = "Trait",
   ms_genotype <- anova_table["genotype", "Mean Sq"]
   ms_ge       <- anova_table[ge_term,    "Mean Sq"]
   ms_error    <- anova_table["Residuals","Mean Sq"]
+
+  anova_table <- sanitize_anova_f_values(anova_table)
   
   # Variance components (fixed genotype, fixed environment, fixed reps)
   sigma2_error <- ms_error
@@ -943,6 +1002,9 @@ export_to_json <- function(analysis_result) {
   # even for single-row tables.
   if (!is.null(analysis_result$result$anova_table)) {
     at_df <- analysis_result$result$anova_table
+    if ("F value" %in% names(at_df)) {
+      at_df[["F value"]][!is.finite(at_df[["F value"]])] <- NA_real_
+    }
     clean_result$result$anova_table <- list(
       source  = rownames(at_df),
       df      = as.integer(at_df[["Df"]]),
