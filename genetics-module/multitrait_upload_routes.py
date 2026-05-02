@@ -119,11 +119,24 @@ MET_ENVIRONMENT_KEYWORDS = {
     "season_env",
 }
 
+BLOCK_KEYWORDS = {
+    "block",
+    "blk",
+    "rep",
+    "replication",
+    "replicate",
+    "plot",
+    "row",
+    "column",
+}
+
 
 def suggest_experimental_design(column_names: list[str]) -> str:
     lower_cols = {str(column).strip().lower() for column in column_names}
     if any(keyword in lower_cols for keyword in MET_ENVIRONMENT_KEYWORDS):
         return "MET"
+    if not any(keyword in lower_cols for keyword in BLOCK_KEYWORDS):
+        return "CRD"
     return "RCBD"
 
 
