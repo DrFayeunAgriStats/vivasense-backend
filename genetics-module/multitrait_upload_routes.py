@@ -41,6 +41,7 @@ from multitrait_upload_schemas import (
 from genetics_schemas import GeneticsResponse
 import result_cache
 from interpretation import InterpretationEngine
+from genetics_interpretation import build_breeding_synthesis
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +106,25 @@ def _is_numeric_id(col_name: str) -> bool:
     if lower.endswith(("_id", "_no", "_num", "_number", "_index", "_serial", "_code")):
         return True
     return False
+
+
+MET_ENVIRONMENT_KEYWORDS = {
+    "environment",
+    "env",
+    "location",
+    "loc",
+    "site",
+    "station",
+    "place",
+    "season_env",
+}
+
+
+def suggest_experimental_design(column_names: list[str]) -> str:
+    lower_cols = {str(column).strip().lower() for column in column_names}
+    if any(keyword in lower_cols for keyword in MET_ENVIRONMENT_KEYWORDS):
+        return "MET"
+    return "RCBD"
 
 
 def detect_columns(df: pd.DataFrame) -> DetectedColumns:
@@ -497,6 +517,99 @@ def _build_summary_row(trait: str, result_dict: Dict[str, Any], actual_module: s
     )
 
 
+def _extract_gxe_stats(analysis_result: GeneticsResponse) -> tuple[Optional[float], Optional[float]]:
+    at = analysis_result.result.anova_table if analysis_result.result else None
+    if at is None:
+        return None, None
+
+    aliases = {
+        "genotype:environment",
+        "environment:genotype",
+        "genotype x environment",
+        "environment x genotype",
+        "genotype*environment",
+        "environment*genotype",
+        "gxe",
+        "gxe interaction",
+    }
+
+    def _norm(label: Any) -> str:
+        s = str(label).strip().lower()
+        # Keep alnum plus separators used in ANOVA labels, collapse spaces.
+        s = " ".join(s.replace("×", "x").split())
+        return s
+
+    for idx, src in enumerate(at.source or []):
+        src_norm = _norm(src)
+        compact = src_norm.replace(" ", "")
+        if (
+            src_norm in aliases
+            or compact in {"genotype:environment", "environment:genotype", "genotypexenvironment", "environmentxgenotype", "genotype*environment", "environment*genotype", "gxe", "gxeinteraction"}
+            or ("genotype" in compact and "environment" in compact and any(sep in compact for sep in [":", "x", "*"]))
+        ):
+            f_val = at.f_value[idx] if idx < len(at.f_value) else None
+            p_val = at.p_value[idx] if idx < len(at.p_value) else None
+            return f_val, p_val
+    return None, None
+
+
+def _build_breeding_input(
+    summary_table: List[SummaryTableRow],
+    trait_results: Dict[str, TraitResult],
+) -> List[Dict[str, Any]]:
+    summary_map = {row.trait: row for row in summary_table if row.status == "success"}
+    synthesis_input: List[Dict[str, Any]] = []
+
+    for trait_name, tr in trait_results.items():
+        if tr.status != "success" or tr.analysis_result is None or tr.analysis_result.result is None:
+            continue
+
+        result = tr.analysis_result.result
+        summary_row = summary_map.get(trait_name)
+        mean_sep = result.mean_separation
+
+        genotype_means: List[Dict[str, Any]] = []
+        top_genotype: Optional[str] = None
+        if mean_sep is not None and mean_sep.genotype and mean_sep.mean:
+            means = [float(m) if m is not None else float("-inf") for m in mean_sep.mean]
+            order = sorted(range(len(mean_sep.genotype)), key=lambda i: means[i], reverse=True)
+            rank_map = {idx: rank + 1 for rank, idx in enumerate(order)}
+
+            if order:
+                top_genotype = str(mean_sep.genotype[order[0]])
+
+            for idx, geno in enumerate(mean_sep.genotype):
+                mean_val = mean_sep.mean[idx] if idx < len(mean_sep.mean) else None
+                group_val = mean_sep.group[idx] if idx < len(mean_sep.group) else None
+                genotype_means.append({
+                    "genotype": str(geno),
+                    "mean": float(mean_val) if mean_val is not None else None,
+                    "rank": int(rank_map.get(idx, len(mean_sep.genotype))),
+                    "group": str(group_val) if group_val is not None else "",
+                })
+
+        f_gxe, p_gxe = _extract_gxe_stats(tr.analysis_result)
+        h2_value = None
+        if summary_row is not None and summary_row.h2 is not None:
+            h2_value = float(summary_row.h2)
+        elif result.heritability and result.heritability.get("h2_broad_sense") is not None:
+            h2_value = float(result.heritability.get("h2_broad_sense"))
+
+        gam_class = summary_row.gam_class if summary_row is not None else None
+
+        synthesis_input.append({
+            "trait_name": trait_name,
+            "h2": h2_value,
+            "gam_class": gam_class,
+            "top_genotype": top_genotype,
+            "f_gxe": float(f_gxe) if f_gxe is not None else None,
+            "p_gxe": float(p_gxe) if p_gxe is not None else None,
+            "genotype_means": genotype_means,
+        })
+
+    return synthesis_input
+
+
 # ============================================================================
 # ENDPOINTS
 # ============================================================================
@@ -551,6 +664,7 @@ async def upload_preview(file: UploadFile = File(...)):
             "Verify that trait data is numeric and not labelled as an ID column."
         )
 
+    suggested_design = suggest_experimental_design(list(df.columns))
     mode_suggestion = "multi" if detected.environment is not None else "single"
 
     # Serialise preview rows: replace NaN / NA with None (no numpy required)
@@ -596,6 +710,7 @@ async def upload_preview(file: UploadFile = File(...)):
         n_rows=len(df),
         n_columns=len(df.columns),
         data_preview=data_preview,
+        suggested_design=suggested_design,
         mode_suggestion=mode_suggestion,
         column_names=list(df.columns),
         warnings=warn,
@@ -828,6 +943,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
         failed_traits=failed_traits,
         anova_type_warning=anova_type_warning,
         dataset_token=dataset_token,
+        breeding_summary=build_breeding_synthesis(_build_breeding_input(summary_table, trait_results)),
     )
 
     print(f"[EXPORT] Generating {actual_module.upper()} report — {len(summary_table)} trait(s) processed", flush=True)

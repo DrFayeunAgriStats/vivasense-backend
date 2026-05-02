@@ -27,6 +27,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from multitrait_upload_routes import (
     detect_columns,
     read_file,
+    suggest_experimental_design,
 )
 from multitrait_upload_schemas import (
     DetectedColumns,
@@ -93,6 +94,7 @@ async def upload_preview_v2(file: UploadFile = File(...)):
             "Verify that trait data is numeric and not labelled as an ID column."
         )
 
+    suggested_design = suggest_experimental_design(list(df.columns))
     mode_suggestion = "multi" if detected.environment is not None else "single"
 
     data_preview: List[Dict[str, Any]] = [
@@ -131,6 +133,7 @@ async def upload_preview_v2(file: UploadFile = File(...)):
         n_rows=len(df),
         n_columns=len(df.columns),
         data_preview=data_preview,
+        suggested_design=suggested_design,
         mode_suggestion=mode_suggestion,
         column_names=list(df.columns),
         warnings=warnings,

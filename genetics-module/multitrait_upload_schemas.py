@@ -53,6 +53,9 @@ class UploadPreviewResponse(BaseModel):
     data_preview: List[Dict[str, Any]] = Field(
         description="First 5 rows of the file. NaN cells are serialised as null."
     )
+    suggested_design: str = Field(
+        description="Suggested experimental design inferred from uploaded column names"
+    )
     mode_suggestion: str = Field(
         description="'single' or 'multi', inferred from environment column presence"
     )
@@ -194,4 +197,8 @@ class UploadAnalysisResponse(BaseModel):
     dataset_token: Optional[str] = Field(
         default=None,
         description="Dataset context token for subsequent analysis endpoints.",
+    )
+    breeding_summary: Optional[str] = Field(
+        default=None,
+        description="Rule-based cross-trait breeding strategy synthesis.",
     )
