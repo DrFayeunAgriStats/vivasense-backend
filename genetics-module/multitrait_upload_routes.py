@@ -304,6 +304,8 @@ def build_observations(
                 # Factorial RCBD
                 keep_cols = [genotype_col, rep_col, factor_col, trait_col]
 
+    # Remove empty/None column names before subsetting (e.g., blank rep_column in CRD payloads)
+    keep_cols = [c for c in keep_cols if c and c.strip()]
     subset = df[keep_cols].copy()
     subset[trait_col] = pd.to_numeric(subset[trait_col], errors="coerce")
     subset = subset.dropna(subset=[trait_col])
@@ -776,10 +778,15 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
     logger.info("analyze-upload columns: %s", list(df.columns))
     logger.info("analyze-upload head:\n%s", df.head())
 
+    # Normalise empty-string rep_column to None so CRD requests do not fall into RCBD paths.
+    rep_column = request.rep_column
+    if not rep_column or rep_column.strip() == "":
+        rep_column = None
+
     # Validate that all named columns actually exist (rep_column is optional)
     required_cols = [request.genotype_column]
-    if request.rep_column:
-        required_cols.append(request.rep_column)
+    if rep_column:
+        required_cols.append(rep_column)
     required_cols += request.trait_columns
     if request.environment_column:
         required_cols.append(request.environment_column)
@@ -792,8 +799,8 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
 
     # Dataset-level summary (whole file, not per-trait)
     n_genotypes = int(df[request.genotype_column].nunique())
-    if request.rep_column:
-        n_reps = int(df[request.rep_column].nunique())
+    if rep_column:
+        n_reps = int(df[rep_column].nunique())
     else:
         # CRD: infer max observations per genotype as effective n_reps
         n_reps = int(df.groupby(request.genotype_column).size().max())
@@ -824,7 +831,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
     MAX_CONCURRENT_R_PROCESSES = 4
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_R_PROCESSES)
 
-    crd_mode = request.rep_column is None and request.mode == "single"
+    crd_mode = rep_column is None and request.mode == "single"
 
     async def analyze_single_trait(trait: str):
         async with semaphore:
@@ -834,7 +841,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                 balance_warnings = check_balance(
                     df=df,
                     genotype_col=request.genotype_column,
-                    rep_col=request.rep_column,
+                    rep_col=rep_column,
                     trait_col=trait,
                     env_col=env_col_for_mode,
                     factor_col=factor_col,
@@ -846,7 +853,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                 observations = build_observations(
                     df=df,
                     genotype_col=request.genotype_column,
-                    rep_col=request.rep_column,
+                    rep_col=rep_column,
                     trait_col=trait,
                     env_col=env_col_for_mode,
                     factor_col=factor_col,
@@ -937,7 +944,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
         "base64_content":     request.base64_content,
         "file_type":          request.file_type,
         "genotype_column":    request.genotype_column,
-        "rep_column":         request.rep_column,
+        "rep_column":         rep_column,
         "environment_column": request.environment_column,
         "factor_column":      factor_col,
         "main_plot_column":   getattr(request, "main_plot_column", None),
