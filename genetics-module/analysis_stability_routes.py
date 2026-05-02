@@ -714,7 +714,8 @@ def _compute_gge_biplot(
     )
 
     interpretation = _generate_gge_interpretation(
-        trait_col, genotype_scores, pct_pc, biplot_type, which_won_where, mean_vs_stability
+        trait_col, genotype_scores, environment_scores, pct_pc, grand_mean,
+        biplot_type, which_won_where, mean_vs_stability
     )
 
     return GGEResults(
@@ -728,6 +729,141 @@ def _compute_gge_biplot(
         interpretation=interpretation,
     )
 
+
+# ── Five-dimension GGE interpretation helpers ────────────────────────────────
+
+def interpret_environment_discrimination(
+    env_scores: Dict[str, float],
+    threshold_pct: float = 0.8,
+) -> str:
+    """
+    env_scores: {env_name: distance_from_origin}
+    Environments with vector length > threshold * max_length are highly discriminating.
+    """
+    if not env_scores:
+        return ""
+    max_dist = max(env_scores.values())
+    if max_dist == 0:
+        return ""
+    highly_disc = [e for e, d in env_scores.items() if d >= threshold_pct * max_dist]
+    low_disc = [e for e, d in env_scores.items() if d < 0.3 * max_dist]
+    parts = []
+    if highly_disc:
+        parts.append(
+            f"{', '.join(highly_disc)} showed high discriminating ability "
+            f"(long vectors from biplot origin), indicating these environments "
+            f"effectively differentiated among genotypes."
+        )
+    if low_disc:
+        parts.append(
+            f"{', '.join(low_disc)} showed low discriminating ability "
+            f"and contributed little to genotype differentiation."
+        )
+    return " ".join(parts)
+
+
+def interpret_environment_representativeness(
+    env_angles_from_aec: Dict[str, float],
+) -> str:
+    """
+    env_angles_from_aec: {env_name: angle_degrees_from_AEC_abscissa}
+    Environments with angle < 30 degrees are representative.
+    """
+    if not env_angles_from_aec:
+        return ""
+    representative = [e for e, a in env_angles_from_aec.items() if abs(a) < 30]
+    non_representative = [e for e, a in env_angles_from_aec.items() if abs(a) >= 30]
+    parts = []
+    if representative:
+        parts.append(
+            f"{', '.join(representative)} were representative of the overall "
+            f"test environment (vectors close to the AEC abscissa), suggesting "
+            f"they reflect the average genotype ranking across all environments."
+        )
+    if non_representative:
+        parts.append(
+            f"{', '.join(non_representative)} deviated substantially from the "
+            f"AEC, indicating they measured genotype performance under atypical "
+            f"conditions and may favour specifically adapted genotypes."
+        )
+    return " ".join(parts)
+
+
+def interpret_pc1_dominance(pc1_pct: float) -> str:
+    if pc1_pct >= 95:
+        return (
+            f"PC1 explained {pc1_pct:.1f}% of the genotype + GxE variation, "
+            f"indicating that differences among genotypes were predominantly in "
+            f"magnitude rather than ranking across environments. Crossover "
+            f"genotype \u00d7 environment interaction was minimal in this dataset."
+        )
+    elif pc1_pct >= 70:
+        return (
+            f"PC1 explained {pc1_pct:.1f}% of the genotype + GxE variation. "
+            f"The biplot provides a reliable approximation of the data structure."
+        )
+    else:
+        return (
+            f"PC1 explained {pc1_pct:.1f}% of the variation. PC2 contributes "
+            f"meaningfully, indicating complex genotype \u00d7 environment interaction "
+            f"that should be interpreted with both axes."
+        )
+
+
+def interpret_ideal_genotype(
+    ideal_genotype: str,
+    ranked_genotypes: List[Dict[str, Any]],
+    grand_mean: float,
+) -> str:
+    top3 = ranked_genotypes[:3]
+    top_names_str = ", ".join(
+        f'{g["genotype"]} (rank {i + 1})' for i, g in enumerate(top3)
+    )
+    return (
+        f"The ideal genotype combining high mean yield and stability was "
+        f"identified as {ideal_genotype} (closest to the ideal point on the "
+        f"AEC). Genotypes ranked by proximity to ideal: {top_names_str}. "
+        f"Genotypes close to the AEC abscissa show stable performance across "
+        f"environments; those with high PC1 scores show high mean performance. "
+        f"Grand mean across all genotypes and environments: {grand_mean:.3f}."
+    )
+
+
+def interpret_which_won_where(
+    mega_environments: List[Dict[str, Any]],
+    vertex_genotypes: List[str],
+) -> str:
+    n_mega = len(mega_environments)
+    if n_mega == 1:
+        winner = mega_environments[0].get("winner", "")
+        envs = mega_environments[0].get("environments", [])
+        return (
+            f"A single mega-environment was identified encompassing all "
+            f"{len(envs)} test environment(s) ({', '.join(envs)}), with "
+            f"{winner} as the winning genotype. The absence of crossover "
+            f"interaction suggests that genotype rankings were consistent "
+            f"across environments and {winner} can be recommended for "
+            f"broad adaptation across the tested environments."
+        )
+    else:
+        env_lines = []
+        for i, me in enumerate(mega_environments):
+            envs = me.get("environments", [])
+            winner = me.get("winner", "unknown")
+            env_lines.append(
+                f"Mega-environment {i + 1} ({', '.join(envs)}): winner = {winner}"
+            )
+        return (
+            f"{n_mega} mega-environments were identified, indicating crossover "
+            f"genotype \u00d7 environment interaction. No single genotype was "
+            f"superior across all environments. "
+            + " ".join(env_lines)
+            + ". Genotype selection should consider specific adaptation to "
+            "target environments."
+        )
+
+
+# ── Original per-view interpretation functions (used inside sub-objects) ──────
 
 def _generate_gge_wwi_interpretation(
     trait: str,
@@ -779,40 +915,73 @@ def _generate_gge_mvs_interpretation(
 def _generate_gge_interpretation(
     trait: str,
     genotype_scores: List[GenotypePC],
+    environment_scores: List[EnvironmentPC],
     pct_pc: List[float],
+    grand_mean: float,
     biplot_type: str,
     which_won_where: Optional[WhichWonWhere],
     mean_vs_stability: Optional[MeanVsStability],
 ) -> str:
-    """Generate a comprehensive GGE Biplot interpretation."""
+    """Generate a scientifically complete five-dimension GGE Biplot interpretation."""
     sections: List[tuple] = []
 
-    # Variance explained
-    if len(pct_pc) >= 2:
-        var_text = (
-            f"GGE Biplot analysis of {trait}: PC1 explained {pct_pc[0]:.1f}% and "
-            f"PC2 explained {pct_pc[1]:.1f}% of the genotype + GxE variation "
-            f"(cumulative: {sum(pct_pc):.1f}%). "
-            "Higher cumulative variance (>60%) indicates the biplot provides a reliable "
-            "visual approximation of the data."
+    # ── Dimension 1: PC1 dominance ────────────────────────────────────────────
+    pc1_pct = pct_pc[0] if pct_pc else 0.0
+    pc2_pct = pct_pc[1] if len(pct_pc) >= 2 else 0.0
+    var_header = (
+        f"GGE Biplot analysis of {trait}: PC1 explained {pc1_pct:.1f}% and "
+        f"PC2 explained {pc2_pct:.1f}% of the genotype + GxE variation "
+        f"(cumulative: {pc1_pct + pc2_pct:.1f}%). "
+    ) if len(pct_pc) >= 2 else f"GGE Biplot analysis of {trait} completed. "
+    pc1_interp = interpret_pc1_dominance(pc1_pct)
+    sections.append(("PC1 Dominance", var_header + pc1_interp))
+
+    # ── Dimension 2 & 3: Environment discrimination and representativeness ────
+    if environment_scores:
+        env_disc_scores: Dict[str, float] = {
+            es.environment: math.sqrt(es.pc1 ** 2 + es.pc2 ** 2)
+            for es in environment_scores
+        }
+        disc_text = interpret_environment_discrimination(env_disc_scores)
+        if disc_text:
+            sections.append(("Environment Discriminating Ability", disc_text))
+
+        # AEC abscissa = direction of the average environment vector
+        n_env = len(environment_scores)
+        aec_pc1 = sum(es.pc1 for es in environment_scores) / n_env
+        aec_pc2 = sum(es.pc2 for es in environment_scores) / n_env
+        aec_angle = math.degrees(math.atan2(aec_pc2, aec_pc1))
+        env_angles: Dict[str, float] = {}
+        for es in environment_scores:
+            env_angle = math.degrees(math.atan2(es.pc2, es.pc1))
+            diff = abs(env_angle - aec_angle)
+            if diff > 180:
+                diff = 360 - diff
+            env_angles[es.environment] = round(diff, 2)
+        repr_text = interpret_environment_representativeness(env_angles)
+        if repr_text:
+            sections.append(("Environment Representativeness", repr_text))
+
+    # ── Dimension 4: Which-Won-Where ──────────────────────────────────────────
+    if which_won_where is not None and biplot_type == "which-won-where":
+        vertex_genos = list(dict.fromkeys(which_won_where.winning_genotypes.values()))
+        mega_dicts = [
+            {"winner": me.best_genotype, "environments": me.environments}
+            for me in which_won_where.mega_environments
+        ]
+        www_text = interpret_which_won_where(mega_dicts, vertex_genos)
+        sections.append(("Which-Won-Where", www_text))
+
+    # ── Dimension 5: Ideal genotype (mean-vs-stability) ───────────────────────
+    if mean_vs_stability is not None and biplot_type == "mean-stability":
+        ranked = [
+            {"genotype": gd.genotype, "rank": gd.rank}
+            for gd in mean_vs_stability.genotype_distances
+        ]
+        ideal_text = interpret_ideal_genotype(
+            mean_vs_stability.ideal_genotype, ranked, grand_mean
         )
-    else:
-        var_text = f"GGE Biplot analysis of {trait} completed."
-    sections.append(("Variance Explained (GGE)", var_text))
-
-    if which_won_where is not None:
-        sections.append(("Which-Won-Where", which_won_where.interpretation))
-
-    if mean_vs_stability is not None:
-        sections.append(("Mean vs Stability", mean_vs_stability.interpretation))
-
-    interp_guide = (
-        "Interpretation guide: In the GGE Biplot, the polygon vertex genotypes "
-        "(outermost points) won in at least one environment. Environments within "
-        "the same sector share the same winning genotype (mega-environment). "
-        "Genotypes near the biplot origin are stable but not necessarily high-yielding."
-    )
-    sections.append(("Interpretation Guide", interp_guide))
+        sections.append(("Ideal Genotype (Mean vs Stability)", ideal_text))
 
     return "\n\n".join(f"{h}\n{c}" for h, c in sections)
 
