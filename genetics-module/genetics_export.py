@@ -49,6 +49,7 @@ from trait_relationships_schemas import CorrelationResponse
 import result_cache
 from genetics_interpretation import (
     generate_genetics_interpretation,
+    build_breeding_synthesis,
     _describe_env_effects,
     _describe_gcv_pcv,
 )
@@ -455,6 +456,64 @@ def _add_summary_table(doc: Document, data: UploadAnalysisResponse) -> None:
         for row in data.summary_table
     ]
     _add_stat_table(doc, headers, rows_data, numeric_cols={1} if is_anova else {1, 2, 3, 4, 5})
+
+
+def _extract_gxe_stats_from_anova(at: Optional[AnovaTable]) -> Tuple[Optional[float], Optional[float]]:
+    if at is None:
+        return None, None
+    aliases = {"genotype:environment", "environment:genotype", "gxe", "gxe interaction"}
+    for idx, src in enumerate(at.source or []):
+        src_norm = str(src).strip().lower()
+        if src_norm in aliases:
+            f_val = at.f_value[idx] if idx < len(at.f_value) else None
+            p_val = at.p_value[idx] if idx < len(at.p_value) else None
+            return f_val, p_val
+    return None, None
+
+
+def _build_breeding_input_for_export(data: UploadAnalysisResponse) -> List[Dict[str, Any]]:
+    summary_map = {row.trait: row for row in data.summary_table if row.status == "success"}
+    synthesis_input: List[Dict[str, Any]] = []
+
+    for trait_name, tr in (data.trait_results or {}).items():
+        if tr.status != "success" or tr.analysis_result is None or tr.analysis_result.result is None:
+            continue
+
+        result = tr.analysis_result.result
+        summary_row = summary_map.get(trait_name)
+        ms = result.mean_separation
+
+        genotype_means: List[Dict[str, Any]] = []
+        top_genotype: Optional[str] = None
+        if ms is not None and ms.genotype and ms.mean:
+            means = [float(m) if m is not None else float("-inf") for m in ms.mean]
+            order = sorted(range(len(ms.genotype)), key=lambda i: means[i], reverse=True)
+            rank_map = {idx: rank + 1 for rank, idx in enumerate(order)}
+            if order:
+                top_genotype = str(ms.genotype[order[0]])
+
+            for idx, geno in enumerate(ms.genotype):
+                mean_val = ms.mean[idx] if idx < len(ms.mean) else None
+                grp = ms.group[idx] if idx < len(ms.group) else None
+                genotype_means.append({
+                    "genotype": str(geno),
+                    "mean": float(mean_val) if mean_val is not None else None,
+                    "rank": int(rank_map.get(idx, len(ms.genotype))),
+                    "group": str(grp) if grp is not None else "",
+                })
+
+        f_gxe, p_gxe = _extract_gxe_stats_from_anova(result.anova_table)
+        synthesis_input.append({
+            "trait_name": trait_name,
+            "h2": float(summary_row.h2) if summary_row is not None and summary_row.h2 is not None else None,
+            "gam_class": summary_row.gam_class if summary_row is not None else None,
+            "top_genotype": top_genotype,
+            "f_gxe": float(f_gxe) if f_gxe is not None else None,
+            "p_gxe": float(p_gxe) if p_gxe is not None else None,
+            "genotype_means": genotype_means,
+        })
+
+    return synthesis_input
 
 
 # ============================================================================
@@ -1480,6 +1539,14 @@ def _build_document(data: DownloadReportRequest) -> Document:
     _add_heading(doc, "Trait Summary", level=1)
     _add_summary_table(doc, data)
     doc.add_paragraph()
+
+    all_trait_results = _build_breeding_input_for_export(data)
+    synthesis_text = build_breeding_synthesis(all_trait_results)
+    if synthesis_text:
+        _add_heading(doc, "Breeding Strategy Summary", level=1)
+        for para in synthesis_text.split("\n\n"):
+            _add_body(doc, para)
+        doc.add_paragraph()
 
     if data.failed_traits:
         _add_body(
