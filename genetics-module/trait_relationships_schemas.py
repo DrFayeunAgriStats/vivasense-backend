@@ -44,6 +44,7 @@ class CorrelationResponse(BaseModel):
       between_genotype — genotype means (between-genotype association; NOT a genetic parameter)
       genotypic        — variance-component based via bivariate REML; None if estimation failed
     """
+    dataset_token: Optional[str] = None
     trait_names: List[str]
     method: str
     phenotypic: CorrelationStats

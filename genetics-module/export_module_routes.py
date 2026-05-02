@@ -772,13 +772,15 @@ async def export_correlation_word(data: CorrelationExportRequest):
         doc = _new_document(
             "VivaSense Trait Correlation Report",
             f"{data.method.capitalize()} correlation  ·  {n_traits} trait(s)  ·  "
-            f"{data.n_observations} genotype mean(s)",
+            f"{data.phenotypic.n_observations} genotype mean(s)",
         )
 
         corr = CorrelationResponse(
+            dataset_token=data.dataset_token,
             trait_names=data.trait_names,
             method=data.method,
             phenotypic=data.phenotypic,
+            between_genotype=data.between_genotype,
             genotypic=data.genotypic,
             interpretation=data.interpretation or "",
             warnings=data.warnings,

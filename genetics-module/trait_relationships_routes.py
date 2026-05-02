@@ -26,6 +26,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException
@@ -323,6 +324,7 @@ async def compute_correlation(request: CorrelationRequest):
     result["interpretation"] = interpretation_text
     result["statistical_note"] = _STATISTICAL_NOTE
     result["between_genotype"] = between_genotype  # Ensure it's in result dict for schema validation
+    result["dataset_token"] = result.get("dataset_token") or str(uuid4())
     
     import json as _json
     logger.info("[correlation] response keys: %s", list(result.keys()))

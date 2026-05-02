@@ -54,6 +54,7 @@ export interface CorrelationStats {
  * genotypic        – variance-component REML estimate; null when unavailable
  */
 export interface CorrelationResponse {
+  dataset_token?: string;
   trait_names: string[];
   method: string;
   phenotypic: CorrelationStats;
@@ -115,6 +116,7 @@ function _normalizeResponse(raw: unknown): CorrelationResponse {
   const n = traitNames.length;
 
   const normalized: CorrelationResponse = {
+    dataset_token:  typeof src.dataset_token === "string" ? src.dataset_token : undefined,
     trait_names:     traitNames,
     method:          typeof src.method === "string" ? src.method : "pearson",
     phenotypic:      _normalizeStats(src.phenotypic, n),
