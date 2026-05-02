@@ -13,10 +13,8 @@ suppressPackageStartupMessages({
 HAS_CAR <- requireNamespace("car", quietly = TRUE)
 
 # Guard against near-zero error variance causing F-ratio overflow
-MIN_ERROR_MS <- 1e-10
-
-safe_f_ratio <- function(ms_effect, ms_error) {
-  if (is.na(ms_error) || ms_error < MIN_ERROR_MS) {
+safe_f_ratio <- function(ms_effect, ms_error, min_error_ms = 1e-10) {
+  if (is.null(ms_error) || is.na(ms_error) || ms_error < min_error_ms) {
     return(NA_real_)
   }
   return(ms_effect / ms_error)
