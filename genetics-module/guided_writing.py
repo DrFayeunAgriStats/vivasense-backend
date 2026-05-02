@@ -101,33 +101,33 @@ def _build_anova_writing(
     exp_str = "in this experiment"
     if n_genos is not None:
         if n_envs is not None and n_envs > 1:
-            exp_str = f"evaluated across {n_genos} genotypes and {n_envs} environments"
+            exp_str = f"evaluated across {n_genos} treatment levels and {n_envs} environments"
         else:
-            exp_str = f"evaluated across {n_genos} genotypes"
+            exp_str = f"evaluated across {n_genos} treatment levels"
 
     # ── Starter 1: Significance ──────────────────────────────────────────────
     starters.append(SentenceStarter(
         purpose="Significance statement",
         template=(
-            "An analysis of variance for {trait} {exp_str} showed that the genotype effect was ___ "
+            "An analysis of variance for {trait} {exp_str} showed that the treatment effect was ___ "
             "(F = ___, p = ___, η² = ___)."
         ).format(trait=trait, exp_str=exp_str),
         values_to_fill=[
             "write 'significant' (p < 0.05) or 'not significant' (p ≥ 0.05)",
-            "F-value for Genotype (from ANOVA table)",
-            "p-value for Genotype (from ANOVA table)",
-            "η² = SS_Genotype ÷ SS_Total (calculate from ANOVA table)",
+            "F-value for the primary factor (from ANOVA table)",
+            "p-value for the primary factor (from ANOVA table)",
+            "η² = SS_primary_factor ÷ SS_Total (calculate from ANOVA table)",
         ],
-        hint="ANOVA table → Genotype row",
+        hint="ANOVA table → primary factor row",
     ))
 
     # ── Starter 2: Means comparison ──────────────────────────────────────────
     ms = result.get("mean_separation") or {}
     n_genos = len(ms.get("genotype", [])) if ms else 0
     geno_phrase = (
-        f"across the {n_genos} genotypes tested"
+        f"across the {n_genos} treatment levels tested"
         if n_genos > 0
-        else "among the genotypes tested"
+        else "among the treatment levels tested"
     )
 
     starters.append(SentenceStarter(
@@ -137,12 +137,12 @@ def _build_anova_writing(
             "(mean = ___), while the lowest was recorded in ___ (mean = ___)."
         ).format(trait=trait, geno_phrase=geno_phrase),
         values_to_fill=[
-            "name of top-ranked genotype (rank 1 in Mean Separation table)",
-            "mean value of top-ranked genotype",
-            "name of bottom-ranked genotype (last rank)",
-            "mean value of bottom-ranked genotype",
+            "name of top-ranked treatment/level (rank 1 in Mean Separation table)",
+            "mean value of top-ranked treatment/level",
+            "name of bottom-ranked treatment/level (last rank)",
+            "mean value of bottom-ranked treatment/level",
         ],
-        hint="Mean Separation table → sorted by mean descending",
+        hint="Mean Separation table → sorted by mean, descending",
     ))
 
     # ── Starter 3: Tukey group reference ────────────────────────────────────
@@ -150,18 +150,18 @@ def _build_anova_writing(
         purpose="Statistical grouping",
         template=(
             "Means were separated using ___ at α = ___. "
-            "Genotypes were assigned to ___ distinct group(s); "
-            "___ and ___ belonged to group ___ (highest), "
-            "while ___ was in group ___ (lowest)."
+            "Treatment levels were assigned to ___ distinct group(s); "
+            "___ and ___ belonged to group ___ (highest mean), "
+            "while ___ was in group ___ (lowest mean)."
         ),
         values_to_fill=[
             "name of post-hoc test (Tukey HSD or LSD — from Mean Separation table header)",
             "alpha level (0.05 unless stated otherwise)",
             "number of distinct Tukey group letters",
-            "name of a top-group genotype",
-            "name of another top-group genotype (or omit if only one)",
+            "name of a top-group treatment/level",
+            "name of another top-group treatment/level (or omit if only one)",
             "top group letter (usually 'a')",
-            "name of bottom-ranked genotype",
+            "name of bottom-ranked treatment/level",
             "bottom group letter (e.g. 'b', 'c', or 'd')",
         ],
         hint="Mean Separation table → Group column",
@@ -188,8 +188,8 @@ def _build_anova_writing(
 
     # ── Examiner checkpoint ───────────────────────────────────────────────────
     checkpoint = [
-        "F-value and p-value reported for the genotype effect",
-        "Tukey group letters cited for all genotypes discussed",
+        "F-value and p-value reported for the treatment effect",
+        "Tukey group letters cited for all treatments/levels discussed",
         "η² effect size reported alongside p-value",
         "Assumption test results (Shapiro-Wilk, Levene) referenced",
         "At least one scope phrase present: 'in this experiment' or 'among the levels tested'",

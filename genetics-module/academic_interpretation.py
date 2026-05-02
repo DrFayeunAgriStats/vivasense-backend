@@ -73,9 +73,42 @@ _REFERRAL = (
 # SYSTEM PROMPTS (one per module)
 # ============================================================================
 
+
+# ============================================================================
+# DOMAIN DETECTION
+# ============================================================================
+
+def detect_analysis_domain(column_names: list[str], module: str) -> str:
+    """
+    Infer the research domain from uploaded dataset column names.
+
+    Returns one of: "plant_breeding", "agronomy", "soil_science", "general".
+    Always returns "plant_breeding" for the genetic_parameters module.
+    """
+    if module == "genetic_parameters":
+        return "plant_breeding"
+    breeding_keywords = {"genotype", "variety", "cultivar", "accession", "line", "cross"}
+    agronomy_keywords = {
+        "fertilizer", "fertiliser", "nitrogen", "irrigation",
+        "tillage", "spacing", "density", "rate", "dose",
+    }
+    soil_keywords = {
+        "soil", "ph", "organic", "carbon", "nitrogen", "texture",
+        "depth", "horizon", "moisture",
+    }
+    lower_cols = {c.lower() for c in column_names}
+    if any(kw in lower_cols for kw in breeding_keywords):
+        return "plant_breeding"
+    elif any(kw in lower_cols for kw in agronomy_keywords):
+        return "agronomy"
+    elif any(kw in lower_cols for kw in soil_keywords):
+        return "soil_science"
+    else:
+        return "general"
+
 _ANOVA_SYSTEM_PROMPT = """\
 You are the VivaSense Academic Mentor, an expert in biostatistics, \
-plant breeding, experimental design, and scientific writing for \
+agricultural research, experimental design, and scientific writing for \
 agricultural research.
 
 You operate under the academic supervision philosophy of \
@@ -120,7 +153,7 @@ OUTPUT — produce exactly these 10 sections, labelled EXACTLY as shown \
 ── 1. DATA QUALITY NOTE ──
 ── 2. OVERALL FINDING ──
 ── 3. STATISTICAL EVIDENCE ──
-── 4. GENOTYPE INTERPRETATION ──
+── 4. TREATMENT INTERPRETATION ──
 ── 5. ASSUMPTION CHECK ──
 ── 6. GUIDED WRITING SUPPORT ──
 ── 7. SCOPE STATEMENT ──
@@ -143,9 +176,9 @@ source. η² benchmarks: <0.01 negligible, 0.01–0.06 small, \
 0.06–0.14 medium, ≥0.14 large. State which source accounted for \
 the largest proportion of variance.
 
-4. GENOTYPE INTERPRETATION — list means from highest to lowest. \
-Cite Tukey group letters. Say "the highest mean among the genotypes \
-tested." Never say "optimal."
+4. TREATMENT INTERPRETATION — list means from highest to lowest. \
+Cite Tukey group letters. Say "the highest mean among the \
+treatments/levels tested." Never say "optimal."
 
 5. ASSUMPTION CHECK — Shapiro-Wilk: W + p-value + PASS/FAIL. \
 Levene: statistic + p-value + PASS/FAIL. \
@@ -161,12 +194,12 @@ any number.
 
 7. SCOPE STATEMENT — write exactly: "These results apply to this \
 experiment and should be interpreted within this context. \
-Single-experiment results cannot support general management or \
-breeding recommendations."
+Single-experiment results cannot support general management \
+recommendations."
 
 8. EXAMINER CHECKPOINT — exactly 5 lines, each starting with ☐:
   ☐ F-value and p-value reported for the genotype effect
-  ☐ Tukey group letters cited for all genotypes discussed
+    ☐ Tukey group letters cited for all treatments/levels discussed
   ☐ η² effect size reported alongside p-value
   ☐ Assumption test results (Shapiro-Wilk, Levene) referenced
   ☐ At least one scope phrase present in the write-up
@@ -271,20 +304,20 @@ You are the VivaSense Academic Mentor, under the supervision \
 philosophy of Dr. Lawrence Stephen Fayeun, FUTA, Nigeria.
 
 You are explaining phenotypic correlation results for plant \
-breeding research. Your role is to guide write-ups, not to \
+and agricultural research. Your role is to guide write-ups, not to \
 write them for students.
 
 NON-NEGOTIABLE RULES:
 1. Never use causal language: "causes", "caused by", "leads to", \
 "drives", "influences", "determines", "results in."
 2. Correlation describes co-variation — never imply directionality.
-3. Always include "among the genotypes tested" or "in this experiment."
+3. Always include "among the treatments/levels tested" or "in this experiment."
 4. State that "correlation does not imply causation" explicitly.
 5. Report r-value and p-value for every pair you mention.
 6. Never say "strong evidence" — describe the magnitude.
 7. Never say "proven association" — say "significant correlation."
 8. r strength: |r| < 0.40 weak, 0.40–0.69 moderate, ≥ 0.70 strong.
-9. Do not generalise beyond the genotypes tested.
+9. Do not generalise beyond the treatments/levels tested.
 10. Never say "p = 0" — use "p < 0.001."
 
 OUTPUT — produce exactly these 9 sections:
@@ -305,19 +338,19 @@ Section content:
 If none: "No data quality concerns detected."
 
 2. OVERALL FINDING — state the experimental structure (number of genotype \
-means). How many pairs were tested, how many were significant (p < 0.05), \
+or treatment/level means). How many pairs were tested, how many were significant (p < 0.05), \
 and the strongest r value found.
 
 3. PAIRWISE INTERPRETATION — discuss significant pairs. \
 Cite r and p for each. Classify as weak/moderate/strong. \
-"among the genotypes tested."
+"among the treatments/levels tested."
 
 4. CO-SELECTION IMPLICATIONS — for significant positive pairs: \
 describe what co-selection might mean. No causal language.
 
 5. CAUSATION CAUTION — always include: "Correlation does not \
 imply causation. The associations observed reflect co-variation \
-among genotype means in this experiment."
+among treatment/level means in this experiment."
 
 6. GUIDED WRITING SUPPORT — 2 sentence starters with ___ blanks.
   Starter 1: Pairwise correlation sentence.
@@ -331,7 +364,7 @@ or breeding recommendations."
 8. EXAMINER CHECKPOINT — 5 lines starting with ☐:
   ☐ r-value and p-value reported for every pair discussed
   ☐ Causation language absent from the write-up
-  ☐ Scope limited to genotypes in this experiment
+    ☐ Scope limited to treatments/levels in this experiment
   ☐ Strong pairs (|r| ≥ 0.70) specifically identified
   ☐ "Correlation does not imply causation" sentence included
 
@@ -350,9 +383,9 @@ Your role is to guide the interpretation, not write it for them.
 NON-NEGOTIABLE RULES:
 1. Describe the visual pattern in terms of r-values, not colours.
 2. Never use causal language (causes, leads to, drives).
-3. Include "among the genotypes tested" or "in this experiment."
+3. Include "among the treatments/levels tested" or "in this experiment."
 4. Always note that "correlation does not imply causation."
-5. Do not generalise beyond the traits and genotypes in this analysis.
+5. Do not generalise beyond the traits and treatments/levels in this analysis.
 
 OUTPUT — produce exactly these 7 sections:
 
@@ -973,14 +1006,14 @@ class _CorrFallback:
 
         s: Dict[str, str] = {}
         s["data_quality_note"] = (
-            f"Correlations computed using {n_obs} genotype-level means. "
+            f"Correlations computed using {n_obs} treatment/level means. "
             f"Method: {method.capitalize()}."
         )
         s["overall_finding"] = (
-            f"A phenotypic correlation analysis was conducted across {n_obs} genotype means. "
+            f"A phenotypic correlation analysis was conducted across {n_obs} treatment/level means. "
             f"Out of {n*(n-1)//2} trait pair(s) tested, "
             f"{len(sig_pairs)} were significant (p < 0.05) "
-            f"among the genotypes tested in this experiment."
+            f"among the levels tested in this experiment."
         )
         if sig_pairs:
             pair_lines = [
@@ -994,10 +1027,71 @@ class _CorrFallback:
 
         s["causation_caution"] = (
             "Correlation does not imply causation. The associations observed "
-            "reflect co-variation among genotype means in this experiment and "
+            "reflect co-variation among treatment/level means in this experiment and "
             "do not establish directional biological relationships between traits."
         )
         return s
+
+
+def _extract_column_names_for_domain(payload: Dict[str, Any]) -> List[str]:
+    """Best-effort extraction of uploaded column names from analysis payloads."""
+    cols: List[str] = []
+
+    top_cols = payload.get("column_names")
+    if isinstance(top_cols, list):
+        cols.extend(str(c) for c in top_cols)
+
+    inner = payload.get("result")
+    if isinstance(inner, dict):
+        inner_cols = inner.get("column_names")
+        if isinstance(inner_cols, list):
+            cols.extend(str(c) for c in inner_cols)
+
+    trait_results = payload.get("trait_results")
+    if isinstance(trait_results, dict):
+        for tr in trait_results.values():
+            if isinstance(tr, dict):
+                tr_cols = tr.get("column_names")
+                if isinstance(tr_cols, list):
+                    cols.extend(str(c) for c in tr_cols)
+
+    # Deduplicate while preserving order
+    seen = set()
+    unique_cols: List[str] = []
+    for c in cols:
+        if c not in seen:
+            unique_cols.append(c)
+            seen.add(c)
+    return unique_cols
+
+
+def _domain_language_guide(module_type: str, domain: str) -> str:
+    """Return additional domain-specific language constraints for AI prompts."""
+    if module_type == "genetic_parameters":
+        return ""
+
+    if domain == "plant_breeding":
+        return (
+            "Language guide: This appears to be plant breeding data. "
+            "You may use genotype terminology where appropriate."
+        )
+    if domain == "agronomy":
+        return (
+            "Language guide: Use agronomy language: treatment effects, "
+            "management recommendations, and agronomic response. "
+            "Avoid plant-breeding terms unless a source is explicitly named Genotype."
+        )
+    if domain == "soil_science":
+        return (
+            "Language guide: Use soil science language: treatment effects on soil "
+            "properties. Avoid plant-breeding terms unless a source is explicitly "
+            "named Genotype."
+        )
+    return (
+        "Language guide: Use neutral language: treatment differences and "
+        "statistical findings. Avoid plant-breeding terms unless a source is "
+        "explicitly named Genotype."
+    )
 
 
 # ============================================================================
@@ -1021,6 +1115,11 @@ async def interpret_module(
     # ── Extract single-trait (or module-level for corr/heatmap) result ─────
     flat = _extract_trait_result(module_type, trait, request.analysis_result)
 
+    # Domain detection informs terminology for non-genetic-parameter modules
+    candidate_cols = _extract_column_names_for_domain(request.analysis_result)
+    domain = detect_analysis_domain(candidate_cols, module_type)
+    language_guide = _domain_language_guide(module_type, domain)
+
     # ── Format data for Claude prompt ─────────────────────────────────────────
     if module_type == "anova":
         data_text = _format_anova_prompt(trait or "Trait", flat)
@@ -1033,6 +1132,7 @@ async def interpret_module(
 
     user_message = (
         (f"Crop/study context: {crop_ctx}\n\n" if crop_ctx else "") +
+        (f"{language_guide}\n\n" if language_guide else "") +
         f"Please interpret these {module_type.replace('_', ' ')} results:\n\n"
         + data_text
     )

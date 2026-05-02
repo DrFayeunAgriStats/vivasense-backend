@@ -156,6 +156,41 @@ def _sig_label(p: Optional[float]) -> str:
     return "ns"
 
 
+def _p_for_sentence(p: Optional[float]) -> str:
+    if p is None:
+        return "p = —"
+    if p < 0.001:
+        return "p < 0.001"
+    return f"p = {p:.3f}"
+
+
+def _extract_source_stats(at: Optional[AnovaTable], source_name: str) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+    if at is None or not at.source:
+        return None, None, None
+    try:
+        idx = at.source.index(source_name)
+    except ValueError:
+        return None, None, None
+
+    f_val = at.f_value[idx] if idx < len(at.f_value) else None
+    p_val = at.p_value[idx] if idx < len(at.p_value) else None
+    ss_val = at.ss[idx] if idx < len(at.ss) else None
+    return f_val, p_val, ss_val
+
+
+def _eta_squared_for_source(at: Optional[AnovaTable], source_name: str) -> Optional[float]:
+    if at is None or not at.source or not at.ss:
+        return None
+    _, _, ss_effect = _extract_source_stats(at, source_name)
+    if ss_effect is None:
+        return None
+
+    ss_total = sum(float(x) for x in at.ss if x is not None)
+    if ss_total <= 0:
+        return None
+    return float(ss_effect) / ss_total
+
+
 _SELECTION_INTENSITY_TABLE = {
     5: 2.06,
     7: 1.755,
@@ -1046,6 +1081,14 @@ def _add_interpretation_section(
                     n_genotypes=result.n_genotypes,
                     n_environments=result.n_environments,
                     n_reps=result.n_reps,
+                    domain=(
+                        "plant_breeding"
+                        if any(
+                            isinstance(src, str) and "genotype" in src.lower()
+                            for src in (getattr(result.anova_table, "source", []) or [])
+                        )
+                        else "general"
+                    ),
                 )
                 logger.info("Generated ANOVA interpretation on-the-fly: %d characters", len(interpretation_text))
             except Exception as _exc:
@@ -1087,6 +1130,13 @@ def _add_interpretation_section(
             _add_body(doc, interpretation_text)
             doc.add_paragraph()
 
+    # Academic interpretation: use the full AI-generated text carried in analysis_result.
+    full_academic_text = ar.interpretation or interpretation_text
+    if full_academic_text:
+        _add_heading(doc, "Academic Interpretation", level=3)
+        _add_body(doc, full_academic_text)
+        doc.add_paragraph()
+
     # Breeding implication
     breeding_text = None
     if hasattr(tr, 'breeding_implication') and tr.breeding_implication:
@@ -1100,6 +1150,83 @@ def _add_interpretation_section(
         _add_heading(doc, "Breeding Implication", level=3)
         _add_body(doc, breeding_text)
         doc.add_paragraph()
+
+
+# ============================================================================
+# SECTION: WRITING SUPPORT GUIDE (once per report)
+# ============================================================================
+
+def _add_writing_support_guide(doc: Document, data: DownloadReportRequest) -> None:
+    _add_heading(doc, "Writing Support Guide", level=1)
+    _add_body(
+        doc,
+        "Use these sentence starters as a scaffold. Edit wording to match your exact study context and supervisor expectations.",
+    )
+    doc.add_paragraph()
+
+    _add_heading(doc, "Sentence Starters", level=2)
+
+    trait_results = data.trait_results or {}
+    for row in data.summary_table:
+        tr = trait_results.get(row.trait)
+        if tr is None or tr.analysis_result is None or tr.analysis_result.result is None:
+            continue
+
+        result = tr.analysis_result.result
+        at = result.anova_table
+
+        n_genotypes = result.n_genotypes or data.dataset_summary.n_genotypes
+        n_env = result.n_environments or data.dataset_summary.n_environments
+        n_rep = result.n_reps or data.dataset_summary.n_reps
+
+        f_g, p_g, _ = _extract_source_stats(at, "genotype")
+        eta_g = _eta_squared_for_source(at, "genotype")
+        sig_word = "significant" if (p_g is not None and p_g < 0.05) else "not significant"
+
+        env_phrase = (
+            f"across {n_genotypes} genotypes and {n_env} environments"
+            if n_env
+            else f"across {n_genotypes} genotypes and {n_rep} replications"
+        )
+
+        starter_anova = (
+            f"An analysis of variance for {row.trait} evaluated {env_phrase} showed that "
+            f"the genotype effect was {sig_word} "
+            f"(F = {_fmt(f_g, 3)}, {_p_for_sentence(p_g)}, η² = {_fmt(eta_g, 2, thousands=False)})."
+        )
+        _add_body(doc, starter_anova)
+
+        h2 = row.h2
+        gam_pct = row.gam_percent
+        starter_genetic = (
+            f"For {row.trait}, broad-sense heritability was H² = {_fmt(h2, 3, thousands=False)} "
+            f"and genetic advance as percent of mean was GAM% = {_fmt(gam_pct, 2, thousands=False)}, "
+            f"indicating {row.gam_class or 'the observed'} selection potential."
+        )
+        _add_body(doc, starter_genetic)
+
+        if result.mean_separation and result.mean_separation.genotype:
+            top_genotype = result.mean_separation.genotype[0]
+            top_group = result.mean_separation.group[0] if result.mean_separation.group else "a"
+            starter_means = (
+                f"Mean separation ({result.mean_separation.test}) grouped {top_genotype} in the leading "
+                f"performance group ({top_group}), supporting its consideration for selection under the tested conditions."
+            )
+            _add_body(doc, starter_means)
+
+        doc.add_paragraph()
+
+    _add_heading(doc, "Pre-submission Checklist", level=2)
+    checklist = [
+        "Confirm that all reported trait names and units match your tables exactly.",
+        "State design context clearly (single environment or multi-environment) before presenting ANOVA outcomes.",
+        "Report both statistical significance and practical interpretation (e.g., H², GAM%, and breeding relevance).",
+        "Cross-check mean separation group letters with the narrative conclusions about top genotypes.",
+        "Ensure every recommendation is traceable to a reported result in the table or figure.",
+    ]
+    for item in checklist:
+        doc.add_paragraph(f"□ {item}", style="List Bullet")
+    doc.add_paragraph()
 
 
 # ============================================================================
@@ -1567,6 +1694,9 @@ def _build_document(data: DownloadReportRequest) -> Document:
         list((data.trait_results or {}).keys()),
     )
     export_traits_to_word(data, doc)
+
+    # ── One-time writing support section (all traits) ───────────────────────
+    _add_writing_support_guide(doc, data)
 
     _add_footer(doc)
     return doc

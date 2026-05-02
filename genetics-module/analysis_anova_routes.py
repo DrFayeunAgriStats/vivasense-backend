@@ -34,6 +34,7 @@ from multitrait_upload_routes import build_observations, check_balance, read_fil
 from module_schemas import AnovaModuleResponse, AnovaTraitResult, ModuleRequest
 import dataset_cache
 from analysis_utils import compute_descriptive_stats, compute_per_genotype_stats, classify_precision_level
+from academic_interpretation import detect_analysis_domain
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Analysis"])
@@ -260,6 +261,7 @@ def generate_anova_interpretation(
     main_plot_significant: Optional[bool] = None,
     subplot_significant: Optional[bool] = None,
     interaction_significant: Optional[bool] = None,
+    domain: str = "general",
 ) -> str:
     """
     Generate context-aware ANOVA interpretation following VivaSense standards.
@@ -292,6 +294,17 @@ def generate_anova_interpretation(
         )
 
     is_multi = environment_mode == "multi"
+    # Domain-aware terminology
+    if domain == "plant_breeding":
+        _term = "genotype"
+        _terms = "genotypes"
+        _effect_label = "Genotype Effect"
+        _section_label = "Breeding Interpretation"
+    else:
+        _term = "treatment"
+        _terms = "treatments"
+        _effect_label = "Treatment Effect"
+        _section_label = "Research Interpretation"
     # List of (heading, content) tuples built up below
     sections: List[tuple] = []
 
@@ -300,14 +313,14 @@ def generate_anova_interpretation(
     if n_genotypes and n_reps:
         if is_multi and n_environments and n_environments > 1:
             overview.append(
-                f"This analysis evaluated {trait} across {n_genotypes} genotypes "
+                f"This analysis evaluated {trait} across {n_genotypes} {_terms} "
                 f"tested in {n_environments} environments with {n_reps} replications "
-                "per genotype-environment combination."
+                f"per {_term}-environment combination."
             )
         else:
             overview.append(
-                f"This analysis evaluated {trait} across {n_genotypes} genotypes "
-                f"with {n_reps} replications per genotype."
+                f"This analysis evaluated {trait} across {n_genotypes} {_terms} "
+                f"with {n_reps} replications per {_term}."
             )
 
     if summary.get("grand_mean") is not None:
@@ -384,23 +397,42 @@ def generate_anova_interpretation(
     sections.append(("Descriptive Interpretation", " ".join(desc)))
 
     # ── 3. Genotype Effect ─────────────────────────────────────────────────────
-    if genotype_significant is True:
-        geno_text = (
-            f"Significant genetic variation was detected for {trait} (p < 0.05), "
-            f"indicating that genotypes differ in their performance and that "
-            f"selection for improved {trait} is feasible."
-        )
-    elif genotype_significant is False:
-        geno_text = (
-            f"No significant genetic variation was detected for {trait}, suggesting "
-            "that the genotypes tested do not differ sufficiently to justify "
-            "selection based on this trait."
-        )
+    # ── 3. Genotype / Treatment Effect ──────────────────────────────────────
+    if domain == "plant_breeding":
+        if genotype_significant is True:
+            geno_text = (
+                f"Significant genetic variation was detected for {trait} (p < 0.05), "
+                f"indicating that genotypes differ in their performance and that "
+                f"selection for improved {trait} is feasible."
+            )
+        elif genotype_significant is False:
+            geno_text = (
+                f"No significant genetic variation was detected for {trait}, suggesting "
+                "that the genotypes tested do not differ sufficiently to justify "
+                "selection based on this trait."
+            )
+        else:
+            geno_text = (
+                f"The significance of genetic variation for {trait} could not be determined."
+            )
     else:
-        geno_text = (
-            f"The significance of genetic variation for {trait} could not be determined."
-        )
-    sections.append(("Genotype Effect", geno_text))
+        if genotype_significant is True:
+            geno_text = (
+                f"Significant differences among {_terms} were detected for {trait} "
+                f"(p < 0.05), indicating that the tested {_terms} vary in their "
+                f"effect on {trait}."
+            )
+        elif genotype_significant is False:
+            geno_text = (
+                f"No significant differences among {_terms} were detected for {trait}, "
+                f"suggesting that the tested {_terms} do not differ sufficiently in "
+                "their effect on this variable."
+            )
+        else:
+            geno_text = (
+                f"The significance of the {_term} effect on {trait} could not be determined."
+            )
+    sections.append((_effect_label, geno_text))
 
     # ── 4. Environment Effect (multi only) ────────────────────────────────────
     if is_multi:
@@ -472,35 +504,63 @@ def generate_anova_interpretation(
     sections.append(("Mean Performance and Ranking", " ".join(ranking)))
 
     # ── 7 (single: 5). Breeding Interpretation ────────────────────────────────
+    # ── 7 (single: 5). Breeding / Research Interpretation ────────────────────
     breeding = []
-    if selection_feasible is True:
+    if domain == "plant_breeding":
+        if selection_feasible is True:
+            breeding.append(
+                f"The results suggest that selection for improved {trait} is feasible."
+            )
+            if is_multi:
+                if gxe_significant is False:
+                    breeding.append(
+                        "Given the absence of significant genotype \u00d7 environment "
+                        "interaction, breeding efforts can focus on broad adaptation "
+                        "across environments."
+                    )
+                else:
+                    breeding.append(
+                        "However, due to significant genotype \u00d7 environment "
+                        "interaction, breeding strategies should prioritise stability "
+                        "analysis and environment-specific selection."
+                    )
+        else:
+            breeding.append(
+                f"The lack of significant genetic variation indicates that selection "
+                f"for {trait} may not be effective with the current germplasm."
+            )
         breeding.append(
-            f"The results suggest that selection for improved {trait} is feasible."
+            "The observed variability and experimental precision should guide the "
+            "design of future experiments and breeding trials."
         )
-        if is_multi:
-            if gxe_significant is False:
-                breeding.append(
-                    "Given the absence of significant genotype \u00d7 environment "
-                    "interaction, breeding efforts can focus on broad adaptation "
-                    "across environments."
-                )
-            else:
-                breeding.append(
-                    "However, due to significant genotype \u00d7 environment "
-                    "interaction, breeding strategies should prioritise stability "
-                    "analysis and environment-specific selection."
-                )
     else:
+        if selection_feasible is True:
+            breeding.append(
+                f"Significant differences among {_terms} indicate that the tested "
+                f"levels vary meaningfully in their effect on {trait}."
+            )
+            if is_multi:
+                if gxe_significant is False:
+                    breeding.append(
+                        f"Given the absence of significant {_term} \u00d7 environment "
+                        "interaction, results are consistent across the tested environments."
+                    )
+                else:
+                    breeding.append(
+                        f"Due to significant {_term} \u00d7 environment interaction, "
+                        f"the effect of {_terms} varies across environments; "
+                        "environment-specific recommendations should be considered."
+                    )
+        else:
+            breeding.append(
+                f"No significant differences among {_terms} indicate that the tested "
+                f"levels do not differ sufficiently in their effect on {trait}."
+            )
         breeding.append(
-            f"The lack of significant genetic variation indicates that selection "
-            f"for {trait} may not be effective with the current germplasm."
+            "The observed variability and experimental precision should guide the "
+            "design of future experiments."
         )
-
-    breeding.append(
-        "The observed variability and experimental precision should guide the "
-        "design of future experiments and breeding trials."
-    )
-    sections.append(("Breeding Interpretation", " ".join(breeding)))
+    sections.append((_section_label, " ".join(breeding)))
 
     # ── 8 (single: 6). Risk and Limitations ───────────────────────────────────
     risks = []
@@ -550,6 +610,9 @@ def generate_anova_interpretation(
         "Integrate these ANOVA results with genetic parameter estimates "
         "(heritability, genetic coefficient of variation) for comprehensive "
         "trait evaluation."
+    ) if domain == "plant_breeding" else recs.append(
+        "Integrate these ANOVA results with other relevant analyses for "
+        "comprehensive trait evaluation."
     )
     sections.append(("Recommendation", " ".join(recs)))
 
@@ -671,6 +734,8 @@ async def analysis_anova(request: ModuleRequest, http_request: Request):
         df = read_file(file_bytes, ctx["file_type"])
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Could not read dataset: {exc}") from exc
+
+    analysis_domain = detect_analysis_domain(list(df.columns), "anova")
 
     missing = [c for c in request.trait_columns if c not in df.columns]
     if missing:
@@ -823,6 +888,7 @@ async def analysis_anova(request: ModuleRequest, http_request: Request):
                 main_plot_significant=mp_significant,
                 subplot_significant=sub_significant,
                 interaction_significant=int_significant,
+                domain=analysis_domain,
             )
             logger.info(
                 "ANOVA interpretation generated for trait '%s': %d characters",
