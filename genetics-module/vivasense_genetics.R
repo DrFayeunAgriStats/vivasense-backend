@@ -42,23 +42,27 @@ sanitize_anova_f_values <- function(anova_table) {
     NA_real_
   }
 
-  for (i in seq_len(nrow(anova_table))) {
-    term <- rn[i]
-    ms_effect <- suppressWarnings(as.numeric(anova_table[i, "Mean Sq"]))
+  for (term in rn) {
+    ms_effect <- suppressWarnings(as.numeric(anova_table[term, "Mean Sq"]))
 
     if (grepl("Residuals|Within|whole_plot_error", term, ignore.case = TRUE)) {
-      anova_table[i, "F value"] <- NA_real_
+      anova_table[term, "F value"] <- NA_real_
       if ("Pr(>F)" %in% names(anova_table)) {
-        anova_table[i, "Pr(>F)"] <- NA_real_
+        anova_table[term, "Pr(>F)"] <- NA_real_
       }
+      next
+    }
+
+    # Skip the Type III intercept row — it has no meaningful F test here
+    if (grepl("^\\(Intercept\\)$", term, ignore.case = FALSE)) {
       next
     }
 
     denom <- if (identical(term, "main_plot")) wp_error_ms else residual_ms
     f_val <- safe_f_ratio(ms_effect, denom)
-    anova_table[i, "F value"] <- f_val
+    anova_table[term, "F value"] <- f_val
     if (is.na(f_val) && ("Pr(>F)" %in% names(anova_table))) {
-      anova_table[i, "Pr(>F)"] <- NA_real_
+      anova_table[term, "Pr(>F)"] <- NA_real_
     }
   }
 
@@ -128,9 +132,12 @@ compute_mean_separation <- function(model, trait_name = "Trait",
   }
 
   # Return atomic vectors so jsonlite never unboxes them with auto_unbox=TRUE
+  # Use the first non-"groups" numeric column by name instead of positional [[1]]
+  # to guard against agricolae versions that order columns differently.
+  mean_col <- setdiff(names(groups_df), "groups")[1]
   list(
     genotype = geno_order,
-    mean     = as.numeric(groups_df[[1]]),
+    mean     = as.numeric(groups_df[[mean_col]]),
     se       = se_vals,
     group    = as.character(groups_df$groups),
     test     = test_name,
