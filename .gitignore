@@ -60,3 +60,8 @@ add_issues_to_project.ps1
 create_vivasense_github_board.ps1
 build_manuscript.py
 h2_symbol_audit_locations.txt
+
+add_issues_to_project.ps1
+create_vivasense_github_board.ps1
+build_manuscript.py
+h2_symbol_audit_locations.txt
