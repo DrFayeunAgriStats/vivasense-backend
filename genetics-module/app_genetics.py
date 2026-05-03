@@ -288,6 +288,13 @@ try:
 except Exception as _e:
     logger.warning("upload router not loaded — %s", _e)
 
+try:
+    from field_layout_routes import router as field_layout_router
+    app.include_router(field_layout_router)
+    logger.info("field-layout router loaded (/field-layout/generate, /field-layout/designs)")
+except Exception as e:
+    logger.warning(f"field-layout router failed to load: {e}")
+
 # Step 5.5 — Descriptive Stats analysis module (/analysis/descriptive-stats)
 try:
     from analysis_descriptive_stats_routes import router as desc_router
