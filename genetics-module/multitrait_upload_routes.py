@@ -572,6 +572,30 @@ def _extract_gxe_stats(analysis_result: GeneticsResponse) -> tuple[Optional[floa
     return None, None
 
 
+def _extract_genotype_stats(analysis_result: GeneticsResponse) -> tuple[Optional[float], Optional[float], Optional[bool]]:
+    at = analysis_result.result.anova_table if analysis_result.result else None
+    if at is None:
+        return None, None, None
+
+    aliases = {"genotype", "genotypes"}
+
+    def _norm(label: Any) -> str:
+        s = str(label).strip().lower()
+        s = " ".join(s.replace("×", "x").split())
+        return s
+
+    for idx, src in enumerate(at.source or []):
+        src_norm = _norm(src)
+        if src_norm in aliases:
+            f_val = at.f_value[idx] if idx < len(at.f_value) else None
+            p_val = at.p_value[idx] if idx < len(at.p_value) else None
+            f_num = float(f_val) if f_val is not None else None
+            p_num = float(p_val) if p_val is not None else None
+            return f_num, p_num, (p_num <= 0.05 if p_num is not None else None)
+
+    return None, None, None
+
+
 def _build_breeding_input(
     summary_table: List[SummaryTableRow],
     trait_results: Dict[str, TraitResult],
@@ -608,6 +632,7 @@ def _build_breeding_input(
                 })
 
         f_gxe, p_gxe = _extract_gxe_stats(tr.analysis_result)
+        f_genotype, p_genotype, genotype_significant = _extract_genotype_stats(tr.analysis_result)
         h2_value = None
         if summary_row is not None and summary_row.h2 is not None:
             h2_value = float(summary_row.h2)
@@ -623,6 +648,9 @@ def _build_breeding_input(
             "top_genotype": top_genotype,
             "f_gxe": float(f_gxe) if f_gxe is not None else None,
             "p_gxe": float(p_gxe) if p_gxe is not None else None,
+            "f_value": f_genotype,
+            "p_value": p_genotype,
+            "genotype_significant": genotype_significant,
             "genotype_means": genotype_means,
         })
 

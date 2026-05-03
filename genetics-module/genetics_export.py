@@ -506,6 +506,29 @@ def _extract_gxe_stats_from_anova(at: Optional[AnovaTable]) -> Tuple[Optional[fl
     return None, None
 
 
+def _extract_genotype_stats_from_anova(
+    at: Optional[AnovaTable],
+) -> Tuple[Optional[float], Optional[float], Optional[bool]]:
+    if at is None:
+        return None, None, None
+
+    aliases = {"genotype", "genotypes"}
+
+    def _norm(label: Any) -> str:
+        return " ".join(str(label).strip().lower().replace("×", "x").split())
+
+    for idx, src in enumerate(at.source or []):
+        src_norm = _norm(src)
+        if src_norm in aliases:
+            f_val = at.f_value[idx] if idx < len(at.f_value) else None
+            p_val = at.p_value[idx] if idx < len(at.p_value) else None
+            f_num = float(f_val) if f_val is not None else None
+            p_num = float(p_val) if p_val is not None else None
+            return f_num, p_num, (p_num <= 0.05 if p_num is not None else None)
+
+    return None, None, None
+
+
 def _build_breeding_input_for_export(data: UploadAnalysisResponse) -> List[Dict[str, Any]]:
     summary_map = {row.trait: row for row in data.summary_table if row.status == "success"}
     synthesis_input: List[Dict[str, Any]] = []
@@ -538,6 +561,7 @@ def _build_breeding_input_for_export(data: UploadAnalysisResponse) -> List[Dict[
                 })
 
         f_gxe, p_gxe = _extract_gxe_stats_from_anova(result.anova_table)
+        f_genotype, p_genotype, genotype_significant = _extract_genotype_stats_from_anova(result.anova_table)
         synthesis_input.append({
             "trait_name": trait_name,
             "h2": float(summary_row.h2) if summary_row is not None and summary_row.h2 is not None else None,
@@ -545,6 +569,9 @@ def _build_breeding_input_for_export(data: UploadAnalysisResponse) -> List[Dict[
             "top_genotype": top_genotype,
             "f_gxe": float(f_gxe) if f_gxe is not None else None,
             "p_gxe": float(p_gxe) if p_gxe is not None else None,
+            "f_value": f_genotype,
+            "p_value": p_genotype,
+            "genotype_significant": genotype_significant,
             "genotype_means": genotype_means,
         })
 
@@ -762,6 +789,11 @@ def _add_anova_section(doc: Document, at: AnovaTable) -> None:
     genotype_idx = ge_idx = None
 
     for i, src in enumerate(at.source):
+        # Filter out Intercept row from Word report ANOVA table.
+        src_label = str(src).strip().lower()
+        if src_label in {"(intercept)", "intercept"}:
+            continue
+
         label = _ANOVA_LABELS.get(src, src)
         df_val = at.df[i] if i < len(at.df) else None
         ss_val = at.ss[i] if i < len(at.ss) else None

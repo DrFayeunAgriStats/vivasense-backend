@@ -28,17 +28,62 @@ def build_breeding_synthesis(trait_results: list[dict]) -> str:
     if n_traits == 0:
         return ""
 
+    paragraphs = []
     genotype_scores = {}
 
     for trait in trait_results:
+        trait_name = str(trait.get("trait_name") or "this trait")
         means = trait.get("genotype_means", [])
+
+        genotype_significant = trait.get("genotype_significant")
+        p_value_raw = trait.get("p_value")
+        f_value_raw = trait.get("f_value")
+
+        if genotype_significant is None and p_value_raw is not None:
+            try:
+                genotype_significant = float(p_value_raw) <= 0.05
+            except (TypeError, ValueError):
+                genotype_significant = None
+
+        if genotype_significant is False:
+            try:
+                f_text = f"{float(f_value_raw):.3f}" if f_value_raw is not None else "—"
+            except (TypeError, ValueError):
+                f_text = "—"
+            try:
+                p_text = f"{float(p_value_raw):.3f}" if p_value_raw is not None else "—"
+            except (TypeError, ValueError):
+                p_text = "—"
+
+            paragraphs.append(
+                f"Genotypic variation for {trait_name} was not statistically significant "
+                f"(F = {f_text}, p = {p_text}). Genetic advance estimates "
+                f"are unreliable for this trait under the present experimental conditions. "
+                f"Increase sample size or evaluate across multiple environments before "
+                f"making selection decisions."
+            )
+            continue
+
+        groups = []
+        for m in means:
+            grp = str(m.get("group") or "").strip()
+            if grp:
+                groups.append(grp)
+        if groups and len(set(groups)) == 1:
+            paragraphs.append(
+                "No genotype showed statistically superior performance. All genotypes were assigned to the same mean separation group."
+            )
+            continue
+
         if not means:
             continue
         n_genos = len(means)
         top_cutoff = max(1, round(n_genos * 0.25))
 
         for geno_data in means:
-            geno = geno_data["genotype"]
+            geno = str(geno_data.get("genotype") or "")
+            if not geno:
+                continue
             rank = geno_data.get("rank", n_genos)
 
             if rank <= top_cutoff:
@@ -78,8 +123,6 @@ def build_breeding_synthesis(trait_results: list[dict]) -> str:
                 "perf_score": perf_score,
                 "stab_score": stab_score,
             })
-
-    paragraphs = []
 
     high_h2_traits = [t["trait_name"] for t in trait_results
                       if (t.get("h2") or 0) >= 0.80]
