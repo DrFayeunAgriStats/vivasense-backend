@@ -125,18 +125,22 @@ BLOCK_KEYWORDS = {
     "rep",
     "replication",
     "replicate",
-    "plot",
-    "row",
-    "column",
 }
 
 
+def _contains_keyword(column: str, keywords: set[str]) -> bool:
+    name = str(column).strip().lower()
+    return any(keyword in name for keyword in keywords)
+
+
 def suggest_experimental_design(column_names: list[str]) -> str:
-    lower_cols = {str(column).strip().lower() for column in column_names}
-    if any(keyword in lower_cols for keyword in MET_ENVIRONMENT_KEYWORDS):
+    if any(_contains_keyword(column, MET_ENVIRONMENT_KEYWORDS) for column in column_names):
         return "MET"
-    if not any(keyword in lower_cols for keyword in BLOCK_KEYWORDS):
+
+    # If no block/replication-like column is detected, default to CRD.
+    if not any(_contains_keyword(column, BLOCK_KEYWORDS) for column in column_names):
         return "CRD"
+
     return "RCBD"
 
 
