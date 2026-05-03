@@ -1441,6 +1441,11 @@ def _anova_to_records(at: AnovaTable) -> List[Dict[str, str]]:
     """Convert AnovaTable (parallel arrays) to a list of dicts for _add_table_to_doc."""
     records = []
     for i, src in enumerate(at.source):
+        # Suppress Intercept row — not meaningful for plant breeding interpretation
+        src_label = str(src).strip().lower()
+        if src_label in {"(intercept)", "intercept"}:
+            continue
+
         df_val = at.df[i] if i < len(at.df) else None
         ss_val = at.ss[i] if i < len(at.ss) else None
         ms_val = at.ms[i] if i < len(at.ms) else None
