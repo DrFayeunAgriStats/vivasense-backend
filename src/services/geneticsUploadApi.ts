@@ -55,6 +55,7 @@ export interface UploadAnalysisRequest {
   random_environment?: boolean;
   selection_intensity: number;
   module?: "anova" | "genetic_parameters" | "correlation" | "heatmap";
+  research_domain?: "plant_breeding" | "agronomy" | "general";
   // Optional ANOVA-specific routing hints.
   design_type?: "crd" | "rcbd" | "factorial" | "factorial_rcbd" | "split_plot_rcbd";
   treatment_column?: string;
@@ -72,7 +73,7 @@ export interface SummaryTableRow {
   pcv?: number;
   gam_percent?: number;
   heritability_class?: "high" | "moderate" | "low";
-  gam_class?: "high" | "moderate" | "low";
+  gam_class?: "High" | "Medium" | "Low";
   status: "success" | "failed";
   error?: string;
 }
@@ -135,6 +136,7 @@ export interface GeneticsResponse {
   variance_warnings: Record<string, unknown>;
   result: GeneticsResult | null;
   interpretation: string | null;
+  anova_type_warning?: string | null;
 }
 
 /** Matches TraitResult in multitrait_upload_schemas.py */
@@ -150,6 +152,8 @@ export interface UploadAnalysisResponse {
   trait_results: Record<string, TraitResult>;
   dataset_summary: DatasetSummary;
   failed_traits: string[];
+  anova_type_warning?: string | null;
+  breeding_summary?: string | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -289,6 +293,7 @@ export async function exportWordReport(
   const payload: UploadAnalysisResponse = {
     ...data,
     trait_results: normalizedTraitResults,
+    anova_type_warning: data.anova_type_warning ?? null,
   };
 
   console.log("[exportWordReport] Download payload:", JSON.stringify(payload, null, 2));
@@ -389,6 +394,8 @@ export interface UploadDatasetContext {
    * Null if dataset confirmation failed (module-based endpoints unavailable).
    */
   datasetToken: string | null;
+  /** User-selected research domain — drives terminology throughout the UI and backend interpretation. */
+  research_domain?: "plant_breeding" | "agronomy" | "general";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -407,6 +414,7 @@ export interface ConfirmDatasetRequest {
   design_type?: "single" | "multi";
   random_environment?: boolean;
   selection_intensity?: number;
+  research_domain?: "plant_breeding" | "agronomy" | "general";
 }
 
 export interface ConfirmDatasetResponse {

@@ -141,7 +141,9 @@ export function DataSourceTabs({
       ? [
           {
             id: "genetics" as TabId,
-            label: "Genetic Parameters",
+            label: datasetContext?.research_domain === "agronomy"
+              ? "Variance Components"
+              : "Genetic Parameters",
             icon: "🧬",
             description: "Heritability, GCV, PCV, GAM",
             badge: "pro" as const,
@@ -163,7 +165,7 @@ export function DataSourceTabs({
       ? [
           {
             id: "descriptive" as TabId,
-            label: "Descriptive Stats",
+            label: "Descriptive Statistics",
             icon: "📊",
             description: "Summary statistics per trait",
             badge: "free" as const,
@@ -235,6 +237,7 @@ export function DataSourceTabs({
               <button
                 key={tab.id}
                 type="button"
+                title={tab.label}
                 onClick={() => handleTabClick(tab)}
                 className={[
                   "group flex shrink-0 items-center gap-2.5 rounded-xl px-3 py-2.5 text-left transition-all",
@@ -246,7 +249,7 @@ export function DataSourceTabs({
               >
                 <span className="text-lg shrink-0">{tab.icon}</span>
                 <span className="flex-1 min-w-0">
-                  <span className="block text-sm font-medium leading-tight truncate">{tab.label}</span>
+                  <span className="block text-sm font-medium leading-tight">{tab.label}</span>
                   <span className="hidden lg:block text-xs text-gray-400 leading-snug mt-0.5 truncate">
                     {tab.description}
                   </span>

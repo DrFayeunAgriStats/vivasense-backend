@@ -1,6 +1,16 @@
 import React, { useState } from "react";
 import { UploadPreviewResponse } from "@/services/geneticsUploadApi";
 import { VsSpinner } from "./VsSpinner";
+import {
+  DEFAULT_SELECTION_INTENSITY,
+  SELECTION_INTENSITIES,
+  selectionIntensityDisclosure,
+} from "./selectionIntensity";
+import {
+  DomainKey,
+  RESEARCH_DOMAINS,
+  detectDomainFromColumns,
+} from "./domainTerms";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -17,6 +27,8 @@ interface ColumnMapping {
   selectedTraits: string[];
   mode: "single" | "multi";
   randomEnvironment: boolean;
+  selectionIntensity: number;
+  research_domain: DomainKey;
 }
 
 interface ColumnMappingConfirmProps {
@@ -61,6 +73,9 @@ export function ColumnMappingConfirm({
   // ── Section A ─────────────────────────────────────────────────────────────
 
   const [design, setDesign] = useState<ExperimentalDesign>("RCBD");
+  const [domain, setDomain] = useState<DomainKey>(() =>
+    detectDomainFromColumns(column_names)
+  );
 
   // ── Section B ─────────────────────────────────────────────────────────────
 
@@ -78,6 +93,7 @@ export function ColumnMappingConfirm({
   const [environmentColumn, setEnvironmentColumn] = useState(
     detected_columns.environment?.column ?? ""
   );
+  const [selectionIntensity, setSelectionIntensity] = useState(DEFAULT_SELECTION_INTENSITY);
 
   // ── Section C ─────────────────────────────────────────────────────────────
 
@@ -203,6 +219,8 @@ export function ColumnMappingConfirm({
       selectedTraits,
       mode:              design === "MET" ? "multi" : "single",
       randomEnvironment: false,
+      selectionIntensity,
+      research_domain:   domain,
     });
   };
 
@@ -295,6 +313,35 @@ export function ColumnMappingConfirm({
         </div>
       )}
 
+      {/* ── Research Domain selector ────────────────────────────────────────── */}
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Research Domain
+          <span className="ml-2 text-xs font-normal text-gray-400">
+            (auto-detected · you can override)
+          </span>
+        </label>
+        <div className="grid grid-cols-3 gap-2">
+          {RESEARCH_DOMAINS.map((rd) => (
+            <button
+              key={rd.value}
+              type="button"
+              onClick={() => setDomain(rd.value)}
+              className={[
+                "rounded-xl border px-3 py-2.5 text-left transition-colors",
+                domain === rd.value
+                  ? "border-emerald-600 bg-emerald-50 ring-1 ring-emerald-500"
+                  : "border-gray-200 bg-white hover:border-emerald-300 hover:bg-emerald-50/50",
+              ].join(" ")}
+            >
+              <span className="text-lg">{rd.icon}</span>
+              <p className="mt-1 text-xs font-semibold text-gray-800 leading-tight">{rd.label}</p>
+              <p className="mt-0.5 text-[10px] text-gray-400 leading-snug">{rd.desc}</p>
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* ── Section A: Experimental Design ─────────────────────────────────── */}
 
       <FormField
@@ -313,6 +360,37 @@ export function ColumnMappingConfirm({
             </option>
           ))}
         </select>
+      </FormField>
+
+      <FormField
+        label="Selection Intensity"
+        helper="Controls how stringent selection is for GA and GAM calculations."
+        required
+      >
+        <div className="space-y-2">
+          <div className="flex items-center gap-1.5">
+            <select
+              value={selectionIntensity}
+              onChange={(e) => setSelectionIntensity(Number(e.target.value) || DEFAULT_SELECTION_INTENSITY)}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 outline-none"
+            >
+              {SELECTION_INTENSITIES.map((option) => (
+                <option key={option.pct} value={option.value}>
+                  {option.label} (i = {option.value.toFixed(3)}) - {option.note}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-gray-300 text-xs text-gray-600"
+              title="Selection intensity (i) is the standardised selection differential. It determines how aggressively superior genotypes are selected. Default is 10% (i = 1.40) per Falconer & Mackay (1996)."
+              aria-label="Selection intensity information"
+            >
+              i
+            </button>
+          </div>
+          <p className="text-xs text-gray-500">{selectionIntensityDisclosure(selectionIntensity)}</p>
+        </div>
       </FormField>
 
       {/* ── Section B: Core Variables ───────────────────────────────────────── */}
@@ -617,6 +695,7 @@ export function ColumnMappingConfirm({
               value={design === "CRD" ? "—" : "—"}
             />
             <SummaryRow label="Observations" value={n_rows.toLocaleString()} />
+            <SummaryRow label="Selection intensity" value={`i = ${selectionIntensity.toFixed(3)}`} />
           </div>
         </div>
       )}

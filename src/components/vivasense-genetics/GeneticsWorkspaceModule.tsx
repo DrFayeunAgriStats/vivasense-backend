@@ -6,6 +6,11 @@ import {
 } from "@/services/geneticsUploadApi";
 import { ResultsDisplay } from "@/components/vivasense-genetics/ResultsDisplay";
 import { VsSpinner } from "@/components/vivasense-genetics/VsSpinner";
+import {
+  DEFAULT_SELECTION_INTENSITY,
+  SELECTION_INTENSITIES,
+  selectionIntensityDisclosure,
+} from "@/components/vivasense-genetics/selectionIntensity";
 
 interface GeneticsWorkspaceModuleProps {
   datasetContext: UploadDatasetContext | null;
@@ -13,7 +18,7 @@ interface GeneticsWorkspaceModuleProps {
 
 export function GeneticsWorkspaceModule({ datasetContext }: GeneticsWorkspaceModuleProps) {
   const [selectedTraits, setSelectedTraits] = useState<string[]>([]);
-  const [selectionIntensity, setSelectionIntensity] = useState(1.4);
+  const [selectionIntensity, setSelectionIntensity] = useState(DEFAULT_SELECTION_INTENSITY);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<UploadAnalysisResponse | null>(null);
@@ -21,7 +26,7 @@ export function GeneticsWorkspaceModule({ datasetContext }: GeneticsWorkspaceMod
   useEffect(() => {
     if (!datasetContext) return;
     setSelectedTraits(datasetContext.availableTraitColumns);
-    setSelectionIntensity(1.4);
+    setSelectionIntensity(DEFAULT_SELECTION_INTENSITY);
     setError(null);
     setResults(null);
   }, [datasetContext]);
@@ -97,16 +102,31 @@ export function GeneticsWorkspaceModule({ datasetContext }: GeneticsWorkspaceMod
         </p>
 
         <div className="mb-4">
-          <label className="mb-1 block text-sm font-medium text-gray-700">Selection intensity (k)</label>
-          <input
-            type="number"
-            min={0}
-            step="0.01"
+          <div className="mb-1 flex items-center gap-1.5">
+            <label className="block text-sm font-medium text-gray-700">Selection Intensity</label>
+            <button
+              type="button"
+              className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-gray-300 text-xs text-gray-600"
+              title="Selection intensity (i) is the standardised selection differential. It determines how aggressively superior genotypes are selected. Default is 10% (i = 1.40) per Falconer & Mackay (1996)."
+              aria-label="Selection intensity information"
+            >
+              i
+            </button>
+          </div>
+          <select
             value={selectionIntensity}
-            onChange={(e) => setSelectionIntensity(Number(e.target.value) || 1.4)}
+            onChange={(e) => setSelectionIntensity(Number(e.target.value) || DEFAULT_SELECTION_INTENSITY)}
             className="w-full max-w-xs rounded-lg border border-gray-300 px-3 py-2 text-sm"
-          />
-          <p className="mt-1 text-xs text-gray-400">Default 1.4 (~20% selection). Use 2.06 for 5% selection.</p>
+          >
+            {SELECTION_INTENSITIES.map((option) => (
+              <option key={option.pct} value={option.value}>
+                {option.label} (i = {option.value.toFixed(3)}) - {option.note}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-gray-400">
+            {selectionIntensityDisclosure(selectionIntensity)}
+          </p>
         </div>
 
         <div className="space-y-2">
@@ -196,7 +216,13 @@ export function GeneticsWorkspaceModule({ datasetContext }: GeneticsWorkspaceMod
         </div>
       </div>
 
-      {results && <ResultsDisplay results={results} onReset={() => setResults(null)} />}
+      {results && (
+        <ResultsDisplay
+          results={results}
+          onReset={() => setResults(null)}
+          domain={datasetContext.research_domain}
+        />
+      )}
     </div>
   );
 }

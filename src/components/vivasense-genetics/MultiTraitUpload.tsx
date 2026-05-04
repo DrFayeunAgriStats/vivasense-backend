@@ -58,6 +58,7 @@ export function MultiTraitUpload({ onDatasetReady, onFileStatus }: MultiTraitUpl
   const [results, setResults] = useState<UploadAnalysisResponse | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [datasetToken, setDatasetToken] = useState<string | null>(null);
+  const [researchDomain, setResearchDomain] = useState<"plant_breeding" | "agronomy" | "general">("plant_breeding");
   const [showProModal, setShowProModal] = useState(false);
   // State 1B: file parsed successfully but contained zero valid rows.
   const [invalidFile, setInvalidFile] = useState(false);
@@ -152,8 +153,11 @@ export function MultiTraitUpload({ onDatasetReady, onFileStatus }: MultiTraitUpl
     selectedTraits: string[];
     mode: "single" | "multi";
     randomEnvironment: boolean;
+    selectionIntensity: number;
+    research_domain: "plant_breeding" | "agronomy" | "general";
   }) => {
     if (!file) return;
+    setResearchDomain(mapping.research_domain);
     setStep("analyzing");
     setAnalysisError(null);
 
@@ -177,7 +181,7 @@ export function MultiTraitUpload({ onDatasetReady, onFileStatus }: MultiTraitUpl
           mode: mapping.mode,
           design_type: mapping.mode === "multi" ? "multi" : "single",
           random_environment: mapping.randomEnvironment,
-          selection_intensity: 2.06,
+          selection_intensity: mapping.selectionIntensity,
         });
         finalToken = confirmed.dataset_token;
         setDatasetToken(finalToken);
@@ -208,6 +212,7 @@ export function MultiTraitUpload({ onDatasetReady, onFileStatus }: MultiTraitUpl
         availableTraitColumns: preview?.detected_columns.traits ?? mapping.selectedTraits,
         mode: mapping.mode,
         datasetToken: finalToken,
+        research_domain: mapping.research_domain,
       };
       console.log(
         "[MultiTraitUpload] sharing dataset context — datasetToken:",
@@ -225,7 +230,8 @@ export function MultiTraitUpload({ onDatasetReady, onFileStatus }: MultiTraitUpl
         trait_columns: mapping.selectedTraits.length > 0 ? mapping.selectedTraits : [],
         mode: mapping.mode,
         random_environment: mapping.randomEnvironment,
-        selection_intensity: 2.06,
+        selection_intensity: mapping.selectionIntensity,
+        research_domain: mapping.research_domain,
       });
       setResults(data);
       setStep("results");
@@ -250,6 +256,7 @@ export function MultiTraitUpload({ onDatasetReady, onFileStatus }: MultiTraitUpl
     setResults(null);
     setAnalysisError(null);
     setDatasetToken(null);
+    setResearchDomain("plant_breeding");
     setShowProModal(false);
     setInvalidFile(false);
     setReplacementNotice(false);
@@ -307,7 +314,7 @@ export function MultiTraitUpload({ onDatasetReady, onFileStatus }: MultiTraitUpl
         )}
 
         {step === "results" && results && (
-          <ResultsDisplay results={results} onReset={reset} />
+          <ResultsDisplay results={results} onReset={reset} domain={researchDomain} />
         )}
       </div>
 

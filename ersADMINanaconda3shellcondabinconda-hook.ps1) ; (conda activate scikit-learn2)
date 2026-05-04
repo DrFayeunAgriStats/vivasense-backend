@@ -1,0 +1,7 @@
+warning: in the working copy of 'src/components/vivasense-genetics/ColumnMappingConfirm.tsx', LF will be replaced by CRLF the next time Git touches it
+src/components/vivasense-genetics/ColumnMappingConfirm.tsx
+src/components/vivasense-genetics/GeneticsWorkspaceModule.tsx
+src/components/vivasense-genetics/MultiTraitUpload.tsx
+src/components/vivasense-genetics/ResultsDisplay.tsx
+src/services/geneticsUploadApi.ts
+vercel.json
