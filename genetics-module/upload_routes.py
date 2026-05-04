@@ -93,6 +93,10 @@ async def upload_preview_v2(file: UploadFile = File(...)):
             "No numeric trait columns detected. "
             "Verify that trait data is numeric and not labelled as an ID column."
         )
+    else:
+        warnings.append(
+            "If your column contains numeric treatment levels (e.g. 0, 50, 100 kg N/ha or storage days 1, 3, 6, 9), toggle it to Treatment Factor."
+        )
 
     suggested_design = suggest_experimental_design(list(df.columns))
     mode_suggestion = "multi" if detected.environment is not None else "single"
@@ -172,6 +176,9 @@ async def upload_dataset(request: UploadDatasetRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # Numeric-coded treatment columns manually toggled in the mapping UI.
+    numeric_factor_columns = [c for c in request.numeric_factor_columns if c and c.strip()]
+
     # Validate column mapping selections for the chosen design type.
     # Build the list of mapped structural columns (only those provided).
     mapped_columns: List[str] = []
@@ -187,6 +194,7 @@ async def upload_dataset(request: UploadDatasetRequest):
         mapped_columns.append(request.main_plot_column)
     if request.sub_plot_column:
         mapped_columns.append(request.sub_plot_column)
+    mapped_columns.extend(numeric_factor_columns)
 
     if len(set(mapped_columns)) != len(mapped_columns):
         raise HTTPException(
@@ -300,6 +308,41 @@ async def upload_dataset(request: UploadDatasetRequest):
             detail=f"Columns not found in file: {missing}",
         )
 
+    missing_numeric_factors = [c for c in numeric_factor_columns if c not in df.columns]
+    if missing_numeric_factors:
+        raise HTTPException(
+            status_code=400,
+            detail=f"numeric_factor_columns not found in file: {missing_numeric_factors}",
+        )
+
+    # Resolve effective factor column for single-environment factorial RCBD.
+    # If the user did not set factor_column explicitly but toggled exactly one
+    # numeric-coded treatment column, promote it to factor_column.
+    effective_factor_column = request.factor_column
+    if (
+        request.design_type != "split_plot_rcbd"
+        and request.mode == "single"
+        and request.rep_column
+        and not effective_factor_column
+        and len(numeric_factor_columns) == 1
+    ):
+        effective_factor_column = numeric_factor_columns[0]
+
+    # Persist a resolved categorical set in dataset context so downstream
+    # model builders can treat numeric-coded treatment levels as factors.
+    categorical_columns: List[str] = []
+    for col in [
+        request.genotype_column,
+        request.rep_column,
+        request.environment_column,
+        request.main_plot_column,
+        request.sub_plot_column,
+        effective_factor_column,
+        *numeric_factor_columns,
+    ]:
+        if col and col not in categorical_columns:
+            categorical_columns.append(col)
+
     # Gather dataset-level stats
     if request.design_type == "split_plot_rcbd":
         # No genotype column for generic split_plot_rcbd
@@ -331,7 +374,9 @@ async def upload_dataset(request: UploadDatasetRequest):
         "main_plot_column":  request.main_plot_column,
         "sub_plot_column":   request.sub_plot_column,
         "environment_column": request.environment_column,
-        "factor_column":     request.factor_column,    # may be None; factorial RCBD/CRD
+        "factor_column":     effective_factor_column,  # may be None; factorial RCBD/CRD
+        "numeric_factor_columns": numeric_factor_columns,
+        "categorical_columns": categorical_columns,
         "mode":              request.mode,
         "design_type":       request.design_type,
         "random_environment": request.random_environment,
@@ -352,4 +397,5 @@ async def upload_dataset(request: UploadDatasetRequest):
         column_names=list(df.columns),
         mode=request.mode,
         design_type=request.design_type,
+        categorical_columns=categorical_columns,
     )

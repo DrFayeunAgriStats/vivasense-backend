@@ -71,6 +71,14 @@ class UploadDatasetRequest(BaseModel):
             "When provided without rep_column a factorial CRD model is used."
         ),
     )
+    numeric_factor_columns: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Columns overridden in the UI from numeric trait to categorical treatment factor. "
+            "Used for factorial model construction when treatment levels are numeric-coded "
+            "(e.g., 0/50/100 kg N/ha, storage days 1/3/6/9)."
+        ),
+    )
     design_type: str = Field(
         default="single",
         pattern="^(single|multi|split_plot_rcbd)$",
@@ -91,6 +99,10 @@ class UploadDatasetResponse(BaseModel):
     column_names: List[str]
     mode: str
     design_type: str
+    categorical_columns: List[str] = Field(
+        default_factory=list,
+        description="Resolved categorical columns used in downstream model construction.",
+    )
 
 
 # ============================================================================

@@ -103,6 +103,13 @@ class UploadAnalysisRequest(BaseModel):
             "When provided without rep_column a factorial CRD model is used."
         ),
     )
+    numeric_factor_columns: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Columns overridden in the UI from numeric trait to categorical treatment factor. "
+            "Useful for numeric-coded treatment levels such as N rates or storage days."
+        ),
+    )
     trait_columns: List[str] = Field(..., min_length=1)
     mode: str = Field(..., pattern="^(single|multi)$")
     random_environment: bool = False

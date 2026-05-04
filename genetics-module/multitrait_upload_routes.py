@@ -21,6 +21,7 @@ import asyncio
 import base64
 import io
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -710,6 +711,10 @@ async def upload_preview(file: UploadFile = File(...)):
             "No numeric trait columns detected. "
             "Verify that trait data is numeric and not labelled as an ID column."
         )
+    else:
+        warn.append(
+            "If your column contains numeric treatment levels (e.g. 0, 50, 100 kg N/ha or storage days 1, 3, 6, 9), toggle it to Treatment Factor."
+        )
 
     suggested_design = suggest_experimental_design(list(df.columns))
     mode_suggestion = "multi" if detected.environment is not None else "single"
@@ -857,6 +862,13 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
     env_col_for_mode = request.environment_column if request.mode == "multi" else None
     # factor_column is only applicable in single-env mode
     factor_col = getattr(request, "factor_column", None) if request.mode == "single" else None
+    numeric_factor_columns = [
+        c for c in getattr(request, "numeric_factor_columns", [])
+        if c and c.strip() and c in df.columns
+    ]
+    if request.mode == "single" and rep_column and not factor_col and len(numeric_factor_columns) == 1:
+        # Numeric-coded treatment levels toggled as factors in UI.
+        factor_col = numeric_factor_columns[0]
 
     # Bounded concurrency: Limit active R subprocesses to prevent Out-Of-Memory (OOM)
     # errors when processing massive datasets with 50+ traits.
@@ -911,6 +923,16 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                         or str(r_errors)
                         or "R analysis returned ERROR"
                     )
+                    gxe_rep_match = re.search(r"Minimum reps per G(?:x|×)E:\s*(\d+)", str(r_msg), flags=re.IGNORECASE)
+                    if gxe_rep_match:
+                        min_reps = int(gxe_rep_match.group(1))
+                        replication_word = "replication" if min_reps == 1 else "replications"
+                        raise RuntimeError(
+                            f"Insufficient replications: This dataset has only {min_reps} {replication_word} "
+                            "per genotype-environment combination. VivaSense requires at least 2 replications "
+                            "per GxE cell to estimate variance components reliably. Please check your data "
+                            "structure or use a dataset with >= 2 replications."
+                        )
                     raise RuntimeError(f"R ERROR: {r_msg}")
 
                 r_result = result_dict.get("result") or {}
@@ -971,6 +993,19 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
             )
 
     # Ensure session state is preserved even if individual analyses fail
+    categorical_columns: List[str] = []
+    for col in [
+        request.genotype_column,
+        rep_column,
+        request.environment_column,
+        factor_col,
+        getattr(request, "main_plot_column", None),
+        getattr(request, "sub_plot_column", None),
+        *numeric_factor_columns,
+    ]:
+        if col and col not in categorical_columns:
+            categorical_columns.append(col)
+
     dataset_token = dataset_cache.create_token()
     dataset_cache.put_dataset(dataset_token, {
         "base64_content":     request.base64_content,
@@ -979,6 +1014,8 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
         "rep_column":         rep_column,
         "environment_column": request.environment_column,
         "factor_column":      factor_col,
+        "numeric_factor_columns": numeric_factor_columns,
+        "categorical_columns": categorical_columns,
         "main_plot_column":   getattr(request, "main_plot_column", None),
         "sub_plot_column":    getattr(request, "sub_plot_column", None),
         "mode":               request.mode,
