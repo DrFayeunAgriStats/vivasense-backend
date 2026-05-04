@@ -69,6 +69,37 @@ _ENV_PATTERNS = frozenset(
     ["environment", "location", "site", "season", "env", "loc", "year", "place"]
 )
 
+AGRONOMY_DOMAIN_HINTS = {
+    "spacing",
+    "rate",
+    "dose",
+    "fertilizer",
+    "fertiliser",
+    "nitrogen",
+    "irrigation",
+    "tillage",
+    "plot_treatment",
+}
+
+AGRONOMY_TREATMENT_KEYWORDS = {
+    "treatment",
+    "treat",
+    "spacing",
+    "rate",
+    "dose",
+    "level",
+    "fertilizer",
+    "fertiliser",
+    "nitrogen",
+    "irrigation",
+    "tillage",
+    "variety",
+    "cultivar",
+    "factor",
+    "group",
+    "plot_treatment",
+}
+
 # Numeric columns whose names indicate identifiers/indices rather than traits.
 # These are excluded from the candidate-trait list even if they are numeric.
 _NUMERIC_ID_PATTERNS = frozenset([
@@ -134,6 +165,10 @@ def _contains_keyword(column: str, keywords: set[str]) -> bool:
     return any(keyword in name for keyword in keywords)
 
 
+def _is_agronomy_context(column_names: list[str]) -> bool:
+    return any(_contains_keyword(column, AGRONOMY_DOMAIN_HINTS) for column in column_names)
+
+
 def suggest_experimental_design(column_names: list[str]) -> str:
     if any(_contains_keyword(column, MET_ENVIRONMENT_KEYWORDS) for column in column_names):
         return "MET"
@@ -156,10 +191,14 @@ def detect_columns(df: pd.DataFrame) -> DetectedColumns:
     """
     assigned: set = set()
     genotype_col = rep_col = env_col = None
+    genotype_patterns = _GENOTYPE_PATTERNS
+
+    if _is_agronomy_context(list(df.columns)):
+        genotype_patterns = frozenset(set(_GENOTYPE_PATTERNS) | AGRONOMY_TREATMENT_KEYWORDS)
 
     for col in df.columns:
         if genotype_col is None:
-            conf = _match_pattern(col, _GENOTYPE_PATTERNS)
+            conf = _match_pattern(col, genotype_patterns)
             if conf:
                 genotype_col = DetectedColumn(column=col, confidence=conf)
                 assigned.add(col)
