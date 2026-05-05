@@ -1271,11 +1271,12 @@ def _add_interpretation_section(
             _add_body(doc, interpretation_text)
             doc.add_paragraph()
 
-    # Academic interpretation
-    full_academic_text = (interpretation_text if not is_anova else None) or ar.interpretation or interpretation_text
-    if full_academic_text:
+    # Academic interpretation — only render if AI-generated text
+    # exists and differs from the rule-based text already written above.
+    academic_text = ar.interpretation if ar.interpretation else None
+    if academic_text and academic_text != interpretation_text:
         _add_heading(doc, "Academic Interpretation", level=3)
-        _add_body(doc, full_academic_text)
+        _add_body(doc, academic_text)
         doc.add_paragraph()
 
     # Breeding implication
