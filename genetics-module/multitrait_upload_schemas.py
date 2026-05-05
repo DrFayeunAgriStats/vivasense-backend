@@ -209,3 +209,7 @@ class UploadAnalysisResponse(BaseModel):
         default=None,
         description="Rule-based cross-trait breeding strategy synthesis.",
     )
+    domain: Optional[str] = Field(
+        default="plant_breeding",
+        description="Analysis domain controlling domain-specific UI and export wording.",
+    )

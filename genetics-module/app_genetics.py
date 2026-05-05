@@ -263,7 +263,8 @@ try:
     app.include_router(export_router)
     logger.info("genetics_export router loaded (/genetics/download-results, /genetics/export-word)")
 except Exception as _export_err:
-    logger.warning("genetics_export not loaded (%s) — /genetics/download-results will return 503", _export_err)
+    _captured_err = str(_export_err)
+    logger.warning("genetics_export not loaded (%s) — /genetics/download-results will return 503", _captured_err)
 
     # Fallback: register stub endpoints that return 503 so frontend gets a
     # meaningful error instead of a 404 / connection reset.
@@ -275,7 +276,7 @@ except Exception as _export_err:
     async def _export_unavailable(_request: _Request):
         return _JSONResponse(
             status_code=503,
-            content={"detail": f"Word export unavailable: {_export_err}"},
+                content={"detail": f"Word export unavailable: {_captured_err}"},
         )
 
 # ── Module-based pipeline (Steps 5–11) ───────────────────────────────────────

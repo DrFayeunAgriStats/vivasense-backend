@@ -154,6 +154,7 @@ export interface UploadAnalysisResponse {
   failed_traits: string[];
   anova_type_warning?: string | null;
   breeding_summary?: string | null;
+  domain?: "plant_breeding" | "agronomy" | "general";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -276,7 +277,8 @@ export async function analyzeUpload(
  */
 export async function exportWordReport(
   data: UploadAnalysisResponse,
-  filename = "vivasense_genetics_report.docx"
+  filename = "vivasense_genetics_report.docx",
+  domain?: "plant_breeding" | "agronomy" | "general"
 ): Promise<void> {
   guardProModule("export-word");
   // Normalise trait_results so every entry has the required "status" field.
@@ -294,6 +296,7 @@ export async function exportWordReport(
     ...data,
     trait_results: normalizedTraitResults,
     anova_type_warning: data.anova_type_warning ?? null,
+    domain: domain ?? data.domain ?? "plant_breeding",
   };
 
   console.log("[exportWordReport] Download payload:", JSON.stringify(payload, null, 2));
