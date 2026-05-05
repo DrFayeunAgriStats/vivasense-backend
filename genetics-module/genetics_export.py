@@ -797,8 +797,14 @@ def _add_descriptive_stats(doc: Document, result: GeneticsResult) -> None:
 # SECTION: ANOVA (per trait)
 # ============================================================================
 
-def _add_anova_section(doc: Document, at: AnovaTable) -> None:
+def _add_anova_section(doc: Document, at: AnovaTable, domain: str = "plant_breeding") -> None:
     _add_heading(doc, "Analysis of Variance (ANOVA)", level=2)
+
+    is_agronomy = domain in ("agronomy", "general")
+    _domain_labels: Dict[str, str] = {
+        **_ANOVA_LABELS,
+        **({"genotype": "Treatment", "genotype:environment": "T×E Interaction"} if is_agronomy else {}),
+    }
 
     headers = ["Source", "DF", "SS", "MS", "F-value", "p-value"]
     rows_data = []
@@ -810,7 +816,7 @@ def _add_anova_section(doc: Document, at: AnovaTable) -> None:
         if src_label in {"(intercept)", "intercept"}:
             continue
 
-        label = _ANOVA_LABELS.get(src, src)
+        label = _domain_labels.get(src, src)
         df_val = at.df[i] if i < len(at.df) else None
         ss_val = at.ss[i] if i < len(at.ss) else None
         ms_val = at.ms[i] if i < len(at.ms) else None
@@ -842,30 +848,54 @@ def _add_anova_section(doc: Document, at: AnovaTable) -> None:
             else "significant" if sig == "*"
             else "not significant"
         )
-        _add_body(
-            doc,
-            f"The genotype effect was {sig_word} "
-            f"(F = {_fmt(f_val, 3)}, {_fmt_p(p_val)}), indicating "
-            + ("substantial genetic variation among genotypes."
-               if sig_word != "not significant"
-               else "limited genetic variation among genotypes."),
-        )
-
-    if ge_idx is not None:
-        p_val = at.p_value[ge_idx] if ge_idx < len(at.p_value) else None
-        sig = _sig_label(p_val)
-        if sig in ("***", "**", "*"):
+        if is_agronomy:
             _add_body(
                 doc,
-                f"The G×E interaction was significant ({_fmt_p(p_val)}), "
-                "suggesting genotype performance differs across environments.",
+                f"The treatment effect was {sig_word} "
+                f"(F = {_fmt(f_val, 3)}, {_fmt_p(p_val)}), indicating "
+                + ("substantial variation among treatments."
+                   if sig_word != "not significant"
+                   else "limited variation among treatments."),
             )
         else:
             _add_body(
                 doc,
-                "The G×E interaction was not significant — genotype rankings "
-                "are stable across environments.",
+                f"The genotype effect was {sig_word} "
+                f"(F = {_fmt(f_val, 3)}, {_fmt_p(p_val)}), indicating "
+                + ("substantial genetic variation among genotypes."
+                   if sig_word != "not significant"
+                   else "limited genetic variation among genotypes."),
             )
+
+    if ge_idx is not None:
+        p_val = at.p_value[ge_idx] if ge_idx < len(at.p_value) else None
+        sig = _sig_label(p_val)
+        if is_agronomy:
+            if sig in ("***", "**", "*"):
+                _add_body(
+                    doc,
+                    f"The Treatment × Environment interaction was significant ({_fmt_p(p_val)}), "
+                    "suggesting treatment performance differs across environments.",
+                )
+            else:
+                _add_body(
+                    doc,
+                    "The Treatment × Environment interaction was not significant — treatment rankings "
+                    "are stable across environments.",
+                )
+        else:
+            if sig in ("***", "**", "*"):
+                _add_body(
+                    doc,
+                    f"The G×E interaction was significant ({_fmt_p(p_val)}), "
+                    "suggesting genotype performance differs across environments.",
+                )
+            else:
+                _add_body(
+                    doc,
+                    "The G×E interaction was not significant — genotype rankings "
+                    "are stable across environments.",
+                )
 
 
 # ============================================================================
@@ -876,10 +906,13 @@ def _add_mean_separation_section(
     doc: Document,
     trait_name: str,
     ms: MeanSeparation,
+    domain: str = "plant_breeding",
 ) -> None:
     _add_heading(doc, f"Mean Separation — {ms.test} (α = {ms.alpha})", level=2)
 
-    headers = ["Rank", "Genotype", "Mean", "SE", "Group"]
+    is_agronomy = domain in ("agronomy", "general")
+    entry_label = "Treatment" if is_agronomy else "Genotype"
+    headers = ["Rank", entry_label, "Mean", "SE", "Group"]
     rows_data = []
     for i, geno in enumerate(ms.genotype):
         se_val = ms.se[i] if i < len(ms.se) else None
@@ -895,11 +928,12 @@ def _add_mean_separation_section(
 
     top_letter = ms.group[0] if ms.group else "a"
     top_genos = [ms.genotype[i] for i, g in enumerate(ms.group) if g == top_letter]
+    top_label = "treatment(s)" if is_agronomy else "genotype(s)"
     _add_body(
         doc,
         "Means followed by the same letter are not significantly different "
         f"at α = {ms.alpha} ({ms.test}). "
-        f"Top-performing genotype(s) in group '{top_letter}': "
+        f"Top-performing {top_label} in group '{top_letter}': "
         + ", ".join(top_genos) + ".",
         italic=True,
     )
@@ -1143,14 +1177,7 @@ def _add_interpretation_section(
                     n_genotypes=result.n_genotypes,
                     n_environments=result.n_environments,
                     n_reps=result.n_reps,
-                    domain=(
-                        "plant_breeding"
-                        if any(
-                            isinstance(src, str) and "genotype" in src.lower()
-                            for src in (getattr(result.anova_table, "source", []) or [])
-                        )
-                        else "general"
-                    ),
+                    domain=domain or "plant_breeding",
                 )
                 logger.info("Generated ANOVA interpretation on-the-fly: %d characters", len(interpretation_text))
             except Exception as _exc:
@@ -1164,50 +1191,52 @@ def _add_interpretation_section(
         else:
             logger.warning("ANOVA interpretation unavailable and could not be generated for trait '%s'", trait_name)
     else:
-        # Genetic parameters interpretation
-        interpretation_text = None
-        if hasattr(tr, 'interpretation') and tr.interpretation:
-            interpretation_text = tr.interpretation
-            logger.info("Using Genetics interpretation from trait_result: %d characters", len(interpretation_text))
-        else:
-            # Fallback to generating on the fly
-            gcv_val = gp.get("GCV")
-            pcv_val = gp.get("PCV")
-            anova_f_env, anova_p_env, anova_f_gxe, anova_p_gxe = _anova_env_effect_stats(result.anova_table)
-            interpretation_text, _ = generate_genetics_interpretation(
-                trait_name=trait_name,
-                h2=h2,
-                gam=gam_pct,
-                gcv=gcv_val,
-                pcv=pcv_val,
-                anova_f_env=anova_f_env,
-                anova_p_env=anova_p_env,
-                anova_f_gxe=anova_f_gxe,
-                anova_p_gxe=anova_p_gxe,
-            )
-            logger.info("Generated Genetics interpretation on the fly: %d characters", len(interpretation_text))
-        
+        # Genetic parameters interpretation — always regenerate with domain so agronomy
+        # reports don't inherit plant-breeding language from cached analysis-time text.
+        gcv_val = gp.get("GCV")
+        pcv_val = gp.get("PCV")
+        anova_f_env, anova_p_env, anova_f_gxe, anova_p_gxe = _anova_env_effect_stats(result.anova_table)
+        interpretation_text, generated_implication = generate_genetics_interpretation(
+            trait_name=trait_name,
+            h2=h2,
+            gam=gam_pct,
+            gcv=gcv_val,
+            pcv=pcv_val,
+            anova_f_env=anova_f_env,
+            anova_p_env=anova_p_env,
+            anova_f_gxe=anova_f_gxe,
+            anova_p_gxe=anova_p_gxe,
+            domain=domain or "plant_breeding",
+        )
+        logger.info("Generated interpretation (domain=%s): %d characters", domain, len(interpretation_text))
+
         if interpretation_text:
             _add_heading(doc, "Statistical Interpretation", level=3)
             _add_body(doc, interpretation_text)
             doc.add_paragraph()
 
-    # Academic interpretation: use the full AI-generated text carried in analysis_result.
-    full_academic_text = ar.interpretation or interpretation_text
+    # Academic interpretation — regenerate with domain for non-ANOVA modules.
+    if not is_anova:
+        full_academic_text = interpretation_text
+    else:
+        full_academic_text = ar.interpretation or interpretation_text
     if full_academic_text:
         _add_heading(doc, "Academic Interpretation", level=3)
         _add_body(doc, full_academic_text)
         doc.add_paragraph()
 
     # Domain-specific implication text
-    breeding_text = None
-    if hasattr(tr, 'breeding_implication') and tr.breeding_implication:
-        breeding_text = tr.breeding_implication
-        logger.info("Using breeding implication from trait_result: %d characters", len(breeding_text))
-    elif result.breeding_implication and not is_anova:
-        breeding_text = result.breeding_implication
-        logger.info("Using breeding implication from analysis_result: %d characters", len(breeding_text))
-    
+    if not is_anova:
+        breeding_text = generated_implication
+    else:
+        breeding_text = None
+        if hasattr(tr, 'breeding_implication') and tr.breeding_implication:
+            breeding_text = tr.breeding_implication
+            logger.info("Using breeding implication from trait_result: %d characters", len(breeding_text))
+        elif result.breeding_implication:
+            breeding_text = result.breeding_implication
+            logger.info("Using breeding implication from analysis_result: %d characters", len(breeding_text))
+
     if breeding_text:
         _add_heading(doc, "Practical Implication" if is_agronomy else "Breeding Implication", level=3)
         _add_body(doc, breeding_text)
@@ -1228,6 +1257,12 @@ def _add_writing_support_guide(doc: Document, data: DownloadReportRequest) -> No
 
     _add_heading(doc, "Sentence Starters", level=2)
 
+    _guide_domain = getattr(data, "domain", None) or "plant_breeding"
+    _guide_agronomy = _guide_domain in ("agronomy", "general")
+    _entry = "treatments" if _guide_agronomy else "genotypes"
+    _effect = "treatment effect" if _guide_agronomy else "genotype effect"
+    _consider = "implementation" if _guide_agronomy else "selection"
+
     trait_results = data.trait_results or {}
     for row in data.summary_table:
         tr = trait_results.get(row.trait)
@@ -1246,44 +1281,58 @@ def _add_writing_support_guide(doc: Document, data: DownloadReportRequest) -> No
         sig_word = "significant" if (p_g is not None and p_g < 0.05) else "not significant"
 
         env_phrase = (
-            f"across {n_genotypes} genotypes and {n_env} environments"
+            f"across {n_genotypes} {_entry} and {n_env} environments"
             if n_env
-            else f"across {n_genotypes} genotypes and {n_rep} replications"
+            else f"across {n_genotypes} {_entry} and {n_rep} replications"
         )
 
         starter_anova = (
             f"An analysis of variance for {row.trait} evaluated {env_phrase} showed that "
-            f"the genotype effect was {sig_word} "
+            f"the {_effect} was {sig_word} "
             f"(F = {_fmt(f_g, 3)}, {_p_for_sentence(p_g)}, η² = {_fmt(eta_g, 2, thousands=False)})."
         )
         _add_body(doc, starter_anova)
 
         h2 = row.h2
         gam_pct = row.gam_percent
-        starter_genetic = (
-            f"For {row.trait}, broad-sense heritability was H² = {_fmt(h2, 3, thousands=False)} "
-            f"and genetic advance as percent of mean was GAM% = {_fmt(gam_pct, 2, thousands=False)}, "
-            f"indicating {row.gam_class or 'the observed'} selection potential."
-        )
+        if _guide_agronomy:
+            starter_genetic = (
+                f"For {row.trait}, broad-sense heritability was H² = {_fmt(h2, 3, thousands=False)} "
+                f"and the advance as percent of mean was GAM% = {_fmt(gam_pct, 2, thousands=False)}, "
+                f"indicating {row.gam_class or 'the observed'} treatment differentiation potential."
+            )
+        else:
+            starter_genetic = (
+                f"For {row.trait}, broad-sense heritability was H² = {_fmt(h2, 3, thousands=False)} "
+                f"and genetic advance as percent of mean was GAM% = {_fmt(gam_pct, 2, thousands=False)}, "
+                f"indicating {row.gam_class or 'the observed'} selection potential."
+            )
         _add_body(doc, starter_genetic)
 
         if result.mean_separation and result.mean_separation.genotype:
             top_genotype = result.mean_separation.genotype[0]
             top_group = result.mean_separation.group[0] if result.mean_separation.group else "a"
+            top_noun = "treatment" if _guide_agronomy else "genotype"
             starter_means = (
                 f"Mean separation ({result.mean_separation.test}) grouped {top_genotype} in the leading "
-                f"performance group ({top_group}), supporting its consideration for selection under the tested conditions."
+                f"performance group ({top_group}), supporting its consideration for {_consider} under the tested conditions."
             )
             _add_body(doc, starter_means)
 
         doc.add_paragraph()
 
     _add_heading(doc, "Pre-submission Checklist", level=2)
+    _relevance_item = (
+        "Report both statistical significance and practical interpretation (e.g., H², GAM%, and practical relevance)."
+        if _guide_agronomy
+        else "Report both statistical significance and practical interpretation (e.g., H², GAM%, and breeding relevance)."
+    )
+    _top_noun_plural = "treatments" if _guide_agronomy else "genotypes"
     checklist = [
         "Confirm that all reported trait names and units match your tables exactly.",
         "State design context clearly (single environment or multi-environment) before presenting ANOVA outcomes.",
-        "Report both statistical significance and practical interpretation (e.g., H², GAM%, and breeding relevance).",
-        "Cross-check mean separation group letters with the narrative conclusions about top genotypes.",
+        _relevance_item,
+        f"Cross-check mean separation group letters with the narrative conclusions about top {_top_noun_plural}.",
         "Ensure every recommendation is traceable to a reported result in the table or figure.",
     ]
     for item in checklist:
@@ -1618,7 +1667,7 @@ def export_traits_to_word(
 
             # ── 3. ANOVA ─────────────────────────────────────────────────────
             if result.anova_table:
-                _add_anova_section(doc, result.anova_table)
+                _add_anova_section(doc, result.anova_table, domain=domain)
             else:
                 _add_heading(doc, "Analysis of Variance (ANOVA)", level=2)
                 _add_body(doc, "ANOVA table not available for this trait.", italic=True)
@@ -1626,7 +1675,7 @@ def export_traits_to_word(
 
             # ── 4. Mean Separation (table + bar chart) ────────────────────────
             if result.mean_separation:
-                _add_mean_separation_section(doc, trait, result.mean_separation)
+                _add_mean_separation_section(doc, trait, result.mean_separation, domain=domain)
             else:
                 _add_heading(doc, "Mean Separation", level=2)
                 _add_body(
@@ -1716,16 +1765,25 @@ def _build_document(data: DownloadReportRequest) -> Document:
         sec.right_margin  = Inches(1.25)
 
     # ── Title ─────────────────────────────────────────────────────────────────
-    title_text = "VivaSense ANOVA Analysis Report" if getattr(data, "module", "") == "anova" else "VivaSense Genetics Analysis Report"
+    report_domain = getattr(data, "domain", None) or "plant_breeding"
+    _is_anova_module = getattr(data, "module", "") == "anova"
+    _is_agronomy = report_domain in ("agronomy", "general")
+    if _is_anova_module:
+        title_text = "VivaSense ANOVA Analysis Report"
+    elif _is_agronomy:
+        title_text = "VivaSense Agronomy Analysis Report"
+    else:
+        title_text = "VivaSense Genetics Analysis Report"
     title = doc.add_heading(title_text, level=0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     ds = data.dataset_summary
     mode_label = "Multi-environment" if ds.mode == "multi" else "Single-environment"
     env_part = f"  ·  {ds.n_environments} environments" if ds.n_environments else ""
+    _unit = "treatments" if _is_agronomy else "genotypes"
 
     sub = doc.add_paragraph(
-        f"{mode_label}  ·  {ds.n_genotypes} genotypes  ·  "
+        f"{mode_label}  ·  {ds.n_genotypes} {_unit}  ·  "
         f"{ds.n_reps} replications{env_part}  ·  {ds.n_traits} traits"
     )
     sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -1743,8 +1801,6 @@ def _build_document(data: DownloadReportRequest) -> Document:
     doc.add_paragraph()
 
     # ── Cross-trait summary ───────────────────────────────────────────────────
-    report_domain = getattr(data, "domain", "plant_breeding")
-
     _add_heading(doc, "Trait Summary", level=1)
     _add_summary_table(doc, data, domain=report_domain)
     doc.add_paragraph()

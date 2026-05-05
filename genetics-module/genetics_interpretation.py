@@ -285,12 +285,20 @@ def build_breeding_synthesis(trait_results: list[dict]) -> str:
     return synthesis
 
 
-def _describe_gcv_pcv(gcv: float, pcv: float, trait_name: str) -> str:
+def _describe_gcv_pcv(gcv: float, pcv: float, trait_name: str, domain: str = "plant_breeding") -> str:
     if gcv <= 0:
         return ""
     inflation_pct = ((pcv - gcv) / gcv) * 100
+    is_agronomy = domain in ("agronomy", "general")
 
     if inflation_pct < 3:
+        if is_agronomy:
+            return (
+                f"GCV ({gcv:.2f}%) and PCV ({pcv:.2f}%) are nearly identical "
+                f"(difference: {inflation_pct:.1f}%), indicating negligible environmental "
+                f"variance inflation. The treatment signal for {trait_name} is exceptionally "
+                f"consistent — treatment differences reliably reflect true performance variation."
+            )
         return (
             f"GCV ({gcv:.2f}%) and PCV ({pcv:.2f}%) are nearly identical "
             f"(difference: {inflation_pct:.1f}%), indicating negligible environmental "
@@ -298,6 +306,13 @@ def _describe_gcv_pcv(gcv: float, pcv: float, trait_name: str) -> str:
             f"clean - direct phenotypic selection will closely track underlying genotypic value."
         )
     elif inflation_pct < 10:
+        if is_agronomy:
+            return (
+                f"GCV ({gcv:.2f}%) is slightly lower than PCV ({pcv:.2f}%) "
+                f"(inflation: {inflation_pct:.1f}%), suggesting a small but non-trivial "
+                f"environmental contribution to phenotypic variance in {trait_name}. "
+                f"Treatment comparisons remain reliable given the high repeatability."
+            )
         return (
             f"GCV ({gcv:.2f}%) is slightly lower than PCV ({pcv:.2f}%) "
             f"(inflation: {inflation_pct:.1f}%), suggesting a small but non-trivial "
@@ -305,6 +320,13 @@ def _describe_gcv_pcv(gcv: float, pcv: float, trait_name: str) -> str:
             f"Selection efficiency remains high given the elevated H2."
         )
     elif inflation_pct < 20:
+        if is_agronomy:
+            return (
+                f"PCV ({pcv:.2f}%) is moderately higher than GCV ({gcv:.2f}%) "
+                f"(inflation: {inflation_pct:.1f}%), indicating meaningful environmental "
+                f"effects on {trait_name} expression. Evaluating treatments in multiple "
+                f"environments or seasons is advisable."
+            )
         return (
             f"PCV ({pcv:.2f}%) is moderately higher than GCV ({gcv:.2f}%) "
             f"(inflation: {inflation_pct:.1f}%), indicating meaningful environmental "
@@ -312,6 +334,13 @@ def _describe_gcv_pcv(gcv: float, pcv: float, trait_name: str) -> str:
             f"multi-location environments is advisable."
         )
     else:
+        if is_agronomy:
+            return (
+                f"PCV ({pcv:.2f}%) substantially exceeds GCV ({gcv:.2f}%) "
+                f"(inflation: {inflation_pct:.1f}%), indicating strong environmental masking "
+                f"of treatment differences for {trait_name}. Replicated multi-environment "
+                f"evaluation is essential before treatment recommendations are finalized."
+            )
         return (
             f"PCV ({pcv:.2f}%) substantially exceeds GCV ({gcv:.2f}%) "
             f"(inflation: {inflation_pct:.1f}%), indicating strong environmental masking "
@@ -320,9 +349,16 @@ def _describe_gcv_pcv(gcv: float, pcv: float, trait_name: str) -> str:
         )
 
 
-def _describe_env_effects(f_env: float, p_env: float, f_gxe: float, p_gxe: float) -> str:
+def _describe_env_effects(
+    f_env: float,
+    p_env: float,
+    f_gxe: float,
+    p_gxe: float,
+    domain: str = "plant_breeding",
+) -> str:
     env_sig = p_env is not None and p_env < 0.05
     gxe_sig = p_gxe is not None and p_gxe < 0.05
+    is_agronomy = domain in ("agronomy", "general")
 
     if not env_sig:
         env_desc = "Environmental effects were non-significant for this trait"
@@ -345,22 +381,40 @@ def _describe_env_effects(f_env: float, p_env: float, f_gxe: float, p_gxe: float
             f"Modest environmental effects were detected (F = {f_env:,.3f})"
         )
 
-    if gxe_sig and f_gxe > 10:
-        gxe_desc = (
-            " Significant genotype-by-environment interaction was also detected "
-            f"(GxE F = {f_gxe:,.3f}, p < 0.001), suggesting genotype rankings may not be "
-            "consistent across all environments - stability analysis is recommended."
-        )
-    elif gxe_sig:
-        gxe_desc = (
-            f" A significant but modest GxE interaction was detected "
-            f"(F = {f_gxe:,.3f}, p < 0.05)."
-        )
+    if is_agronomy:
+        if gxe_sig and f_gxe > 10:
+            gxe_desc = (
+                " Significant Treatment × Environment interaction was also detected "
+                f"(T×E F = {f_gxe:,.3f}, p < 0.001), suggesting treatment rankings may not be "
+                "consistent across all environments; evaluating across multiple sites or seasons is recommended."
+            )
+        elif gxe_sig:
+            gxe_desc = (
+                f" A significant but modest Treatment × Environment interaction was detected "
+                f"(F = {f_gxe:,.3f}, p < 0.05)."
+            )
+        else:
+            gxe_desc = (
+                " Treatment × Environment interaction was non-significant, indicating "
+                "relatively consistent treatment performance across environments."
+            )
     else:
-        gxe_desc = (
-            " GxE interaction was non-significant, indicating relatively consistent "
-            "genotype performance across environments."
-        )
+        if gxe_sig and f_gxe > 10:
+            gxe_desc = (
+                " Significant genotype-by-environment interaction was also detected "
+                f"(GxE F = {f_gxe:,.3f}, p < 0.001), suggesting genotype rankings may not be "
+                "consistent across all environments - stability analysis is recommended."
+            )
+        elif gxe_sig:
+            gxe_desc = (
+                f" A significant but modest GxE interaction was detected "
+                f"(F = {f_gxe:,.3f}, p < 0.05)."
+            )
+        else:
+            gxe_desc = (
+                " GxE interaction was non-significant, indicating relatively consistent "
+                "genotype performance across environments."
+            )
 
     return env_desc + ". " + gxe_desc
 
@@ -579,80 +633,137 @@ def generate_genetics_interpretation(
     anova_p_env: Optional[float] = None,
     anova_f_gxe: Optional[float] = None,
     anova_p_gxe: Optional[float] = None,
+    domain: str = "plant_breeding",
 ) -> Tuple[str, str]:
     """
-    Generate academic-grade genetics interpretation following VivaSense standards.
-    
-    BACKWARD COMPATIBILITY FUNCTION: Calls generate_genetics_interpretation_sections
-    and returns results as tuple (interpretation_text, breeding_implication_text).
-    
+    Generate academic-grade interpretation following VivaSense standards.
+
     Returns:
-        (interpretation_text, breeding_implication_text)
+        (interpretation_text, implication_text)
     """
     h2_class = _classify_heritability(h2)
     gam_class = _classify_gam(gam)
+    is_agronomy = domain in ("agronomy", "general")
 
     # ── Joint H2 + GAM interpretation ───────────────────────────────────
     if h2_class == "not_computed":
         interpretation = (
             f"Heritability could not be estimated for '{trait_name}'. "
-            "Data limitations prevent reliable genetic interpretation."
+            "Data limitations prevent reliable interpretation."
         )
     elif h2_class == "high" and gam_class == "High":
-        interpretation = (
-            f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates HIGH genetic control "
-            f"of '{trait_name}'. The genetic advance as percent of mean (GAM = {gam:.2f}%) is HIGH, "
-            "suggesting substantial expected response to direct selection. "
-            "Additive gene effects are likely important; direct phenotypic selection should be effective."
-        )
+        if is_agronomy:
+            interpretation = (
+                f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates HIGH consistency "
+                f"of treatment effects on '{trait_name}'. The advance as percent of mean "
+                f"(GAM = {gam:.2f}%) is HIGH, indicating that treatment differences are strong and "
+                "repeatable. The top-performing treatment can be recommended with confidence."
+            )
+        else:
+            interpretation = (
+                f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates HIGH genetic control "
+                f"of '{trait_name}'. The genetic advance as percent of mean (GAM = {gam:.2f}%) is HIGH, "
+                "suggesting substantial expected response to direct selection. "
+                "Additive gene effects are likely important; direct phenotypic selection should be effective."
+            )
     elif h2_class == "high" and gam_class == "Medium":
-        interpretation = (
-            f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates HIGH genetic control "
-            f"of '{trait_name}'. The genetic advance as percent of mean (GAM = {gam:.2f}%) is MODERATE, "
-            "indicating a meaningful selection response. Direct phenotypic selection should yield steady "
-            "genetic progress; both additive and non-additive gene effects likely contribute."
-        )
+        if is_agronomy:
+            interpretation = (
+                f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates HIGH consistency "
+                f"of treatment effects on '{trait_name}'. The advance as percent of mean "
+                f"(GAM = {gam:.2f}%) is MODERATE, indicating meaningful treatment differentiation. "
+                "Leading treatments can be identified reliably under the tested conditions."
+            )
+        else:
+            interpretation = (
+                f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates HIGH genetic control "
+                f"of '{trait_name}'. The genetic advance as percent of mean (GAM = {gam:.2f}%) is MODERATE, "
+                "indicating a meaningful selection response. Direct phenotypic selection should yield steady "
+                "genetic progress; both additive and non-additive gene effects likely contribute."
+            )
     elif h2_class == "high" and gam_class == "Low":
-        interpretation = (
-            f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates HIGH genetic control, "
-            f"yet the genetic advance as percent of mean (GAM = {gam:.2f}%) is LOW for '{trait_name}'. "
-            "This dissociation suggests that while phenotypic variation is substantially genetic, the "
-            "expected response to selection is limited. Non-additive gene effects or strong inbreeding "
-            "depression may be responsible."
-        )
+        if is_agronomy:
+            interpretation = (
+                f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates HIGH consistency "
+                f"of treatment effects on '{trait_name}', yet the advance as percent of mean "
+                f"(GAM = {gam:.2f}%) is LOW. This dissociation suggests that while treatment differences "
+                "are repeatable, the magnitude of differentiation is limited. Treatment × environment "
+                "interactions or measurement variability may be contributing factors."
+            )
+        else:
+            interpretation = (
+                f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates HIGH genetic control, "
+                f"yet the genetic advance as percent of mean (GAM = {gam:.2f}%) is LOW for '{trait_name}'. "
+                "This dissociation suggests that while phenotypic variation is substantially genetic, the "
+                "expected response to selection is limited. Non-additive gene effects or strong inbreeding "
+                "depression may be responsible."
+            )
     elif h2_class == "moderate" and gam_class == "High":
-        interpretation = (
-            f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates MODERATE genetic control "
-            f"of '{trait_name}', with the genetic advance as percent of mean (GAM = {gam:.2f}%) being HIGH. "
-            "Useful selection response is achievable despite environmental influence. "
-            "Both genetic and environmental management should be considered."
-        )
+        if is_agronomy:
+            interpretation = (
+                f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates MODERATE consistency "
+                f"of treatment effects on '{trait_name}', with the advance as percent of mean "
+                f"(GAM = {gam:.2f}%) being HIGH. Useful treatment differentiation is achievable despite "
+                "environmental influence; standardizing management conditions may further improve reliability."
+            )
+        else:
+            interpretation = (
+                f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates MODERATE genetic control "
+                f"of '{trait_name}', with the genetic advance as percent of mean (GAM = {gam:.2f}%) being HIGH. "
+                "Useful selection response is achievable despite environmental influence. "
+                "Both genetic and environmental management should be considered."
+            )
     elif h2_class == "moderate" and gam_class == "Medium":
-        interpretation = (
-            f"The estimated broad-sense heritability (H2 = {h2:.3f}) and genetic advance as percent "
-            f"of mean (GAM = {gam:.2f}%) both indicate MODERATE genetic control for '{trait_name}'. "
-            "Selection may be useful, though environmental factors remain important. "
-            "Progress should be steady but not rapid."
-        )
+        if is_agronomy:
+            interpretation = (
+                f"The estimated broad-sense heritability (H2 = {h2:.3f}) and advance as percent "
+                f"of mean (GAM = {gam:.2f}%) both indicate MODERATE consistency of treatment effects "
+                f"for '{trait_name}'. Treatment selection is feasible, though environmental management "
+                "will also influence outcomes."
+            )
+        else:
+            interpretation = (
+                f"The estimated broad-sense heritability (H2 = {h2:.3f}) and genetic advance as percent "
+                f"of mean (GAM = {gam:.2f}%) both indicate MODERATE genetic control for '{trait_name}'. "
+                "Selection may be useful, though environmental factors remain important. "
+                "Progress should be steady but not rapid."
+            )
     elif h2_class == "moderate" and gam_class == "Low":
-        interpretation = (
-            f"The estimated broad-sense heritability (H2 = {h2:.3f}) suggests MODERATE genetic control "
-            f"of '{trait_name}', but the genetic advance as percent of mean (GAM = {gam:.2f}%) is LOW. "
-            "Direct phenotypic selection may be slow. Consider investigating additive effects more carefully "
-            "or combining selection with environmental optimization."
-        )
+        if is_agronomy:
+            interpretation = (
+                f"The estimated broad-sense heritability (H2 = {h2:.3f}) suggests MODERATE consistency "
+                f"of treatment effects on '{trait_name}', but the advance as percent of mean "
+                f"(GAM = {gam:.2f}%) is LOW. Direct treatment recommendations may be slow to emerge; "
+                "improving environmental standardization and management uniformity may help."
+            )
+        else:
+            interpretation = (
+                f"The estimated broad-sense heritability (H2 = {h2:.3f}) suggests MODERATE genetic control "
+                f"of '{trait_name}', but the genetic advance as percent of mean (GAM = {gam:.2f}%) is LOW. "
+                "Direct phenotypic selection may be slow. Consider investigating additive effects more carefully "
+                "or combining selection with environmental optimization."
+            )
     else:  # low h2
-        interpretation = (
-            f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates LOW genetic control of "
-            f"'{trait_name}' under the present environment. Phenotypic variation is dominated by environmental "
-            "factors and/or measurement variation. Direct phenotypic selection is unlikely to be reliable; "
-            "focus on improving growing conditions and management practices."
-        )
+        if is_agronomy:
+            interpretation = (
+                f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates LOW consistency of "
+                f"treatment effects on '{trait_name}' under the present conditions. Phenotypic variation "
+                "is dominated by environmental factors and/or measurement variation. Treatment differences "
+                "are small relative to background variation; improving experimental conditions and "
+                "management uniformity should be prioritized."
+            )
+        else:
+            interpretation = (
+                f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates LOW genetic control of "
+                f"'{trait_name}' under the present environment. Phenotypic variation is dominated by environmental "
+                "factors and/or measurement variation. Direct phenotypic selection is unlikely to be reliable; "
+                "focus on improving growing conditions and management practices."
+            )
 
     # ── GCV vs PCV addendum ──────────────────────────────────────────────
     if gcv is not None and pcv is not None:
         try:
-            gcv_pcv_sentence = _describe_gcv_pcv(gcv, pcv, trait_name)
+            gcv_pcv_sentence = _describe_gcv_pcv(gcv, pcv, trait_name, domain=domain)
             anova_f_env = float(anova_f_env) if anova_f_env is not None else 0.0
             anova_p_env = float(anova_p_env) if anova_p_env is not None else None
             anova_f_gxe = float(anova_f_gxe) if anova_f_gxe is not None else 0.0
@@ -662,6 +773,7 @@ def generate_genetics_interpretation(
                 p_env=anova_p_env,
                 f_gxe=anova_f_gxe,
                 p_gxe=anova_p_gxe,
+                domain=domain,
             )
             if gcv_pcv_sentence and env_sentence:
                 interpretation += f"\n\n{gcv_pcv_sentence}\n\n{env_sentence}"
@@ -672,30 +784,48 @@ def generate_genetics_interpretation(
         except (TypeError, ValueError):
             pass
 
-    # ── Breeding recommendation ──────────────────────────────────────────
+    # ── Practical / breeding implication ────────────────────────────────
     if h2_class == "not_computed":
         breeding_implication = (
             "Heritability could not be reliably estimated. Redesign or expand the experiment "
-            "to improve precision before making selection decisions."
+            "to improve precision before making treatment or selection decisions."
         )
     elif h2_class == "high":
-        breeding_implication = (
-            "Strong genetic basis for the trait. Direct phenotypic selection should be effective "
-            "in this environment. Prioritize identification and advancement of high-value individuals "
-            "for next-generation breeding."
-        )
+        if is_agronomy:
+            breeding_implication = (
+                "Strong and consistent treatment effects. The best-performing treatment(s) can be "
+                "recommended reliably under the tested conditions."
+            )
+        else:
+            breeding_implication = (
+                "Strong genetic basis for the trait. Direct phenotypic selection should be effective "
+                "in this environment. Prioritize identification and advancement of high-value individuals "
+                "for next-generation breeding."
+            )
     elif h2_class == "moderate":
-        breeding_implication = (
-            "Moderate genetic basis. Direct selection is possible but should be combined with "
-            "attention to environmental standardization. Consider multi-environment evaluation "
-            "to assess stability of selected genotypes."
-        )
+        if is_agronomy:
+            breeding_implication = (
+                "Moderate treatment effect. The leading treatment(s) can be identified, but replication "
+                "across environments or seasons is advisable to confirm consistency."
+            )
+        else:
+            breeding_implication = (
+                "Moderate genetic basis. Direct selection is possible but should be combined with "
+                "attention to environmental standardization. Consider multi-environment evaluation "
+                "to assess stability of selected genotypes."
+            )
     else:  # low
-        breeding_implication = (
-            "Weak genetic basis under present conditions. Direct selection will be unreliable. "
-            "Prioritize improvement of growing conditions, management practices, and measurement "
-            "precision before intensifying selection."
-        )
+        if is_agronomy:
+            breeding_implication = (
+                "Weak treatment effect under present conditions. Focus on improving growing conditions, "
+                "management uniformity, and measurement precision before drawing treatment recommendations."
+            )
+        else:
+            breeding_implication = (
+                "Weak genetic basis under present conditions. Direct selection will be unreliable. "
+                "Prioritize improvement of growing conditions, management practices, and measurement "
+                "precision before intensifying selection."
+            )
 
     return interpretation, breeding_implication
 
