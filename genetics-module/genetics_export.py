@@ -1751,7 +1751,7 @@ def _add_footer(doc: Document) -> None:
         p.clear()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         run = p.add_run(
-            f"VivaSense Genetics Engine v1.0  ·  "
+            f"VivaSense Analysis Engine v1.0  ·  "
             f"Generated {datetime.date.today().strftime('%d %B %Y')}  ·  "
             "Statistical analysis powered by R (ANOVA + Tukey HSD)"
         )
