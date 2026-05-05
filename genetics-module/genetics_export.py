@@ -459,15 +459,11 @@ def _add_summary_table(doc: Document, data: UploadAnalysisResponse, domain: Opti
     is_anova = getattr(data, "module", "") == "anova"
     is_agronomy = domain in ("agronomy", "general")
     
-    if is_anova:
+    if is_anova or is_agronomy:
         headers = ["Trait", "Mean", "Status"]
     else:
-        # Hide GCV, PCV, GAM for agronomy/general domains
-        if is_agronomy:
-            headers = ["Trait", "Mean", "H²", "Status"]
-        else:
-            headers = ["Trait", "Mean", "H²", "GCV %", "PCV %", "GAM %", "Class", "Status"]
-        
+        headers = ["Trait", "Mean", "H²", "GCV %", "PCV %", "GAM %", "Class", "Status"]
+
     rows_data = [
         (
             [
@@ -489,24 +485,15 @@ def _add_summary_table(doc: Document, data: UploadAnalysisResponse, domain: Opti
                 _status_label(row.status),
             ]
             if not is_anova and not is_agronomy
-            else (
-                [
-                    row.trait,
-                    _fmt(row.grand_mean),
-                    _fmt(row.h2, 3),
-                    _status_label(row.status),
-                ]
-                if not is_anova and is_agronomy
-                else [
-                    row.trait,
-                    _fmt(row.grand_mean),
-                    _status_label(row.status),
-                ]
-            )
+            else [
+                row.trait,
+                _fmt(row.grand_mean),
+                _status_label(row.status),
+            ]
         )
         for row in data.summary_table
     ]
-    numeric_cols = {1} if is_anova else ({1, 2} if is_agronomy else {1, 2, 3, 4, 5})
+    numeric_cols = {1} if (is_anova or is_agronomy) else {1, 2, 3, 4, 5}
     _add_stat_table(doc, headers, rows_data, numeric_cols=numeric_cols)
 
 
@@ -732,15 +719,19 @@ def _add_executive_summary(
     trait: str,
     result: GeneticsResult,
     is_anova: bool = False,
+    domain: str = "plant_breeding",
 ) -> None:
     _add_heading(doc, "Executive Summary", level=2)
 
+    is_agronomy = domain in ("agronomy", "general")
     fields = [
         ("Trait", trait),
         ("Grand Mean", _fmt(result.grand_mean)),
     ]
 
-    if not is_anova:
+    # Genetic parameters (H², GCV, PCV, GAM) are not meaningful for agronomy
+    # treatment trials — suppress them entirely for non-plant_breeding domains.
+    if not is_anova and not is_agronomy:
         hp = result.heritability if isinstance(result.heritability, dict) else {}
         gp = result.genetic_parameters if isinstance(result.genetic_parameters, dict) else {}
         h2 = hp.get("h2_broad_sense")
@@ -759,6 +750,18 @@ def _add_executive_summary(
             ("PCV (%)", _fmt(pcv, 2)),
             ("GAM (%)", _fmt(gam_pct, 2)),
         ]
+    elif is_agronomy:
+        # Show CV% and treatment significance for agronomy executive summary
+        ds = result.descriptive_stats or {}
+        cv = ds.get("cv_percent") if isinstance(ds, dict) else None
+        if cv is not None:
+            fields.append(("CV (%)", _fmt(cv, 2)))
+        at = result.anova_table
+        if at and hasattr(at, "source") and "genotype" in at.source:
+            idx = at.source.index("genotype")
+            p_val = at.p_value[idx] if idx < len(at.p_value) else None
+            sig = _sig_label(p_val) if p_val is not None else ""
+            fields.append(("Treatment Effect", f"Significant {sig}" if sig not in ("", "ns") else "Not significant"))
 
     for key, val in fields:
         _add_kv(doc, key, val)
@@ -1135,12 +1138,96 @@ def _add_interpretation_section(
         level=2,
     )
 
-    hp = result.heritability if isinstance(result.heritability, dict) else {}
     gp = result.genetic_parameters if isinstance(result.genetic_parameters, dict) else {}
+
+    def _generate_anova_interp() -> Optional[str]:
+        """Generate ANOVA-based interpretation on the fly."""
+        try:
+            from analysis_anova_routes import (
+                generate_anova_interpretation,
+                classify_precision_level,
+                get_cv_interpretation_flag,
+                is_genotype_effect_significant,
+                is_environment_effect_significant,
+                is_gxe_effect_significant,
+            )
+            ds = result.descriptive_stats or {}
+            cv_pct = ds.get("cv_percent") if isinstance(ds, dict) else None
+            summary = {
+                "grand_mean":     result.grand_mean,
+                "cv_percent":     cv_pct,
+                "min":            ds.get("min") if isinstance(ds, dict) else None,
+                "max":            ds.get("max") if isinstance(ds, dict) else None,
+                "range":          ds.get("range") if isinstance(ds, dict) else None,
+                "standard_error": ds.get("standard_error") if isinstance(ds, dict) else None,
+            }
+            gxe_sig = is_gxe_effect_significant(result.anova_table)
+            return generate_anova_interpretation(
+                trait=trait_name,
+                summary=summary,
+                precision_level=classify_precision_level(cv_pct),
+                cv_interpretation_flag=get_cv_interpretation_flag(cv_pct),
+                genotype_significant=is_genotype_effect_significant(result.anova_table),
+                environment_significant=is_environment_effect_significant(result.anova_table),
+                gxe_significant=gxe_sig,
+                ranking_caution=gxe_sig,
+                selection_feasible=is_genotype_effect_significant(result.anova_table),
+                mean_separation=result.mean_separation,
+                n_genotypes=result.n_genotypes,
+                n_environments=result.n_environments,
+                n_reps=result.n_reps,
+                domain=domain or "plant_breeding",
+            )
+        except Exception as _exc:
+            logger.warning("Could not generate ANOVA interpretation on-the-fly: %s", _exc)
+            return None
+
+    # ── Agronomy: ANOVA-based interpretation only (no H²/GAM genetics text) ──
+    if is_agronomy:
+        interpretation_text = _generate_anova_interp()
+        if interpretation_text:
+            _add_heading(doc, "Statistical Interpretation", level=3)
+            _add_body(doc, interpretation_text)
+            doc.add_paragraph()
+        else:
+            logger.warning("Agronomy interpretation could not be generated for trait '%s'", trait_name)
+
+        # Practical implication derived from treatment effect significance
+        at = result.anova_table
+        practical_text = None
+        if at and hasattr(at, "source") and "genotype" in at.source:
+            idx = at.source.index("genotype")
+            p_val = at.p_value[idx] if idx < len(at.p_value) else None
+            sig = _sig_label(p_val) if p_val is not None else ""
+            ms = result.mean_separation
+            top = ms.genotype[0] if ms and ms.genotype else None
+            if sig in ("***", "**"):
+                practical_text = (
+                    f"Treatment differences were highly significant. "
+                    + (f"The top-performing treatment ({top}) can be recommended for adoption under similar growing conditions." if top else "The top-performing treatment can be recommended for adoption under similar growing conditions.")
+                )
+            elif sig == "*":
+                practical_text = (
+                    f"Treatment differences were significant. "
+                    + (f"Consider {top} as a leading option, but validate across additional seasons or sites before wide-scale adoption." if top else "Validate the leading treatment across additional seasons or sites before wide-scale adoption.")
+                )
+            else:
+                practical_text = (
+                    "Treatment differences were not statistically significant. "
+                    "No single treatment stands out; agronomic or economic criteria may guide selection."
+                )
+        if practical_text:
+            _add_heading(doc, "Practical Implication", level=3)
+            _add_body(doc, practical_text)
+            doc.add_paragraph()
+        return
+
+    # ── Plant breeding / ANOVA module: existing genetics-based flow ───────────
+    hp = result.heritability if isinstance(result.heritability, dict) else {}
     h2      = hp.get("h2_broad_sense")
     gam_pct = gp.get("GAM_percent")
+    generated_implication = None
 
-    # ANOVA interpretation comes from the per-trait result or is generated on-the-fly
     if is_anova:
         interpretation_text = None
         if hasattr(tr, 'interpretation') and tr.interpretation:
@@ -1150,58 +1237,18 @@ def _add_interpretation_section(
             interpretation_text = ar.interpretation
             logger.info("Using ANOVA interpretation from analysis_result: %d characters", len(interpretation_text))
         else:
-            # Generate ANOVA interpretation on-the-fly from result data
-            logger.info("No ANOVA interpretation cached — generating from result data for trait '%s'", trait_name)
-            try:
-                from analysis_anova_routes import (
-                    generate_anova_interpretation,
-                    classify_precision_level,
-                    get_cv_interpretation_flag,
-                    is_genotype_effect_significant,
-                    is_environment_effect_significant,
-                    is_gxe_effect_significant,
-                )
-                ds = result.descriptive_stats or {}
-                cv_pct = ds.get("cv_percent")
-                summary = {
-                    "grand_mean":      result.grand_mean,
-                    "cv_percent":      cv_pct,
-                    "min":             ds.get("min"),
-                    "max":             ds.get("max"),
-                    "range":           ds.get("range"),
-                    "standard_error":  ds.get("standard_error"),
-                }
-                gxe_sig = is_gxe_effect_significant(result.anova_table)
-                interpretation_text = generate_anova_interpretation(
-                    trait=trait_name,
-                    summary=summary,
-                    precision_level=classify_precision_level(cv_pct),
-                    cv_interpretation_flag=get_cv_interpretation_flag(cv_pct),
-                    genotype_significant=is_genotype_effect_significant(result.anova_table),
-                    environment_significant=is_environment_effect_significant(result.anova_table),
-                    gxe_significant=gxe_sig,
-                    ranking_caution=gxe_sig,
-                    selection_feasible=is_genotype_effect_significant(result.anova_table),
-                    mean_separation=result.mean_separation,
-                    n_genotypes=result.n_genotypes,
-                    n_environments=result.n_environments,
-                    n_reps=result.n_reps,
-                    domain=domain or "plant_breeding",
-                )
+            logger.info("No ANOVA interpretation cached — generating on-the-fly for trait '%s'", trait_name)
+            interpretation_text = _generate_anova_interp()
+            if interpretation_text:
                 logger.info("Generated ANOVA interpretation on-the-fly: %d characters", len(interpretation_text))
-            except Exception as _exc:
-                logger.warning("Could not generate ANOVA interpretation on-the-fly: %s", _exc)
-                interpretation_text = None
 
         if interpretation_text:
             _add_heading(doc, "Statistical Interpretation", level=3)
             _add_body(doc, interpretation_text)
             doc.add_paragraph()
         else:
-            logger.warning("ANOVA interpretation unavailable and could not be generated for trait '%s'", trait_name)
+            logger.warning("ANOVA interpretation unavailable for trait '%s'", trait_name)
     else:
-        # Genetic parameters interpretation — always regenerate with domain so agronomy
-        # reports don't inherit plant-breeding language from cached analysis-time text.
         gcv_val = gp.get("GCV")
         pcv_val = gp.get("PCV")
         anova_f_env, anova_p_env, anova_f_gxe, anova_p_gxe = _anova_env_effect_stats(result.anova_table)
@@ -1217,24 +1264,21 @@ def _add_interpretation_section(
             anova_p_gxe=anova_p_gxe,
             domain=domain or "plant_breeding",
         )
-        logger.info("Generated interpretation (domain=%s): %d characters", domain, len(interpretation_text))
+        logger.info("Generated genetics interpretation: %d characters", len(interpretation_text))
 
         if interpretation_text:
             _add_heading(doc, "Statistical Interpretation", level=3)
             _add_body(doc, interpretation_text)
             doc.add_paragraph()
 
-    # Academic interpretation — regenerate with domain for non-ANOVA modules.
-    if not is_anova:
-        full_academic_text = interpretation_text
-    else:
-        full_academic_text = ar.interpretation or interpretation_text
+    # Academic interpretation
+    full_academic_text = (interpretation_text if not is_anova else None) or ar.interpretation or interpretation_text
     if full_academic_text:
         _add_heading(doc, "Academic Interpretation", level=3)
         _add_body(doc, full_academic_text)
         doc.add_paragraph()
 
-    # Domain-specific implication text
+    # Breeding implication
     if not is_anova:
         breeding_text = generated_implication
     else:
@@ -1247,7 +1291,7 @@ def _add_interpretation_section(
             logger.info("Using breeding implication from analysis_result: %d characters", len(breeding_text))
 
     if breeding_text:
-        _add_heading(doc, "Practical Implication" if is_agronomy else "Breeding Implication", level=3)
+        _add_heading(doc, "Breeding Implication", level=3)
         _add_body(doc, breeding_text)
         doc.add_paragraph()
 
@@ -1667,7 +1711,7 @@ def export_traits_to_word(
 
         try:
             # ── 1. Executive Summary ─────────────────────────────────────────
-            _add_executive_summary(doc, trait, result, is_anova=is_anova)
+            _add_executive_summary(doc, trait, result, is_anova=is_anova, domain=domain)
             doc.add_paragraph()
 
             # ── 2. Descriptive Statistics ────────────────────────────────────
@@ -1700,12 +1744,13 @@ def export_traits_to_word(
                 _add_assumption_tests_section(doc, result.assumption_tests)
                 doc.add_paragraph()
 
-            # ── 6. Genetic Parameters (skipped for ANOVA module) ──────────────
-            if not is_anova:
+            # ── 6. Genetic Parameters (skipped for ANOVA module and agronomy domain) ──
+            _is_agronomy_domain = domain in ("agronomy", "general")
+            if not is_anova and not _is_agronomy_domain:
                 _add_genetic_parameters_section(
                     doc,
                     result,
-                        domain=domain,
+                    domain=domain,
                 )
                 doc.add_paragraph()
 
