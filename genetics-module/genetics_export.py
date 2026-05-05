@@ -16,7 +16,7 @@ and generates a publication-ready .docx report containing:
       – ANOVA table (significance-starred, narrative)
       – Mean separation (table + bar chart, 300 DPI)
       – Genetic parameters (formulas, GCV/PCV commentary)
-      – Interpretation & breeding recommendations
+      – Interpretation and domain-appropriate recommendations
   • Footer
 """
 
@@ -437,7 +437,7 @@ def _add_kv(doc: Document, key: str, value: str) -> None:
 
 
 # ============================================================================
-# BREEDING RECOMMENDATION
+# RECOMMENDATION SUPPORT
 # ============================================================================
 
 
@@ -454,12 +454,18 @@ def _status_label(raw_status: Any) -> str:
     }
     return mapping.get(status, str(raw_status or "—"))
 
-def _add_summary_table(doc: Document, data: UploadAnalysisResponse) -> None:
+def _add_summary_table(doc: Document, data: UploadAnalysisResponse, domain: Optional[str] = None) -> None:
     is_anova = getattr(data, "module", "") == "anova"
+    is_agronomy = domain in ("agronomy", "general")
+    
     if is_anova:
         headers = ["Trait", "Mean", "Status"]
     else:
-        headers = ["Trait", "Mean", "H²", "GCV %", "PCV %", "GAM %", "Class", "Status"]
+        # Hide GCV, PCV, GAM for agronomy/general domains
+        if is_agronomy:
+            headers = ["Trait", "Mean", "H²", "Status"]
+        else:
+            headers = ["Trait", "Mean", "H²", "GCV %", "PCV %", "GAM %", "Class", "Status"]
         
     rows_data = [
         (
@@ -481,16 +487,26 @@ def _add_summary_table(doc: Document, data: UploadAnalysisResponse) -> None:
                 ),
                 _status_label(row.status),
             ]
-            if not is_anova
-            else [
-                row.trait,
-                _fmt(row.grand_mean),
-                _status_label(row.status),
-            ]
+            if not is_anova and not is_agronomy
+            else (
+                [
+                    row.trait,
+                    _fmt(row.grand_mean),
+                    _fmt(row.h2, 3),
+                    _status_label(row.status),
+                ]
+                if not is_anova and is_agronomy
+                else [
+                    row.trait,
+                    _fmt(row.grand_mean),
+                    _status_label(row.status),
+                ]
+            )
         )
         for row in data.summary_table
     ]
-    _add_stat_table(doc, headers, rows_data, numeric_cols={1} if is_anova else {1, 2, 3, 4, 5})
+    numeric_cols = {1} if is_anova else ({1, 2} if is_agronomy else {1, 2, 3, 4, 5})
+    _add_stat_table(doc, headers, rows_data, numeric_cols=numeric_cols)
 
 
 def _extract_gxe_stats_from_anova(at: Optional[AnovaTable]) -> Tuple[Optional[float], Optional[float]]:
@@ -917,8 +933,9 @@ def _add_mean_separation_section(
 # SECTION: GENETIC PARAMETERS (per trait)
 # ============================================================================
 
-def _add_genetic_parameters_section(doc: Document, result: GeneticsResult) -> None:
-    _add_heading(doc, "Genetic Parameters", level=2)
+def _add_genetic_parameters_section(doc: Document, result: GeneticsResult, domain: Optional[str] = None) -> None:
+    is_agronomy = domain in ("agronomy", "general")
+    _add_heading(doc, "Genetic Parameters" if not is_agronomy else "Variance Components", level=2)
 
     vc = result.variance_components if isinstance(result.variance_components, dict) else {}
     hp = result.heritability if isinstance(result.heritability, dict) else {}
@@ -991,7 +1008,9 @@ def _add_genetic_parameters_section(doc: Document, result: GeneticsResult) -> No
         "Variance components estimated following Comstock and Robinson (1952) and Singh and Chaudhary (1985).",
         italic=True,
     )
-    _add_body(doc, _selection_intensity_disclosure(sel_i), italic=True)
+    # Selection intensity text is specific to plant breeding reports.
+    if not is_agronomy:
+        _add_body(doc, _selection_intensity_disclosure(sel_i), italic=True)
     doc.add_paragraph()
 
     # Genetic advance table
@@ -1058,9 +1077,20 @@ def _add_genetic_parameters_section(doc: Document, result: GeneticsResult) -> No
 # ============================================================================
 
 def _add_interpretation_section(
-    doc: Document, ar: GeneticsResponse, result: GeneticsResult, trait_name: str, tr: TraitResult, is_anova: bool = False
+    doc: Document,
+    ar: GeneticsResponse,
+    result: GeneticsResult,
+    trait_name: str,
+    tr: TraitResult,
+    is_anova: bool = False,
+    domain: Optional[str] = None,
 ) -> None:
-    _add_heading(doc, "Interpretation & Breeding Recommendations", level=2)
+    is_agronomy = domain in ("agronomy", "general")
+    _add_heading(
+        doc,
+        "Interpretation & Recommendations" if is_agronomy else "Interpretation & Breeding Recommendations",
+        level=2,
+    )
 
     hp = result.heritability if isinstance(result.heritability, dict) else {}
     gp = result.genetic_parameters if isinstance(result.genetic_parameters, dict) else {}
@@ -1169,7 +1199,7 @@ def _add_interpretation_section(
         _add_body(doc, full_academic_text)
         doc.add_paragraph()
 
-    # Breeding implication
+    # Domain-specific implication text
     breeding_text = None
     if hasattr(tr, 'breeding_implication') and tr.breeding_implication:
         breeding_text = tr.breeding_implication
@@ -1179,7 +1209,7 @@ def _add_interpretation_section(
         logger.info("Using breeding implication from analysis_result: %d characters", len(breeding_text))
     
     if breeding_text:
-        _add_heading(doc, "Breeding Implication", level=3)
+        _add_heading(doc, "Practical Implication" if is_agronomy else "Breeding Implication", level=3)
         _add_body(doc, breeding_text)
         doc.add_paragraph()
 
@@ -1377,7 +1407,7 @@ def _add_trait_section(
         )
     doc.add_paragraph()
 
-    _add_genetic_parameters_section(doc, result)
+    _add_genetic_parameters_section(doc, result, domain=domain)
     doc.add_paragraph()
 
     # Log interpretation details before rendering
@@ -1389,7 +1419,7 @@ def _add_trait_section(
         trait_name, tr_interp_len, ar_interp_len, tr_breeding_len
     )
 
-    _add_interpretation_section(doc, ar, result, trait_name, tr)
+    _add_interpretation_section(doc, ar, result, trait_name, tr, domain=domain)
 
 
 # ============================================================================
@@ -1441,7 +1471,7 @@ def _anova_to_records(at: AnovaTable) -> List[Dict[str, str]]:
     """Convert AnovaTable (parallel arrays) to a list of dicts for _add_table_to_doc."""
     records = []
     for i, src in enumerate(at.source):
-        # Suppress Intercept row — not meaningful for plant breeding interpretation
+        # Suppress Intercept row — not meaningful for report interpretation.
         src_label = str(src).strip().lower()
         if src_label in {"(intercept)", "intercept"}:
             continue
@@ -1494,16 +1524,17 @@ def export_traits_to_word(
       • status == "success" AND analysis_result is not None → full export
       • otherwise → error section with reason
 
-    Per-trait section order:
+        Per-trait section order:
       1. Executive Summary (grand mean, H², GCV, PCV, GAM)
       2. Descriptive Statistics (real fields only — no fabrication)
       3. ANOVA Table (if anova_table present in result)
       4. Mean Separation table + bar chart (if mean_separation present)
       5. Assumption Tests (if assumption_tests present in result)
       6. Genetic Parameters (variance components, formulas, GA estimates)
-      7. Interpretation, Breeding Implication, Breeding Recommendation
+            7. Interpretation and domain-appropriate implication/recommendation text
     """
     trait_results = results.trait_results or {}
+    domain = getattr(results, "domain", "plant_breeding")
 
     if not trait_results:
         # Cache recovery found nothing (server restart / token expired).
@@ -1613,10 +1644,14 @@ def export_traits_to_word(
 
             # ── 6. Genetic Parameters (skipped for ANOVA module) ──────────────
             if not is_anova:
-                _add_genetic_parameters_section(doc, result)
+                _add_genetic_parameters_section(
+                    doc,
+                    result,
+                        domain=domain,
+                )
                 doc.add_paragraph()
 
-            # ── 7. Interpretation & Breeding Recommendations ──────────────────
+            # ── 7. Interpretation and domain-appropriate recommendations ─────
             # Log interpretation details before rendering
             tr_interp_len = len(getattr(tr, 'interpretation', '') or '')
             ar_interp_len = len(getattr(ar, 'interpretation', '') or '')
@@ -1625,7 +1660,15 @@ def export_traits_to_word(
                 "Interpretation logging for trait '%s' (ANOVA): tr.interpretation=%d chars, ar.interpretation=%d chars, tr.breeding_implication=%d chars",
                 trait, tr_interp_len, ar_interp_len, tr_breeding_len
             )
-            _add_interpretation_section(doc, ar, result, trait, tr, is_anova=is_anova)
+            _add_interpretation_section(
+                doc,
+                ar,
+                result,
+                trait,
+                tr,
+                is_anova=is_anova,
+                 domain=domain,
+            )
 
         except Exception as exc:
             logger.error(
@@ -1700,13 +1743,15 @@ def _build_document(data: DownloadReportRequest) -> Document:
     doc.add_paragraph()
 
     # ── Cross-trait summary ───────────────────────────────────────────────────
+    report_domain = getattr(data, "domain", "plant_breeding")
+
     _add_heading(doc, "Trait Summary", level=1)
-    _add_summary_table(doc, data)
+    _add_summary_table(doc, data, domain=report_domain)
     doc.add_paragraph()
 
     all_trait_results = _build_breeding_input_for_export(data)
     synthesis_text = build_breeding_synthesis(all_trait_results)
-    if synthesis_text:
+    if report_domain == "plant_breeding" and synthesis_text:
         _add_heading(doc, "Breeding Strategy Summary", level=1)
         for para in synthesis_text.split("\n\n"):
             _add_body(doc, para)
