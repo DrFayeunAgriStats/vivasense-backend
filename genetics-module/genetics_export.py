@@ -325,6 +325,7 @@ def _generate_mean_separation_chart(
     means: List[float],
     ses: List[Optional[float]],
     groups: List[str],
+    domain: str = "plant_breeding",
 ) -> bytes:
     logger.info("Chart generation started for trait: '%s'. Received %d means, %d groups.", trait_name, len(means), len(groups))
     try:
@@ -371,7 +372,7 @@ def _generate_mean_separation_chart(
             fontsize=9,
         )
         ax.set_ylabel(trait_name, fontsize=11)
-        ax.set_xlabel("Genotype", fontsize=11)
+        ax.set_xlabel("Treatment" if domain in ("agronomy", "general") else "Genotype", fontsize=11)
         ax.set_title(f"Mean Separation — {trait_name}", fontsize=12, fontweight="bold")
         ax.yaxis.grid(True, color="#cccccc", alpha=0.5, linewidth=0.7, zorder=0)
         ax.set_axisbelow(True)
@@ -769,13 +770,14 @@ def _add_executive_summary(
 # SECTION: DESCRIPTIVE STATISTICS (per trait)
 # ============================================================================
 
-def _add_descriptive_stats(doc: Document, result: GeneticsResult) -> None:
+def _add_descriptive_stats(doc: Document, result: GeneticsResult, domain: str = "plant_breeding") -> None:
     _add_heading(doc, "Descriptive Statistics", level=2)
 
+    _entry_label = "No. Treatments" if domain in ("agronomy", "general") else "No. Genotypes"
     # Use only real, directly-available fields — do not fabricate derived stats
     rows: List[tuple] = [
         ("Grand Mean", _fmt(result.grand_mean)),
-        ("No. Genotypes", str(result.n_genotypes)),
+        (_entry_label, str(result.n_genotypes)),
         ("No. Replications", str(result.n_reps)),
     ]
     if result.n_environments:
@@ -944,6 +946,7 @@ def _add_mean_separation_section(
         means=ms.mean,
         ses=ms.se,
         groups=ms.group,
+        domain=domain,
     )
     if chart_bytes:
         doc.add_paragraph()
@@ -987,10 +990,12 @@ def _add_genetic_parameters_section(doc: Document, result: GeneticsResult, domai
     sel_i     = gp.get("selection_intensity", 1.4)
 
     # Variance components table
+    _vc_g_label  = "Treatment Variance"    if is_agronomy else "Genotypic Variance"
+    _vc_ge_label = "T×E Variance"          if is_agronomy else "G×E Variance"
     vc_rows = []
-    if sigma2_g  is not None: vc_rows.append(["Genotypic Variance",   "σ²g",  _fmt(sigma2_g,  4)])
+    if sigma2_g  is not None: vc_rows.append([_vc_g_label,            "σ²g",  _fmt(sigma2_g,  4)])
     if sigma2_e  is not None: vc_rows.append(["Error Variance",       "σ²e",  _fmt(sigma2_e,  4)])
-    if sigma2_ge is not None: vc_rows.append(["G×E Variance",         "σ²ge", _fmt(sigma2_ge, 4)])
+    if sigma2_ge is not None: vc_rows.append([_vc_ge_label,           "σ²ge", _fmt(sigma2_ge, 4)])
     if sigma2_p  is not None: vc_rows.append(["Phenotypic Variance",  "σ²p",  _fmt(sigma2_p,  4)])
     if h2        is not None:
         h2_cls = "High" if h2 >= 0.6 else "Moderate" if h2 >= 0.3 else "Low"
@@ -1048,14 +1053,17 @@ def _add_genetic_parameters_section(doc: Document, result: GeneticsResult, domai
     doc.add_paragraph()
 
     # Genetic advance table
+    _ga_heading = "Advance Estimates" if is_agronomy else "Genetic Advance Estimates"
+    _ga_label   = "Advance (GA)"                    if is_agronomy else "Genetic Advance (GA)"
+    _gam_label  = "Advance as % of Mean (GAM%)"     if is_agronomy else "Genetic Advance as % of Mean (GAM%)"
     ga_rows = []
-    if gcv     is not None: ga_rows.append(["GCV (%)",                          _fmt(gcv,     2)])
-    if pcv     is not None: ga_rows.append(["PCV (%)",                          _fmt(pcv,     2)])
-    if gam     is not None: ga_rows.append(["Genetic Advance (GA)",             _fmt(gam,     4)])
-    if gam_pct is not None: ga_rows.append(["Genetic Advance as % of Mean (GAM%)", _fmt(gam_pct, 2)])
+    if gcv     is not None: ga_rows.append(["GCV (%)",       _fmt(gcv,     2)])
+    if pcv     is not None: ga_rows.append(["PCV (%)",       _fmt(pcv,     2)])
+    if gam     is not None: ga_rows.append([_ga_label,       _fmt(gam,     4)])
+    if gam_pct is not None: ga_rows.append([_gam_label,      _fmt(gam_pct, 2)])
 
     if ga_rows:
-        _add_heading(doc, "Genetic Advance Estimates", level=3)
+        _add_heading(doc, _ga_heading, level=3)
         _add_stat_table(doc, ["Parameter", "Value"], ga_rows, numeric_cols={1})
         doc.add_paragraph()
 
@@ -1087,8 +1095,9 @@ def _add_genetic_parameters_section(doc: Document, result: GeneticsResult, domai
                 p_env=float(anova_p_env) if anova_p_env is not None else None,
                 f_gxe=float(anova_f_gxe) if anova_f_gxe is not None else 0.0,
                 p_gxe=float(anova_p_gxe) if anova_p_gxe is not None else None,
+                domain=domain or "plant_breeding",
             )
-            gcv_pcv_sentence = _describe_gcv_pcv(gcv, pcv, "this trait")
+            gcv_pcv_sentence = _describe_gcv_pcv(gcv, pcv, "this trait", domain=domain or "plant_breeding")
             comment = gcv_pcv_sentence
         elif gcv < pcv:
             comment = (
@@ -1662,7 +1671,7 @@ def export_traits_to_word(
             doc.add_paragraph()
 
             # ── 2. Descriptive Statistics ────────────────────────────────────
-            _add_descriptive_stats(doc, result)
+            _add_descriptive_stats(doc, result, domain=domain)
             doc.add_paragraph()
 
             # ── 3. ANOVA ─────────────────────────────────────────────────────
