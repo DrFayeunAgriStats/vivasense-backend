@@ -1899,7 +1899,10 @@ async def export_word_report(data: DownloadReportRequest) -> Response:
     # display state, not the full GeneticsResponse blob).  _recover_from_cache
     # looks up the server-side cache by trait-name match (no token required)
     # and patches in the missing analysis_result objects before building the doc.
-    data = _recover_from_cache(data)
+        incoming_domain = data.domain
+        data = _recover_from_cache(data)
+        if incoming_domain and incoming_domain != (data.domain or "plant_breeding"):
+            data = data.model_copy(update={"domain": incoming_domain})
 
     # Diagnose key-mismatch upfront
     missing_keys = [t for t in summary_traits if t not in trait_result_keys]
