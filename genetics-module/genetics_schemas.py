@@ -88,6 +88,23 @@ class GeneticsResult(BaseModel):
             return {}
         return v
 
+    @field_validator("mean_separation", "main_plot_mean_separation", mode="before")
+    @classmethod
+    def coerce_mean_separation(cls, v: Any) -> Any:
+        """
+        Guard against partial mean-separation dicts returned by R when
+        rownames() yields NULL (jsonlite drops the key, leaving the dict
+        incomplete). Coerce any dict missing the four required list fields
+        to None so Optional[MeanSeparation] defaults cleanly.
+        """
+        if v is None:
+            return None
+        if isinstance(v, dict):
+            required = {"genotype", "mean", "se", "group"}
+            if not required.issubset(v.keys()):
+                return None
+        return v
+
 
 class GeneticsResponse(BaseModel):
     """Response payload for genetics analysis"""

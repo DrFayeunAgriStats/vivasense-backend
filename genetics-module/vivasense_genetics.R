@@ -510,26 +510,36 @@ compute_single_environment <- function(data, trait_name = "Trait",
 
   # Mean separation
   if (has_splitplot) {
-    # Helper to format an agricolae LSD/HSD result as a flat list
+    # Helper to format an agricolae LSD/HSD result as a flat list.
+    # Returns NULL (not a partial list) on any structural problem so that
+    # jsonlite drops the field entirely and Pydantic uses the default None.
     format_lsd_result <- function(sep_obj) {
       if (is.null(sep_obj)) return(NULL)
-      groups_df <- sep_obj$groups
-      means_df  <- sep_obj$means
-      lvl_order <- rownames(groups_df)
-      se_vals <- if ("se" %in% names(means_df)) {
-        as.numeric(means_df[lvl_order, "se"])
-      } else {
-        rep(NA_real_, length(lvl_order))
-      }
-      mean_col <- setdiff(names(groups_df), "groups")[1]
-      list(
-        genotype = lvl_order,
-        mean     = as.numeric(groups_df[[mean_col]]),
-        se       = se_vals,
-        group    = as.character(groups_df$groups),
-        test     = "Fisher LSD",
-        alpha    = 0.05
-      )
+      tryCatch({
+        groups_df <- sep_obj$groups
+        means_df  <- sep_obj$means
+        if (is.null(groups_df) || !is.data.frame(groups_df) || nrow(groups_df) == 0) return(NULL)
+        lvl_order <- rownames(groups_df)
+        if (is.null(lvl_order) || length(lvl_order) == 0) return(NULL)
+        mean_col <- setdiff(names(groups_df), "groups")[1]
+        if (is.na(mean_col) || !(mean_col %in% names(groups_df))) return(NULL)
+        se_vals <- if (!is.null(means_df) && "se" %in% names(means_df)) {
+          as.numeric(means_df[lvl_order, "se"])
+        } else {
+          rep(NA_real_, length(lvl_order))
+        }
+        list(
+          genotype = as.character(lvl_order),
+          mean     = as.numeric(groups_df[[mean_col]]),
+          se       = se_vals,
+          group    = as.character(groups_df$groups),
+          test     = "Fisher LSD",
+          alpha    = 0.05
+        )
+      }, error = function(e) {
+        message(sprintf("[WARN] format_lsd_result failed: %s", conditionMessage(e)))
+        NULL
+      })
     }
 
     # Main-plot mean separation (Error A: df = (r-1)(a-1), MS = MSEA)
