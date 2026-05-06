@@ -6,6 +6,18 @@ import {
 } from "@/services/geneticsUploadApi";
 import { ResultsDisplay } from "@/components/vivasense-genetics/ResultsDisplay";
 import { VsSpinner } from "@/components/vivasense-genetics/VsSpinner";
+import {
+  detectExperimentalDesign,
+  DesignDetectionResult,
+  ColumnAnalysis,
+} from "@/components/vivasense-genetics/designDetection";
+import { DesignRecommendationCard } from "@/components/vivasense-genetics/DesignRecommendationCard";
+import {
+  getDesignAwareLabels,
+  getColumnPlaceholder,
+  getFieldHelpText,
+} from "@/components/vivasense-genetics/designLabels";
+import { DomainKey } from "@/components/vivasense-genetics/domainTerms";
 
 type AnovaDesign = "crd" | "rcbd" | "factorial" | "split_plot_rcbd";
 
@@ -25,19 +37,14 @@ export function AnovaWorkspaceModule({ datasetContext }: AnovaWorkspaceModulePro
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<UploadAnalysisResponse | null>(null);
+  const [designDetection, setDesignDetection] = useState<DesignDetectionResult | null>(null);
+  const [showRecommendation, setShowRecommendation] = useState(false);
 
-  useEffect(() => {
-    if (!datasetContext) return;
-    setSelectedTraits(datasetContext.availableTraitColumns);
-    setTreatmentColumn(datasetContext.genotypeColumn ?? "");
-    setRepColumn(datasetContext.repColumn ?? "");
-    setFactorA("");
-    setFactorB("");
-    setMainPlot("");
-    setSubPlot("");
-    setError(null);
-    setResults(null);
-  }, [datasetContext]);
+  // Domain from dataset context
+  const domain: DomainKey = datasetContext?.research_domain ?? "general";
+
+  // Get design-aware labels
+  const labels = getDesignAwareLabels(design, domain);
 
   const categoricalColumns = useMemo(() => {
     if (!datasetContext) return [];
@@ -50,6 +57,60 @@ export function AnovaWorkspaceModule({ datasetContext }: AnovaWorkspaceModulePro
     const pool = new Set<string>([...candidates]);
     return Array.from(pool).filter((c) => !traits.has(c));
   }, [datasetContext]);
+
+  useEffect(() => {
+    if (!datasetContext) return;
+    setSelectedTraits(datasetContext.availableTraitColumns);
+    setTreatmentColumn(datasetContext.genotypeColumn ?? "");
+    setRepColumn(datasetContext.repColumn ?? "");
+
+    const genoCol = datasetContext.genotypeColumn ?? "";
+    const repCol = datasetContext.repColumn ?? "";
+    const eligible = categoricalColumns.filter(
+      (col) => col !== genoCol && col !== repCol
+    );
+    setFactorA(eligible[0] ?? "");
+    setFactorB(eligible[1] ?? "");
+
+    setMainPlot("");
+    setSubPlot("");
+    setError(null);
+    setResults(null);
+
+    // Auto-detect experimental design
+    const columnAnalysis: ColumnAnalysis[] = categoricalColumns.map(col => ({
+      name: col,
+      uniqueValues: 0, // Would need actual data to compute this precisely
+      isNumeric: false,
+      sampleValues: [],
+    }));
+    
+    const detection = detectExperimentalDesign(columnAnalysis, categoricalColumns);
+    setDesignDetection(detection);
+    
+    // Show recommendation card if confidence is medium or high
+    if (detection.confidence !== "low") {
+      setShowRecommendation(true);
+      
+      // Auto-populate fields if high confidence
+      if (detection.confidence === "high") {
+        setDesign(detection.suggestedDesign);
+        
+        // Auto-populate split-plot fields
+        if (detection.suggestedDesign === "split_plot_rcbd") {
+          if (detection.detectedFactors.blocking?.[0]) {
+            setRepColumn(detection.detectedFactors.blocking[0]);
+          }
+          if (detection.detectedFactors.possibleMainPlot?.[0]) {
+            setMainPlot(detection.detectedFactors.possibleMainPlot[0]);
+          }
+          if (detection.detectedFactors.possibleSubplot?.[0]) {
+            setSubPlot(detection.detectedFactors.possibleSubplot[0]);
+          }
+        }
+      }
+    }
+  }, [datasetContext, categoricalColumns]);
 
   if (!datasetContext) {
     return (
@@ -122,6 +183,31 @@ export function AnovaWorkspaceModule({ datasetContext }: AnovaWorkspaceModulePro
         </p>
       </div>
 
+      {/* Design Recommendation Card */}
+      {showRecommendation && designDetection && (
+        <DesignRecommendationCard
+          detection={designDetection}
+          onAccept={() => {
+            setDesign(designDetection.suggestedDesign);
+            setShowRecommendation(false);
+            
+            // Auto-populate fields for split-plot
+            if (designDetection.suggestedDesign === "split_plot_rcbd") {
+              if (designDetection.detectedFactors.blocking?.[0]) {
+                setRepColumn(designDetection.detectedFactors.blocking[0]);
+              }
+              if (designDetection.detectedFactors.possibleMainPlot?.[0]) {
+                setMainPlot(designDetection.detectedFactors.possibleMainPlot[0]);
+              }
+              if (designDetection.detectedFactors.possibleSubplot?.[0]) {
+                setSubPlot(designDetection.detectedFactors.possibleSubplot[0]);
+              }
+            }
+          }}
+          onDismiss={() => setShowRecommendation(false)}
+        />
+      )}
+
       <div className="rounded-xl border border-gray-200 bg-white p-4">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-base font-semibold text-gray-800">ANOVA Module Setup</h3>
@@ -131,7 +217,7 @@ export function AnovaWorkspaceModule({ datasetContext }: AnovaWorkspaceModulePro
         </div>
 
         <p className="mb-3 text-sm text-gray-500">
-          Configure design columns once, then run ANOVA across selected traits.
+          {labels.designDescription}
         </p>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -148,34 +234,94 @@ export function AnovaWorkspaceModule({ datasetContext }: AnovaWorkspaceModulePro
             </select>
           </Field>
 
-          <Field label="Treatment / Genotype" required>
-            <ColumnSelect value={treatmentColumn} onChange={setTreatmentColumn} options={categoricalColumns} />
-          </Field>
-
-          {design !== "crd" && (
-            <Field label="Replication / Block" required>
-              <ColumnSelect value={repColumn} onChange={setRepColumn} options={categoricalColumns} />
+          {/* Treatment/Factor column (design-specific) */}
+          {design !== "split_plot_rcbd" && design !== "factorial" && (
+            <Field 
+              label={labels.treatmentLabel} 
+              required
+              helpText="Column containing treatment identifiers (e.g., variety names, treatment codes)"
+            >
+              <ColumnSelect 
+                value={treatmentColumn} 
+                onChange={setTreatmentColumn} 
+                options={categoricalColumns}
+                placeholder={getColumnPlaceholder("treatment", design, domain)}
+              />
             </Field>
           )}
 
+          {/* Blocking/Replication column */}
+          {design !== "crd" && (
+            <Field 
+              label={labels.blockingLabel} 
+              required
+              helpText={getFieldHelpText("blocking", design)}
+            >
+              <ColumnSelect 
+                value={repColumn} 
+                onChange={setRepColumn} 
+                options={categoricalColumns}
+                placeholder={getColumnPlaceholder("blocking", design, domain)}
+              />
+            </Field>
+          )}
+
+          {/* Factorial Design Fields */}
           {design === "factorial" && (
             <>
-              <Field label="Factor A" required>
-                <ColumnSelect value={factorA} onChange={setFactorA} options={categoricalColumns} />
+              <Field 
+                label={labels.factorALabel} 
+                required
+                helpText={getFieldHelpText("factorA", design)}
+              >
+                <ColumnSelect 
+                  value={factorA} 
+                  onChange={setFactorA} 
+                  options={categoricalColumns}
+                  placeholder={getColumnPlaceholder("factorA", design, domain)}
+                />
               </Field>
-              <Field label="Factor B" required>
-                <ColumnSelect value={factorB} onChange={setFactorB} options={categoricalColumns} />
+              <Field 
+                label={labels.factorBLabel} 
+                required
+                helpText={getFieldHelpText("factorB", design)}
+              >
+                <ColumnSelect 
+                  value={factorB} 
+                  onChange={setFactorB} 
+                  options={categoricalColumns}
+                  placeholder={getColumnPlaceholder("factorB", design, domain)}
+                />
               </Field>
             </>
           )}
 
+          {/* Split-Plot Design Fields */}
           {design === "split_plot_rcbd" && (
             <>
-              <Field label="Main plot factor" required>
-                <ColumnSelect value={mainPlot} onChange={setMainPlot} options={categoricalColumns} />
+              <Field 
+                label={labels.mainPlotLabel} 
+                required
+                helpText={getFieldHelpText("mainPlot", design)}
+              >
+                <ColumnSelect 
+                  value={mainPlot} 
+                  onChange={setMainPlot} 
+                  options={categoricalColumns}
+                  placeholder={getColumnPlaceholder("mainPlot", design, domain)}
+                />
               </Field>
-              <Field label="Subplot factor" required>
-                <ColumnSelect value={subPlot} onChange={setSubPlot} options={categoricalColumns} />
+              <Field 
+                label={labels.subplotLabel} 
+                required
+                helpText={getFieldHelpText("subplot", design)}
+              >
+                <ColumnSelect 
+                  value={subPlot} 
+                  onChange={setSubPlot} 
+                  options={categoricalColumns}
+                  placeholder={getColumnPlaceholder("subplot", design, domain)}
+                />
               </Field>
             </>
           )}
@@ -276,17 +422,39 @@ export function AnovaWorkspaceModule({ datasetContext }: AnovaWorkspaceModulePro
 function Field({
   label,
   required,
+  helpText,
   children,
 }: {
   label: string;
   required?: boolean;
+  helpText?: string | null;
   children: React.ReactNode;
 }) {
   return (
     <div>
-      <label className="mb-1 block text-sm font-medium text-gray-700">
+      <label className="mb-1 flex items-center gap-1.5 text-sm font-medium text-gray-700">
         {label}
-        {required && <span className="ml-1 text-red-500">*</span>}
+        {required && <span className="text-red-500">*</span>}
+        {helpText && (
+          <span className="group relative cursor-help">
+            <svg
+              className="h-4 w-4 text-gray-400 hover:text-gray-600"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+            <span className="invisible group-hover:visible absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 rounded-lg bg-gray-900 px-2 py-1.5 text-xs text-white shadow-lg z-10">
+              {helpText}
+            </span>
+          </span>
+        )}
       </label>
       {children}
     </div>
@@ -297,10 +465,12 @@ function ColumnSelect({
   value,
   onChange,
   options,
+  placeholder = "Select column…",
 }: {
   value: string;
   onChange: (v: string) => void;
   options: string[];
+  placeholder?: string;
 }) {
   return (
     <select
@@ -308,7 +478,7 @@ function ColumnSelect({
       onChange={(e) => onChange(e.target.value)}
       className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
     >
-      <option value="">Select column…</option>
+      <option value="">{placeholder}</option>
       {options.map((option) => (
         <option key={option} value={option}>
           {option}
