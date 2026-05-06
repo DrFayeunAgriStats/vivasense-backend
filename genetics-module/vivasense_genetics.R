@@ -40,6 +40,11 @@ sanitize_anova_f_values <- function(anova_table) {
   } else {
     NA_real_
   }
+  residual_df <- if (length(sub_error_rows) > 0) {
+    suppressWarnings(as.integer(anova_table[sub_error_rows[length(sub_error_rows)], "Df"]))
+  } else {
+    NA_integer_
+  }
 
   # Whole-plot error: "Error A" (split-plot) or "whole_plot_error" (legacy)
   wp_error_ms <- if ("Error A" %in% rn) {
@@ -49,12 +54,20 @@ sanitize_anova_f_values <- function(anova_table) {
   } else {
     NA_real_
   }
+  wp_error_df <- if ("Error A" %in% rn) {
+    suppressWarnings(as.integer(anova_table["Error A", "Df"]))
+  } else if ("whole_plot_error" %in% rn) {
+    suppressWarnings(as.integer(anova_table["whole_plot_error", "Df"]))
+  } else {
+    NA_integer_
+  }
 
   # Row names that should not carry an F-test
   error_pattern <- "^(Error A|Error B|whole_plot_error|Replication|Residuals|Within)$"
 
   for (term in rn) {
     ms_effect <- suppressWarnings(as.numeric(anova_table[term, "Mean Sq"]))
+    df_effect <- suppressWarnings(as.integer(anova_table[term, "Df"]))
 
     if (grepl(error_pattern, term, ignore.case = TRUE)) {
       anova_table[term, "F value"] <- NA_real_
@@ -71,11 +84,24 @@ sanitize_anova_f_values <- function(anova_table) {
 
     # main_plot is tested against Error A (whole-plot error);
     # all other terms (sub_plot, interactions) are tested against Error B
-    denom <- if (identical(term, "main_plot")) wp_error_ms else residual_ms
-    f_val <- safe_f_ratio(ms_effect, denom)
+    if (identical(term, "main_plot")) {
+      denom_ms <- wp_error_ms
+      denom_df <- wp_error_df
+    } else {
+      denom_ms <- residual_ms
+      denom_df <- residual_df
+    }
+    
+    f_val <- safe_f_ratio(ms_effect, denom_ms)
     anova_table[term, "F value"] <- f_val
-    if (is.na(f_val) && ("Pr(>F)" %in% names(anova_table))) {
-      anova_table[term, "Pr(>F)"] <- NA_real_
+    
+    # Recalculate p-value with correct error df
+    if ("Pr(>F)" %in% names(anova_table)) {
+      if (is.na(f_val) || is.na(df_effect) || is.na(denom_df)) {
+        anova_table[term, "Pr(>F)"] <- NA_real_
+      } else {
+        anova_table[term, "Pr(>F)"] <- pf(f_val, df_effect, denom_df, lower.tail = FALSE)
+      }
     }
   }
 
@@ -577,6 +603,28 @@ compute_single_environment <- function(data, trait_name = "Trait",
     )
     sub_plot_mean_sep <- format_lsd_result(sub_sep_raw)
 
+    # Interaction means (A×B cell means for interaction plot)
+    interaction_means <- tryCatch({
+      # Compute cell means across all main_plot × sub_plot combinations
+      cell_means <- aggregate(trait_value ~ main_plot + sub_plot, data = data, FUN = mean, na.rm = TRUE)
+      # Reshape to wide format for interaction plot: rows = main_plot, cols = sub_plot
+      cell_wide <- tidyr::pivot_wider(
+        cell_means,
+        names_from = sub_plot,
+        values_from = trait_value
+      )
+      # Convert to list structure for JSON: main_plot_levels, sub_plot_levels, means_matrix
+      list(
+        main_plot_levels = as.character(levels(data$main_plot)),
+        sub_plot_levels = as.character(levels(data$sub_plot)),
+        cell_means = as.list(cell_means),  # Keep long format too for table display
+        means_matrix = as.list(cell_wide)   # Wide format for plotting
+      )
+    }, error = function(e) {
+      message(sprintf("[WARN] Interaction means computation failed for %s: %s", trait_name, conditionMessage(e)))
+      NULL
+    })
+
     df_err   <- df_error_B
     mean_sep <- sub_plot_mean_sep
   } else {
@@ -606,6 +654,7 @@ compute_single_environment <- function(data, trait_name = "Trait",
     anova_table                = as.data.frame(anova_table),
     mean_separation            = mean_sep,
     main_plot_mean_separation  = if (has_splitplot) main_plot_mean_sep else NULL,
+    interaction_means          = if (has_splitplot) interaction_means else NULL,
     ms_genotype                = ms_genotype,
     ms_error                   = ms_error
   )

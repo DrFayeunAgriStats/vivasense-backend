@@ -70,6 +70,7 @@ class GeneticsResult(BaseModel):
     anova_table: Optional[AnovaTable] = None
     mean_separation: Optional[MeanSeparation] = None
     main_plot_mean_separation: Optional[MeanSeparation] = None  # split-plot main-plot level
+    interaction_means: Optional[Dict[str, Any]] = None  # split-plot A×B cell means for interaction plot
     # Optional fields returned by the R engine — preserved here so the export
     # can render them without schema changes each time the engine adds new fields.
     descriptive_stats: Optional[Dict[str, Any]] = None
