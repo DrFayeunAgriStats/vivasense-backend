@@ -104,6 +104,7 @@ app.add_middleware(
     allow_origins=[
         "https://www.fieldtoinsightacademy.com.ng",
         "https://fieldtoinsightacademy.com.ng",
+        "https://fia-institute-portal.vercel.app",
         "http://localhost:8080",
         "http://localhost:5173",
     ],

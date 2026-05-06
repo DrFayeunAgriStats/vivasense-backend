@@ -53,6 +53,46 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Analysis"])
 
 
+def _convex_hull_indices(points: np.ndarray) -> List[int]:
+    """Andrew monotone chain convex hull; returns indices of hull points in CCW order."""
+    if points.shape[0] <= 2:
+        return list(range(points.shape[0]))
+
+    indexed = [(float(points[i, 0]), float(points[i, 1]), i) for i in range(points.shape[0])]
+    indexed.sort(key=lambda t: (t[0], t[1]))
+
+    def cross(o, a, b) -> float:
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower: List[tuple] = []
+    for p in indexed:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+
+    upper: List[tuple] = []
+    for p in reversed(indexed):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+
+    hull = lower[:-1] + upper[:-1]
+    return [p[2] for p in hull]
+
+
+def _angle_of(x: float, y: float) -> float:
+    """Angle in [0, 2pi)."""
+    a = math.atan2(y, x)
+    return a if a >= 0 else a + 2 * math.pi
+
+
+def _in_ccw_wedge(theta: float, start: float, end: float) -> bool:
+    """Return True if theta is inside CCW wedge [start, end)."""
+    if start <= end:
+        return start <= theta < end
+    return theta >= start or theta < end
+
+
 # ============================================================================
 # COMPUTATION HELPERS
 # ============================================================================
@@ -616,17 +656,64 @@ def _compute_gge_biplot(
     which_won_where: Optional[WhichWonWhere] = None
     if biplot_type == "which-won-where":
         winning_genos: Dict[str, str] = {}
-        env_to_sector: Dict[str, int] = {}
 
-        # For each environment find the highest-yielding genotype
-        for env in environments:
-            env_data = cell_means[cell_means[env_col] == env]
-            if env_data.empty:
-                continue
-            winner_idx = env_data["cell_mean"].idxmax()
-            winning_genos[env] = str(env_data.loc[winner_idx, genotype_col])
+        # Yan & Kang WWW view: use polygon sectors from convex hull vertices.
+        hull_idx = _convex_hull_indices(geno_scores_mat[:, :2])
+        if len(hull_idx) >= 3:
+            vertices = [
+                {
+                    "idx": i,
+                    "genotype": genotypes[i],
+                    "angle": _angle_of(float(geno_scores_mat[i, 0]), float(geno_scores_mat[i, 1])),
+                }
+                for i in hull_idx
+            ]
+            vertices.sort(key=lambda v: v["angle"])
 
-        # Group environments by winning genotype to form mega-environments
+            n_v = len(vertices)
+            sector_bounds: List[tuple] = []
+            for k in range(n_v):
+                prev_a = float(vertices[(k - 1) % n_v]["angle"])
+                curr_a = float(vertices[k]["angle"])
+                next_a = float(vertices[(k + 1) % n_v]["angle"])
+
+                # Mid-angle between previous/current and current/next (circular mean)
+                left = (prev_a + curr_a) / 2.0
+                right = (curr_a + next_a) / 2.0
+                if prev_a > curr_a:
+                    left = ((prev_a + (curr_a + 2 * math.pi)) / 2.0) % (2 * math.pi)
+                if curr_a > next_a:
+                    right = ((curr_a + (next_a + 2 * math.pi)) / 2.0) % (2 * math.pi)
+
+                sector_bounds.append((left, right, str(vertices[k]["genotype"])))
+
+            for j, env in enumerate(environments):
+                e_angle = _angle_of(float(env_scores_mat[j, 0]), float(env_scores_mat[j, 1]))
+                assigned = None
+                for start, end, winner in sector_bounds:
+                    if _in_ccw_wedge(e_angle, start, end):
+                        assigned = winner
+                        break
+                if assigned is None:
+                    # Numerical edge case: fallback to nearest vertex direction.
+                    assigned = min(
+                        vertices,
+                        key=lambda v: min(
+                            abs(e_angle - float(v["angle"])),
+                            2 * math.pi - abs(e_angle - float(v["angle"])),
+                        ),
+                    )["genotype"]
+                winning_genos[env] = str(assigned)
+        else:
+            # Degenerate hull fallback: choose winner by observed mean in each environment.
+            for env in environments:
+                env_data = cell_means[cell_means[env_col] == env]
+                if env_data.empty:
+                    continue
+                winner_idx = env_data["cell_mean"].idxmax()
+                winning_genos[env] = str(env_data.loc[winner_idx, genotype_col])
+
+        # Group environments by winning genotype to form mega-environments.
         from collections import defaultdict
         mega_map: Dict[str, List[str]] = defaultdict(list)
         for env, winner in winning_genos.items():
@@ -661,41 +748,50 @@ def _compute_gge_biplot(
     # ── Mean vs Stability ─────────────────────────────────────────────────────
     mean_vs_stability: Optional[MeanVsStability] = None
     if biplot_type == "mean-stability":
-        # Distance from origin in GGE biplot = instability
-        pc2_col = geno_scores_mat[:, 1] if n_pc > 1 else np.zeros(n_g)
-        distances_arr = np.sqrt(geno_scores_mat[:, 0] ** 2 + pc2_col ** 2)
-        # Normalise mean performance (0–1); guard against constant means
-        mean_range = float(geno_means.max() - geno_means.min())
-        if mean_range == 0.0:
-            norm_means_arr = np.full(n_g, 0.5)
+        # AEC abscissa = average environment vector; ordinate is perpendicular.
+        aec_vec = env_scores_mat[:, :2].mean(axis=0)
+        aec_norm = float(np.linalg.norm(aec_vec))
+        if aec_norm <= 1e-12:
+            aec_unit = np.array([1.0, 0.0], dtype=float)
         else:
-            norm_means_arr = (geno_means - geno_means.min()) / mean_range
-        # Ideal: high normalised mean, low distance
-        # Score = norm_mean / (distance + epsilon)
-        eps = 1e-9
-        scores_arr = norm_means_arr / (distances_arr + eps)
-        ideal_idx = int(np.argmax(scores_arr))
-        ideal_geno = genotypes[ideal_idx]
+            aec_unit = aec_vec / aec_norm
 
-        dist_ranks = np.argsort(distances_arr).argsort() + 1  # lower distance = rank 1
+        # Orient +AEC to align with higher genotype mean performance.
+        geno_proj = geno_scores_mat[:, :2] @ aec_unit
+        corr = np.corrcoef(geno_proj, geno_means)[0, 1] if n_g >= 2 else 0.0
+        if not np.isnan(corr) and corr < 0:
+            aec_unit = -aec_unit
+            geno_proj = -geno_proj
+
+        # Instability = absolute projection onto AEC ordinate.
+        ord_unit = np.array([-aec_unit[1], aec_unit[0]], dtype=float)
+        geno_ordinate = geno_scores_mat[:, :2] @ ord_unit
+
+        # Ideal point in AEC frame: max mean-performance coordinate, zero instability.
+        ideal_abscissa = float(np.max(geno_proj))
+        ideal_point = aec_unit * ideal_abscissa
+
+        distance_from_ideal = np.sqrt((geno_proj - ideal_abscissa) ** 2 + geno_ordinate ** 2)
         geno_dist_sorted = sorted(
-            zip(range(n_g), distances_arr.tolist(), dist_ranks.tolist()),
+            zip(range(n_g), distance_from_ideal.tolist()),
             key=lambda x: x[1],
         )
         genotype_distances: List[GenotypeDistance] = [
             GenotypeDistance(
                 genotype=genotypes[i],
                 distance_from_ideal=round(d, 6),
-                rank=int(r),
+                rank=rank,
             )
-            for i, d, r in geno_dist_sorted
+            for rank, (i, d) in enumerate(geno_dist_sorted, start=1)
         ]
+        ideal_idx = int(geno_dist_sorted[0][0])
+        ideal_geno = genotypes[ideal_idx]
         mvs_interp = _generate_gge_mvs_interpretation(trait_col, ideal_geno, genotype_distances)
         mean_vs_stability = MeanVsStability(
             ideal_genotype=ideal_geno,
             ideal_coordinates={
-                "pc1": round(float(geno_scores_mat[ideal_idx, 0]), 6),
-                "pc2": round(float(geno_scores_mat[ideal_idx, 1]) if n_pc > 1 else 0.0, 6),
+                "pc1": round(float(ideal_point[0]), 6),
+                "pc2": round(float(ideal_point[1]), 6),
             },
             genotype_distances=genotype_distances,
             interpretation=mvs_interp,
