@@ -29,23 +29,34 @@ sanitize_anova_f_values <- function(anova_table) {
   }
 
   rn <- rownames(anova_table)
-  residual_rows <- grep("Residuals|Within", rn, ignore.case = TRUE)
-  residual_ms <- if (length(residual_rows) > 0) {
-    suppressWarnings(as.numeric(anova_table[residual_rows[length(residual_rows)], "Mean Sq"]))
+
+  # Subplot error: "Error B" (split-plot) or last "Residuals"/"Within"
+  sub_error_rows <- which(rn == "Error B")
+  if (length(sub_error_rows) == 0) {
+    sub_error_rows <- grep("Residuals|Within", rn, ignore.case = TRUE)
+  }
+  residual_ms <- if (length(sub_error_rows) > 0) {
+    suppressWarnings(as.numeric(anova_table[sub_error_rows[length(sub_error_rows)], "Mean Sq"]))
   } else {
     NA_real_
   }
 
-  wp_error_ms <- if ("whole_plot_error" %in% rn) {
+  # Whole-plot error: "Error A" (split-plot) or "whole_plot_error" (legacy)
+  wp_error_ms <- if ("Error A" %in% rn) {
+    suppressWarnings(as.numeric(anova_table["Error A", "Mean Sq"]))
+  } else if ("whole_plot_error" %in% rn) {
     suppressWarnings(as.numeric(anova_table["whole_plot_error", "Mean Sq"]))
   } else {
     NA_real_
   }
 
+  # Row names that should not carry an F-test
+  error_pattern <- "^(Error A|Error B|whole_plot_error|Replication|Residuals|Within)$"
+
   for (term in rn) {
     ms_effect <- suppressWarnings(as.numeric(anova_table[term, "Mean Sq"]))
 
-    if (grepl("Residuals|Within|whole_plot_error", term, ignore.case = TRUE)) {
+    if (grepl(error_pattern, term, ignore.case = TRUE)) {
       anova_table[term, "F value"] <- NA_real_
       if ("Pr(>F)" %in% names(anova_table)) {
         anova_table[term, "Pr(>F)"] <- NA_real_
@@ -58,6 +69,8 @@ sanitize_anova_f_values <- function(anova_table) {
       next
     }
 
+    # main_plot is tested against Error A (whole-plot error);
+    # all other terms (sub_plot, interactions) are tested against Error B
     denom <- if (identical(term, "main_plot")) wp_error_ms else residual_ms
     f_val <- safe_f_ratio(ms_effect, denom)
     anova_table[term, "F value"] <- f_val
@@ -298,14 +311,23 @@ compute_single_environment <- function(data, trait_name = "Trait",
     sp_summ <- summary(model)
     strata_names <- names(sp_summ)
 
-    # Find the whole-plot stratum (contains "main_plot" as a treatment row)
+    # Identify strata by their row content:
+    #   wp_table        — stratum containing "main_plot" (whole-plot treatment stratum)
+    #   sub_table       — stratum containing "sub_plot"  (subplot stratum)
+    #   rep_stratum_tbl — stratum with only "Residuals"  (block/replication stratum)
     wp_table <- NULL
-    # Find the subplot stratum (contains "sub_plot" as a treatment row)
     sub_table <- NULL
+    rep_stratum_tbl <- NULL
     for (nm in strata_names) {
       tbl <- sp_summ[[nm]][[1]]
-      if ("main_plot" %in% rownames(tbl)) wp_table  <- tbl
-      if ("sub_plot"  %in% rownames(tbl)) sub_table <- tbl
+      rn  <- rownames(tbl)
+      if ("main_plot" %in% rn) {
+        wp_table <- tbl
+      } else if ("sub_plot" %in% rn) {
+        sub_table <- tbl
+      } else if (length(rn) == 1L && "Residuals" %in% rn) {
+        rep_stratum_tbl <- tbl
+      }
     }
     if (is.null(wp_table) || is.null(sub_table)) {
       stop(paste(
@@ -314,16 +336,50 @@ compute_single_environment <- function(data, trait_name = "Trait",
       ))
     }
 
-    # Rename the whole-plot Residuals row so the combined table is unambiguous
-    wp_res <- wp_table[rownames(wp_table) == "Residuals", , drop = FALSE]
-    rownames(wp_res) <- "whole_plot_error"
+    # ── Build ANOVA table: Replication | Main plot (A) | Error A | Sub plot (B) | A×B | Error B
+    # 1. Replication row (from the rep-only stratum's Residuals)
+    rep_row <- NULL
+    if (!is.null(rep_stratum_tbl)) {
+      rep_row <- rep_stratum_tbl["Residuals", , drop = FALSE]
+      rownames(rep_row) <- "Replication"
+      rep_row[, "F value"] <- NA_real_
+      if ("Pr(>F)" %in% names(rep_row)) rep_row[, "Pr(>F)"] <- NA_real_
+    }
+
+    # 2. Main-plot treatment rows
     wp_treat <- wp_table[rownames(wp_table) != "Residuals", , drop = FALSE]
 
-    anova_table <- rbind(wp_treat, wp_res, sub_table)
+    # 3. Error A (whole-plot error, formerly "whole_plot_error")
+    wp_error <- wp_table[rownames(wp_table) == "Residuals", , drop = FALSE]
+    rownames(wp_error) <- "Error A"
+    wp_error[, "F value"] <- NA_real_
+    if ("Pr(>F)" %in% names(wp_error)) wp_error[, "Pr(>F)"] <- NA_real_
 
-    ms_genotype <- NA_real_   # not applicable for generic split-plot
-    # Subplot residual is the canonical error term for CV and mean separation
-    ms_error <- sub_table["Residuals", "Mean Sq"]
+    # 4. Subplot treatment and interaction rows
+    sub_treat <- sub_table[rownames(sub_table) != "Residuals", , drop = FALSE]
+
+    # 5. Error B (subplot error)
+    sub_error <- sub_table[rownames(sub_table) == "Residuals", , drop = FALSE]
+    rownames(sub_error) <- "Error B"
+    sub_error[, "F value"] <- NA_real_
+    if ("Pr(>F)" %in% names(sub_error)) sub_error[, "Pr(>F)"] <- NA_real_
+
+    # 6. Assemble full table
+    anova_table <- if (!is.null(rep_row)) {
+      rbind(rep_row, wp_treat, wp_error, sub_treat, sub_error)
+    } else {
+      rbind(wp_treat, wp_error, sub_treat, sub_error)
+    }
+
+    ms_genotype <- NA_real_
+    ms_error_A  <- as.numeric(wp_error[1L, "Mean Sq"])
+    ms_error_B  <- as.numeric(sub_error[1L, "Mean Sq"])
+    df_error_A  <- as.integer(wp_error[1L, "Df"])
+    df_error_B  <- as.integer(sub_error[1L, "Df"])
+    ms_error    <- ms_error_B   # subplot error is canonical for backward-compat CV
+    n_main      <- nlevels(data$main_plot)
+    # cv_A / cv_B computed in the variance_components block below (grand_mean available there)
+
   } else {
     if (HAS_CAR) {
       anova_raw <- car::Anova(model, type = "III")
@@ -363,14 +419,21 @@ compute_single_environment <- function(data, trait_name = "Trait",
   # only relevant error terms are the subplot error and the whole-plot error;
   # genetics-specific blocks are explicitly omitted.
   if (has_splitplot) {
-    # Whole-plot error MS is in the renamed "whole_plot_error" row
-    wp_error_ms <- tryCatch(
-      as.numeric(anova_table["whole_plot_error", "Mean Sq"]),
-      error = function(e) NA_real_
-    )
+    # Dual CV — computed here where grand_mean is available
+    cv_A <- if (!is.na(ms_error_A) && ms_error_A >= 0 && mean_is_valid) {
+      (sqrt(ms_error_A) / grand_mean) * 100
+    } else NA_real_
+    cv_B <- if (!is.na(ms_error_B) && ms_error_B >= 0 && mean_is_valid) {
+      (sqrt(ms_error_B) / grand_mean) * 100
+    } else NA_real_
+
     variance_components_out <- list(
-      sigma2_subplot_error    = ms_error,
-      sigma2_whole_plot_error = wp_error_ms
+      sigma2_subplot_error    = ms_error_B,
+      sigma2_whole_plot_error = ms_error_A,
+      cv_A                    = cv_A,
+      cv_B                    = cv_B,
+      n_main_plot_levels      = n_main,
+      n_sub_plot_levels       = nlevels(data$sub_plot)
     )
     heritability_out   <- list(not_applicable = TRUE)
     genetic_params_out <- list(not_applicable = TRUE)
@@ -445,10 +508,67 @@ compute_single_environment <- function(data, trait_name = "Trait",
     )
   }
 
-  # Mean separation — only available for genotype-based designs
+  # Mean separation
   if (has_splitplot) {
-    df_err   <- NA_integer_
-    mean_sep <- NULL
+    # Helper to format an agricolae LSD/HSD result as a flat list
+    format_lsd_result <- function(sep_obj) {
+      if (is.null(sep_obj)) return(NULL)
+      groups_df <- sep_obj$groups
+      means_df  <- sep_obj$means
+      lvl_order <- rownames(groups_df)
+      se_vals <- if ("se" %in% names(means_df)) {
+        as.numeric(means_df[lvl_order, "se"])
+      } else {
+        rep(NA_real_, length(lvl_order))
+      }
+      mean_col <- setdiff(names(groups_df), "groups")[1]
+      list(
+        genotype = lvl_order,
+        mean     = as.numeric(groups_df[[mean_col]]),
+        se       = se_vals,
+        group    = as.character(groups_df$groups),
+        test     = "Fisher LSD",
+        alpha    = 0.05
+      )
+    }
+
+    # Main-plot mean separation (Error A: df = (r-1)(a-1), MS = MSEA)
+    # Average sub_plot values within each rep × main_plot cell, then fit simple RCBD
+    mp_sep_raw <- tryCatch({
+      mp_agg <- aggregate(trait_value ~ rep + main_plot, data = data, FUN = mean)
+      mp_mod  <- aov(trait_value ~ main_plot + rep, data = mp_agg)
+      LSD.test(mp_mod, "main_plot",
+               DFerror = df_error_A, MSerror = ms_error_A,
+               group = TRUE, console = FALSE)
+    }, error = function(e) {
+      message(sprintf("[WARN] Main-plot LSD failed for %s: %s", trait_name, conditionMessage(e)))
+      NULL
+    })
+    main_plot_mean_sep <- format_lsd_result(mp_sep_raw)
+
+    # Sub-plot mean separation (Error B: df = r*a*(b-1), MS = MSEB)
+    sub_sep_raw <- tryCatch(
+      LSD.test(model, "sub_plot",
+               DFerror = df_error_B, MSerror = ms_error_B,
+               group = TRUE, console = FALSE),
+      error = function(e) {
+        message(sprintf("[WARN] Sub-plot LSD on model failed for %s: %s — trying aggregated data", trait_name, conditionMessage(e)))
+        tryCatch({
+          sub_agg <- aggregate(trait_value ~ rep + main_plot + sub_plot, data = data, FUN = mean)
+          sub_mod  <- aov(trait_value ~ sub_plot + main_plot + rep, data = sub_agg)
+          LSD.test(sub_mod, "sub_plot",
+                   DFerror = df_error_B, MSerror = ms_error_B,
+                   group = TRUE, console = FALSE)
+        }, error = function(e2) {
+          message(sprintf("[WARN] Sub-plot aggregated LSD also failed for %s: %s", trait_name, conditionMessage(e2)))
+          NULL
+        })
+      }
+    )
+    sub_plot_mean_sep <- format_lsd_result(sub_sep_raw)
+
+    df_err   <- df_error_B
+    mean_sep <- sub_plot_mean_sep
   } else {
     df_err   <- anova_table["Residuals", "Df"]
     mean_sep <- compute_mean_separation(model, trait_name,
@@ -464,19 +584,20 @@ compute_single_environment <- function(data, trait_name = "Trait",
   }
 
   list(
-    environment_mode    = "single_environment",
-    design              = design_label,
-    n_genotypes         = n_genotypes,
-    n_reps              = n_reps,
-    grand_mean          = grand_mean,
-    variance_components = variance_components_out,
-    heritability        = heritability_out,
-    genetic_parameters  = genetic_params_out,
-    flags               = flags_out,
-    anova_table         = as.data.frame(anova_table),
-    mean_separation     = mean_sep,
-    ms_genotype         = ms_genotype,
-    ms_error            = ms_error
+    environment_mode           = "single_environment",
+    design                     = design_label,
+    n_genotypes                = n_genotypes,
+    n_reps                     = n_reps,
+    grand_mean                 = grand_mean,
+    variance_components        = variance_components_out,
+    heritability               = heritability_out,
+    genetic_parameters         = genetic_params_out,
+    flags                      = flags_out,
+    anova_table                = as.data.frame(anova_table),
+    mean_separation            = mean_sep,
+    main_plot_mean_separation  = if (has_splitplot) main_plot_mean_sep else NULL,
+    ms_genotype                = ms_genotype,
+    ms_error                   = ms_error
   )
 }
 

@@ -184,6 +184,9 @@ class AnovaTraitResult(BaseModel):
     gxe_significant: Optional[bool] = None
     assumption_tests: Optional[Dict[str, Any]] = None
     mean_separation: Optional[MeanSeparation] = None
+    main_plot_mean_separation: Optional[MeanSeparation] = None  # split-plot main-plot level
+    cv_a: Optional[float] = None  # split-plot whole-plot CV (sqrt(MSEA)/grand_mean*100)
+    cv_b: Optional[float] = None  # split-plot subplot CV (sqrt(MSEB)/grand_mean*100)
     interpretation: Optional[str] = None
     data_warnings: List[str] = Field(default_factory=list)
     error: Optional[str] = None
