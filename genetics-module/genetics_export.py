@@ -1070,52 +1070,6 @@ def _add_genetic_parameters_section(doc: Document, result: GeneticsResult, domai
         _add_stat_table(doc, ["Parameter", "Value"], ga_rows, numeric_cols={1})
         doc.add_paragraph()
 
-    # GCV vs PCV text — conditional on ANOVA significance flags derived from the table
-    if gcv is not None and pcv is not None:
-        diff = abs(gcv - pcv)
-
-        # Derive significance flags from the ANOVA table that lives on this result
-        _at = result.anova_table
-        def _sig(src):
-            if _at is None or not hasattr(_at, "source"):
-                return False
-            try:
-                idx = _at.source.index(src)
-                p = _at.p_value[idx]
-                return p is not None and float(p) < 0.05
-            except (ValueError, IndexError, TypeError):
-                return False
-
-        _env_active = _sig("environment") or any(
-            _sig(t) for t in ["genotype:environment", "environment:genotype", "GxE", "gxe"]
-        )
-
-        env_sentence = None
-        if diff < 1.0:
-            anova_f_env, anova_p_env, anova_f_gxe, anova_p_gxe = _anova_env_effect_stats(_at)
-            env_sentence = _describe_env_effects(
-                f_env=float(anova_f_env) if anova_f_env is not None else 0.0,
-                p_env=float(anova_p_env) if anova_p_env is not None else None,
-                f_gxe=float(anova_f_gxe) if anova_f_gxe is not None else 0.0,
-                p_gxe=float(anova_p_gxe) if anova_p_gxe is not None else None,
-                domain=domain or "plant_breeding",
-            )
-            gcv_pcv_sentence = _describe_gcv_pcv(gcv, pcv, "this trait", domain=domain or "plant_breeding")
-            comment = gcv_pcv_sentence
-        elif gcv < pcv:
-            comment = (
-                f"GCV ({_fmt(gcv, 2)}%) < PCV ({_fmt(pcv, 2)}%) — "
-                "environmental effects contribute to observed phenotypic variation."
-            )
-        else:
-            comment = (
-                f"GCV ({_fmt(gcv, 2)}%) > PCV ({_fmt(pcv, 2)}%) — "
-                "verify variance component estimates."
-            )
-        _add_body(doc, comment)
-        if env_sentence:
-            doc.add_paragraph()
-            _add_body(doc, env_sentence)
 
 
 # ============================================================================
