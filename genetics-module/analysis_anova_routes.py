@@ -513,17 +513,17 @@ def generate_anova_interpretation(
                 f"with a total range of {summary['range']:.2f}."
             )
 
-    if precision_level == "good":
+    if cv_interpretation_flag == "cv_available" and precision_level == "good":
         desc.append(
             "The experimental precision was good, suggesting reliable and "
             "reproducible results."
         )
-    elif precision_level == "moderate":
+    elif cv_interpretation_flag == "cv_available" and precision_level == "moderate":
         desc.append(
             "The experimental precision was moderate, indicating acceptable but "
             "not optimal experimental control."
         )
-    elif precision_level == "low":
+    elif cv_interpretation_flag == "cv_available" and precision_level == "low":
         desc.append(
             "The experimental precision was low, suggesting high variability that "
             "warrants cautious interpretation of the results."
@@ -708,7 +708,7 @@ def generate_anova_interpretation(
             "The significant genotype \u00d7 environment interaction represents a "
             "major limitation, as it complicates genotype evaluation and selection."
         )
-    if precision_level == "low":
+    if cv_interpretation_flag == "cv_available" and precision_level == "low":
         risks.append(
             "The low experimental precision introduces uncertainty in the results "
             "and suggests potential issues with experimental control or replication."
@@ -740,7 +740,7 @@ def generate_anova_interpretation(
                 "Consider advancing promising genotypes to further evaluation "
                 "in additional environments to validate their performance."
             )
-    if precision_level == "low":
+    if cv_interpretation_flag == "cv_available" and precision_level == "low":
         recs.append(
             "Improve experimental design by increasing replication or enhancing "
             "environmental control to reduce variability."
