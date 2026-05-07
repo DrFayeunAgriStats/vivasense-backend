@@ -38,22 +38,21 @@ import {
   VivaSenseMode,
 } from "@/services/featureMode";
 
-type TabId = "upload" | "anova" | "genetics" | "relationships" | "descriptive" | "advanced";
+type TabId = "field" | "upload" | "descriptive" | "anova" | "relationships" | "genetics" | "advanced";
 
 interface DataSourceTabsProps {
+  /**
+   * Render-prop for the Field Data tab (FieldLayoutGenerator or similar).
+   * Receives no dataset context — this is the pre-upload data collection step.
+   * When omitted, the Field Data tab is not rendered.
+   */
+  fieldContent?: () => React.ReactNode;
   /**
    * The MultiTraitUpload component (or any element that accepts an optional
    * `onDatasetReady` prop).  DataSourceTabs injects `onDatasetReady` via
    * React.cloneElement to capture the dataset context.
    */
   uploadContent: React.ReactElement;
-  /**
-   * Render-prop for the Trait Relationships tab.
-   * Receives the current dataset context (null until the user confirms a
-   * column mapping in the Upload File tab).
-   * When omitted, the third tab is not rendered.
-   */
-  traitRelationshipsContent?: (ctx: UploadDatasetContext | null) => React.ReactNode;
   /**
    * Render-prop for the Descriptive Statistics tab.
    * Receives the current dataset context including dataset_token.
@@ -65,6 +64,13 @@ interface DataSourceTabsProps {
    * Receives the current dataset context after upload/confirmation.
    */
   anovaContent?: (ctx: UploadDatasetContext | null) => React.ReactNode;
+  /**
+   * Render-prop for the Trait Relationships tab.
+   * Receives the current dataset context (null until the user confirms a
+   * column mapping in the Experimental Dataset tab).
+   * When omitted, the Trait Relationships tab is not rendered.
+   */
+  traitRelationshipsContent?: (ctx: UploadDatasetContext | null) => React.ReactNode;
   /**
    * Render-prop for the Genetic Parameters tab.
    * Receives the current dataset context after upload/confirmation.
@@ -78,10 +84,11 @@ interface DataSourceTabsProps {
 }
 
 export function DataSourceTabs({
+  fieldContent,
   uploadContent,
-  traitRelationshipsContent,
   descriptiveStatsContent,
   anovaContent,
+  traitRelationshipsContent,
   geneticsContent,
   advancedContent,
 }: DataSourceTabsProps) {
@@ -104,9 +111,10 @@ export function DataSourceTabs({
     };
   }, []);
 
-  const showRelationships = typeof traitRelationshipsContent === "function";
+  const showField = typeof fieldContent === "function";
   const showDescriptive = typeof descriptiveStatsContent === "function";
   const showAnova = typeof anovaContent === "function";
+  const showRelationships = typeof traitRelationshipsContent === "function";
   const showGenetics = typeof geneticsContent === "function";
   const showAdvanced = typeof advancedContent === "function";
 
@@ -119,13 +127,39 @@ export function DataSourceTabs({
   };
 
   const tabs: TabDef[] = [
+    // ── 1. Field Data — pre-upload experimental design ─────────────────────
+    ...(showField
+      ? [
+          {
+            id: "field" as TabId,
+            label: "Field Data",
+            icon: "🌾",
+            description: "Plot layout & experimental design",
+            badge: "free" as const,
+          },
+        ]
+      : []),
+    // ── 2. Experimental Dataset — structured multi-trait upload ─────────────
     {
-      id: "upload",
-      label: "Multi-Trait File",
+      id: "upload" as TabId,
+      label: "Experimental Dataset",
       icon: "📂",
       description: "CSV / Excel — batch analysis",
-      badge: "free",
+      badge: "free" as const,
     },
+    // ── 3. Descriptive Statistics — exploratory summary ─────────────────────
+    ...(showDescriptive
+      ? [
+          {
+            id: "descriptive" as TabId,
+            label: "Descriptive Statistics",
+            icon: "📊",
+            description: "Summary statistics per trait",
+            badge: "free" as const,
+          },
+        ]
+      : []),
+    // ── 4. ANOVA — inferential statistics ───────────────────────────────────
     ...(showAnova
       ? [
           {
@@ -137,6 +171,19 @@ export function DataSourceTabs({
           },
         ]
       : []),
+    // ── 5. Trait Relationships — inter-trait associations ───────────────────
+    ...(showRelationships
+      ? [
+          {
+            id: "relationships" as TabId,
+            label: "Trait Relationships",
+            icon: "🔗",
+            description: "Heatmap, correlation, PCA",
+            badge: "pro" as const,
+          },
+        ]
+      : []),
+    // ── 6. Genetic Parameters — heritability & variance estimation ──────────
     ...(showGenetics
       ? [
           {
@@ -150,28 +197,7 @@ export function DataSourceTabs({
           },
         ]
       : []),
-    ...(showRelationships
-      ? [
-          {
-            id: "relationships" as TabId,
-            label: "Trait Relationships",
-            icon: "🔗",
-            description: "Heatmap, correlation, PCA",
-            badge: "pro" as const,
-          },
-        ]
-      : []),
-    ...(showDescriptive
-      ? [
-          {
-            id: "descriptive" as TabId,
-            label: "Descriptive Statistics",
-            icon: "📊",
-            description: "Summary statistics per trait",
-            badge: "free" as const,
-          },
-        ]
-      : []),
+    // ── 7. Advanced Analysis — multivariate & stability workflows ───────────
     ...(showAdvanced
       ? [
           {
@@ -229,7 +255,9 @@ export function DataSourceTabs({
           {tabs.map((tab) => {
             const isActive = active === tab.id;
             const hasDataDot =
-              (tab.id === "relationships" || tab.id === "descriptive") &&
+              (tab.id === "descriptive" || tab.id === "anova" ||
+               tab.id === "relationships" || tab.id === "genetics" ||
+               tab.id === "advanced") &&
               datasetContext !== null &&
               !isActive;
 
@@ -277,17 +305,22 @@ export function DataSourceTabs({
 
         {/* Content pane */}
         <div className="flex-1 min-w-0">
+          {showField && (
+            <div className={active === "field" ? "block" : "hidden"}>
+              {fieldContent()}
+            </div>
+          )}
           <div className={active === "upload" ? "block" : "hidden"}>
             {uploadWithCallback}
           </div>
+          {showDescriptive && (
+            <div className={active === "descriptive" ? "block" : "hidden"}>
+              {descriptiveStatsContent(datasetContext)}
+            </div>
+          )}
           {showAnova && (
             <div className={active === "anova" ? "block" : "hidden"}>
               {anovaContent(datasetContext)}
-            </div>
-          )}
-          {showGenetics && (
-            <div className={active === "genetics" ? "block" : "hidden"}>
-              {geneticsContent(datasetContext)}
             </div>
           )}
           {showRelationships && (
@@ -295,9 +328,9 @@ export function DataSourceTabs({
               {traitRelationshipsContent(datasetContext)}
             </div>
           )}
-          {showDescriptive && (
-            <div className={active === "descriptive" ? "block" : "hidden"}>
-              {descriptiveStatsContent(datasetContext)}
+          {showGenetics && (
+            <div className={active === "genetics" ? "block" : "hidden"}>
+              {geneticsContent(datasetContext)}
             </div>
           )}
           {showAdvanced && (
