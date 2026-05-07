@@ -496,16 +496,22 @@ def generate_anova_interpretation(
         and summary.get("max") is not None
         and summary.get("range") is not None
     ):
-        variability = (
-            "substantial"
-            if summary["range"] > summary["grand_mean"] * 0.5
-            else "moderate"
-        )
-        desc.append(
-            f"Performance ranged from {summary['min']:.2f} to {summary['max']:.2f}, "
-            f"with a total range of {summary['range']:.2f}, indicating {variability} "
-            "variability among experimental units."
-        )
+        if cv_interpretation_flag == "cv_available" and summary.get("grand_mean") is not None:
+            variability = (
+                "substantial"
+                if summary["range"] > summary["grand_mean"] * 0.5
+                else "moderate"
+            )
+            desc.append(
+                f"Performance ranged from {summary['min']:.2f} to {summary['max']:.2f}, "
+                f"with a total range of {summary['range']:.2f}, indicating {variability} "
+                "variability among experimental units."
+            )
+        else:
+            desc.append(
+                f"Performance ranged from {summary['min']:.2f} to {summary['max']:.2f}, "
+                f"with a total range of {summary['range']:.2f}."
+            )
 
     if precision_level == "good":
         desc.append(

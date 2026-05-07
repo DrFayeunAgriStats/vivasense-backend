@@ -93,7 +93,7 @@ def compute_per_genotype_stats(
 def classify_precision_level(cv_percent: Optional[float]) -> str:
     """Classify experimental precision based on coefficient of variation (Legacy/ANOVA mapping)."""
     if cv_percent is None:
-        return "low"
+        return "unknown"
     if cv_percent < 10.0:
         return "good"
     elif cv_percent <= 20.0:
