@@ -9,7 +9,7 @@ def is_plant_breeding_domain(domain: Optional[str]) -> bool:
 
 _FORBIDDEN_PATTERNS = (
     r"\bheritability\b",
-    r"\bh[²2]\b",
+    r"\b[hH][²2]\b",
     r"\bgam\b",
     r"\bgcv\b",
     r"\bpcv\b",
