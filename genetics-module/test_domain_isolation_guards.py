@@ -1,14 +1,5 @@
-import re
-
 from domain_guard import find_forbidden_breeding_terms
 from genetics_interpretation import generate_genetics_interpretation
-
-
-_FORBIDDEN_TEXT_RX = re.compile(
-    r"(?i)heritability|h2|h²|gam|gcv|pcv|genetic advance|genetic gain|breeding|"
-    r"selection strategy|selection efficiency|genotype advancement|best genotype|top genotype|"
-    r"additive variance|phenotypic selection|direct selection|germplasm|accession"
-)
 
 
 def test_agronomy_domain_has_no_breeding_terminology():
@@ -23,7 +14,7 @@ def test_agronomy_domain_has_no_breeding_terminology():
         domain="agronomy",
     )
     combined = f"{interpretation} {implication}"
-    assert _FORBIDDEN_TEXT_RX.search(combined) is None
+    assert find_forbidden_breeding_terms(combined) == []
 
 
 def test_general_domain_has_no_breeding_terminology():
@@ -38,7 +29,7 @@ def test_general_domain_has_no_breeding_terminology():
         domain="general",
     )
     combined = f"{interpretation} {implication}"
-    assert _FORBIDDEN_TEXT_RX.search(combined) is None
+    assert find_forbidden_breeding_terms(combined) == []
 
 
 def test_plant_breeding_domain_retains_breeding_support():
@@ -61,3 +52,35 @@ def test_forbidden_term_scan_finds_breeding_language():
     text = "Breeding implication: broad-sense heritability (H2) and GAM support genotype advancement."
     hits = find_forbidden_breeding_terms(text)
     assert hits
+
+
+def test_non_plant_domain_adds_low_observation_caution():
+    interpretation, implication = generate_genetics_interpretation(
+        trait_name="Yield",
+        h2=0.51,
+        gam=6.2,
+        gcv=7.1,
+        pcv=8.3,
+        gxe_significant=False,
+        environment_significant=False,
+        n_observations=8,
+        domain="agronomy",
+    )
+    assert "Only 8 observations were available" in interpretation
+    assert find_forbidden_breeding_terms(f"{interpretation} {implication}") == []
+
+
+def test_non_plant_domain_mentions_treatment_environment_interaction():
+    interpretation, implication = generate_genetics_interpretation(
+        trait_name="Biomass",
+        h2=0.45,
+        gam=4.0,
+        gcv=5.5,
+        pcv=6.5,
+        gxe_significant=True,
+        environment_significant=True,
+        domain="general",
+    )
+    assert "Treatment × environment interaction was significant" in interpretation
+    assert "management recommendations" in implication
+    assert find_forbidden_breeding_terms(f"{interpretation} {implication}") == []
