@@ -1079,18 +1079,19 @@ def _domain_language_guide(module_type: str, domain: str) -> str:
         return (
             "Language guide: Use agronomy language: treatment effects, "
             "management recommendations, and agronomic response. "
-            "Avoid plant-breeding terms unless a source is explicitly named Genotype."
+            "Never use breeding/genetics terms (heritability, H²/H2, GCV, PCV, GAM, "
+            "genetic advance/gain, selection strategy, genotype advancement, accession, germplasm)."
         )
     if domain == "soil_science":
         return (
             "Language guide: Use soil science language: treatment effects on soil "
-            "properties. Avoid plant-breeding terms unless a source is explicitly "
-            "named Genotype."
+            "properties. Never use breeding/genetics terms (heritability, H²/H2, GCV, PCV, "
+            "GAM, genetic advance/gain, selection strategy, genotype advancement, accession, germplasm)."
         )
     return (
         "Language guide: Use neutral language: treatment differences and "
-        "statistical findings. Avoid plant-breeding terms unless a source is "
-        "explicitly named Genotype."
+        "statistical findings. Never use breeding/genetics terms (heritability, H²/H2, "
+        "GCV, PCV, GAM, genetic advance/gain, selection strategy, genotype advancement, accession, germplasm)."
     )
 
 

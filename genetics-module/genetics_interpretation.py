@@ -9,6 +9,7 @@ from collections import defaultdict
 from typing import Optional, Tuple
 from interpretation_sections import GeneticsInterpretationSections
 from interpretation import InterpretationEngine
+from domain_guard import is_plant_breeding_domain
 
 
 def build_breeding_synthesis(trait_results: list[dict]) -> str:
@@ -289,7 +290,7 @@ def _describe_gcv_pcv(gcv: float, pcv: float, trait_name: str, domain: str = "pl
     if gcv <= 0:
         return ""
     inflation_pct = ((pcv - gcv) / gcv) * 100
-    is_agronomy = domain in ("agronomy", "general")
+    is_agronomy = not is_plant_breeding_domain(domain)
 
     if inflation_pct < 3:
         if is_agronomy:
@@ -358,7 +359,7 @@ def _describe_env_effects(
 ) -> str:
     env_sig = p_env is not None and p_env < 0.05
     gxe_sig = p_gxe is not None and p_gxe < 0.05
-    is_agronomy = domain in ("agronomy", "general")
+    is_agronomy = not is_plant_breeding_domain(domain)
 
     if not env_sig:
         env_desc = "Environmental effects were non-significant for this trait"
@@ -641,9 +642,33 @@ def generate_genetics_interpretation(
     Returns:
         (interpretation_text, implication_text)
     """
+    if not is_plant_breeding_domain(domain):
+        interpretation_parts = [
+            f"Treatment response for '{trait_name}' was evaluated under the tested conditions."
+        ]
+        if environment_significant:
+            interpretation_parts.append(
+                "Field response varied significantly across environments, indicating context-dependent management outcomes."
+            )
+        if gxe_significant:
+            interpretation_parts.append(
+                "Treatment × environment interaction was significant, so treatment rankings should be confirmed across sites or seasons."
+            )
+        if n_observations is not None and n_observations < 10:
+            interpretation_parts.append(
+                f"Only {n_observations} observations were available; results should be treated as preliminary."
+            )
+        interpretation = " ".join(interpretation_parts)
+        implication = (
+            "Use these treatment comparisons to guide management recommendations under conditions similar to this trial."
+            if (environment_significant or gxe_significant)
+            else "Treatment differences were limited; prioritize operational considerations and additional field validation."
+        )
+        return interpretation, implication
+
     h2_class = _classify_heritability(h2)
     gam_class = _classify_gam(gam)
-    is_agronomy = domain in ("agronomy", "general")
+    is_agronomy = not is_plant_breeding_domain(domain)
 
     # ── Joint H2 + GAM interpretation ───────────────────────────────────
     if h2_class == "not_computed":
