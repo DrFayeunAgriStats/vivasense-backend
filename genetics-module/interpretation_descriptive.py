@@ -38,15 +38,14 @@ def generate_trait_interpretation(trait: str, stats: dict, precision_class: str)
     cv_str = f"{cv:.2f}" if cv is not None else "N/A"
     min_v = stats.get('min')
     max_v = stats.get('max')
-    
-    variability = "low" if cv is not None and cv < 15 else "moderate" if cv is not None and cv <= 30 else "high"
-    
-    interp = (f"The mean {trait} was {mean:.2f}, ranging from {min_v:.2f} to {max_v:.2f}, "
-              f"indicating {variability} variability. ")
+
+    interp = f"The mean {trait} was {mean:.2f}, ranging from {min_v:.2f} to {max_v:.2f}. "
     if cv is not None:
+        variability = "low" if cv < 15 else "moderate" if cv <= 30 else "high"
+        interp += f"Observed variability was {variability} (CV = {cv_str}%). "
         interp += f"The coefficient of variation ({cv_str}%) suggests {precision_class} experimental precision."
     else:
-        interp += "The coefficient of variation could not be calculated."
+        interp += "Experimental precision could not be fully assessed from the available dataset structure."
     return interp
 
 def generate_global_recommendation(reliable_traits: List[str], caution_traits: List[str], global_flags: List[str]) -> str:

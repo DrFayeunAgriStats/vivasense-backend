@@ -164,7 +164,7 @@ def _generate_split_plot_interpretation(
         prec = "good" if cv < 10 else "moderate" if cv <= 20 else "low"
         precision_parts.append(f"The coefficient of variation was {cv:.1f}% ({prec} experimental precision).")
     else:
-        precision_parts.append("Experimental precision could not be assessed from the available data.")
+        precision_parts.append("Experimental precision could not be fully assessed from the available dataset structure.")
     sections.append(("Experimental Precision", " ".join(precision_parts)))
 
     # ── 4–6. Treatment Effects — Interaction Priority Rule ─────────────────────
@@ -478,8 +478,7 @@ def generate_anova_interpretation(
         )
     else:
         overview.append(
-            "Experimental precision could not be assessed due to insufficient "
-            "data for CV calculation."
+            "Experimental precision could not be fully assessed from the available dataset structure."
         )
 
     sections.append(("Overview", " ".join(overview)))
@@ -525,8 +524,7 @@ def generate_anova_interpretation(
         )
     elif cv_interpretation_flag == "cv_unavailable":
         desc.append(
-            "Experimental precision could not be assessed, limiting confidence "
-            "in the results."
+            "Experimental precision could not be fully assessed from the available dataset structure."
         )
 
     sections.append(("Descriptive Interpretation", " ".join(desc)))

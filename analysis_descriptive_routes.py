@@ -84,7 +84,7 @@ def interpret_results(r_results, traits):
         # 1. Variability
         cv = stats.get("cv_percent")
         if cv is None:
-            var_interp = "Variability could not be calculated."
+            var_interp = "Experimental precision could not be fully assessed from the available dataset structure."
         elif cv < 10:
             var_interp = f"Low variability (CV = {cv:.2f}%)."
         elif cv <= 30:
