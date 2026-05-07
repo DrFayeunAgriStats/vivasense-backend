@@ -39,6 +39,30 @@ from genetics_interpretation import generate_genetics_interpretation
 
 logger = logging.getLogger(__name__)
 
+_NON_GENETIC_EXPERIMENT_KEYWORDS = {
+    "treatment",
+    "irrigation",
+    "fertilizer",
+    "fertiliser",
+    "management",
+    "dose",
+    "rate",
+    "spacing",
+    "tillage",
+}
+
+_GENOTYPE_ORIENTED_KEYWORDS = {
+    "genotype",
+    "variety",
+    "cultivar",
+    "line",
+    "accession",
+    "cross",
+    "hybrid",
+}
+
+_NON_APPLICABLE_GP_MESSAGE = "Genetic parameter estimation is not applicable for the current experimental structure."
+
 
 class UTF8JSONResponse(JSONResponse):
     media_type = "application/json; charset=utf-8"
@@ -164,6 +188,30 @@ def _build_gp_text(
             None,
         )
 
+
+def _is_genotype_oriented_experiment(ctx: Dict[str, object]) -> bool:
+    """Heuristic governance gate for genetic-parameter applicability."""
+    genotype_col = str(ctx.get("genotype_column") or "").strip().lower()
+    factor_col = str(ctx.get("factor_column") or "").strip().lower()
+    numeric_factors = [str(c).strip().lower() for c in (ctx.get("numeric_factor_columns") or [])]
+    categorical_cols = [str(c).strip().lower() for c in (ctx.get("categorical_columns") or [])]
+
+    if any(k in genotype_col for k in _NON_GENETIC_EXPERIMENT_KEYWORDS):
+        return False
+
+    if factor_col and any(k in factor_col for k in _NON_GENETIC_EXPERIMENT_KEYWORDS):
+        return False
+
+    if any(any(k in col for k in _NON_GENETIC_EXPERIMENT_KEYWORDS) for col in numeric_factors):
+        return False
+
+    if any(any(k in col for k in _NON_GENETIC_EXPERIMENT_KEYWORDS) for col in categorical_cols):
+        has_genotype_named_column = any(any(g in col for g in _GENOTYPE_ORIENTED_KEYWORDS) for col in categorical_cols)
+        if not has_genotype_named_column:
+            return False
+
+    return any(g in genotype_col for g in _GENOTYPE_ORIENTED_KEYWORDS)
+
 @router.post(
     "/analysis/genetic-parameters",
     response_model=GeneticParametersModuleResponse,
@@ -219,18 +267,53 @@ async def analysis_genetic_parameters(request: ModuleRequest):
     random_env    = ctx["random_environment"]
     crd_mode      = (rep_col is None) and (mode == "single")
 
-    # Genetic parameters (heritability, GCV, PCV, GAM) require a genotype column
-    # and a genotype-based model.  Split-plot RCBD has no genotype column and no
-    # genotype mean square, so these statistics are not estimable.
-    if design_type == "split_plot_rcbd":
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Genetic parameters (heritability, GCV, PCV, GAM) are not "
-                "applicable for generic split-plot RCBD designs, which have no "
-                "genotype column and no genotype mean square. "
-                "To analyse split-plot treatment effects, use POST /analysis/anova."
-            ),
+    has_genetic_factor = bool(geno_col and str(geno_col).strip())
+    genotype_oriented = _is_genotype_oriented_experiment(ctx)
+
+    # Governance gate:
+    # H2/GCV/PCV/GAM are only valid for genotype-oriented experiments with a
+    # true genetic factor. Non-genetic treatment studies get a neutral message.
+    if (not has_genetic_factor) or (not genotype_oriented) or (design_type == "split_plot_rcbd"):
+        trait_results: Dict[str, GeneticParametersTraitResult] = {}
+        for trait in request.trait_columns:
+            trait_descriptive_stats = compute_descriptive_stats(df[trait])
+            desc_stats_obj = DescriptiveStats(
+                grand_mean=trait_descriptive_stats.get("grand_mean"),
+                standard_deviation=trait_descriptive_stats.get("standard_deviation"),
+                variance=trait_descriptive_stats.get("variance"),
+                standard_error=trait_descriptive_stats.get("standard_error"),
+                cv_percent=trait_descriptive_stats.get("cv_percent"),
+                min=trait_descriptive_stats.get("min"),
+                max=trait_descriptive_stats.get("max"),
+                range=trait_descriptive_stats.get("range"),
+            )
+            trait_results[trait] = GeneticParametersTraitResult(
+                trait=trait,
+                status="success",
+                grand_mean=trait_descriptive_stats.get("grand_mean"),
+                descriptive_stats=desc_stats_obj,
+                variance_components={},
+                heritability={},
+                gcv=None,
+                pcv=None,
+                ga=None,
+                gam=None,
+                breeding_implication=_NON_APPLICABLE_GP_MESSAGE,
+                interpretation=_NON_APPLICABLE_GP_MESSAGE,
+                environment_significant=None,
+                gxe_significant=None,
+                anova_f_env=None,
+                anova_p_env=None,
+                anova_f_gxe=None,
+                anova_p_gxe=None,
+                data_warnings=[_NON_APPLICABLE_GP_MESSAGE],
+            )
+
+        return GeneticParametersModuleResponse(
+            dataset_token=request.dataset_token,
+            mode=mode,
+            trait_results=trait_results,
+            failed_traits=[],
         )
 
     trait_results: Dict[str, GeneticParametersTraitResult] = {}
