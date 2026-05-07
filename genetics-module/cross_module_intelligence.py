@@ -441,7 +441,7 @@ def generate_integrated_interpretation(signals: CrossModuleSignals) -> str:
     risks_mentioned = []
 
     if "gxe_interaction_detected" in signals.integrated_risk_flags:
-        risk_parts.append("The significant genotype × environment interaction represents a major consideration, as it complicates genotype evaluation and may limit the transferability of results across environments.")
+        risk_parts.append("The significant genotype × environment interaction represents a major consideration, as it complicates treatment evaluation and may limit the transferability of results across environments.")
         risks_mentioned.append("GxE")
 
     if "low_experimental_precision" in signals.integrated_risk_flags:
@@ -465,7 +465,7 @@ def generate_integrated_interpretation(signals: CrossModuleSignals) -> str:
         risks_mentioned.append("missing genetic data")
 
     if not risk_parts:
-        risk_parts.append("No major experimental or analytical limitations were identified in this integrated analysis.")
+        risk_parts.append("Results should be interpreted within the scope of this experiment, including the evaluated environment and replication structure.")
 
     sections.append("Risk and Caution\n" + " ".join(risk_parts))
 
@@ -474,11 +474,11 @@ def generate_integrated_interpretation(signals: CrossModuleSignals) -> str:
 
     if signals.decision_signals.advance_top_genotypes:
         if signals.integrated_summary.selection_feasibility == "feasible_with_caution":
-            recommendation_parts.append("The top-performing genotypes should be advanced for further evaluation, but with validation across multiple environments to confirm their stability.")
+            recommendation_parts.append("Genotypes with comparatively higher performance across traits may warrant further evaluation, with validation across multiple environments to confirm their consistency.")
         else:
-            recommendation_parts.append("The top-performing genotypes should be advanced for further evaluation and potential use in breeding programs.")
+            recommendation_parts.append("Genotypes with comparatively higher performance across traits may warrant further evaluation and consideration for use in improvement programmes.")
     else:
-        recommendation_parts.append("Genotype advancement is not recommended at this time due to insufficient evidence of genetic variation.")
+        recommendation_parts.append("Advancement of genotypes is not recommended at this time due to insufficient evidence of genetic variation.")
 
     if signals.decision_signals.recommend_stability_analysis:
         recommendation_parts.append("Stability analysis, such as AMMI or GGE biplot analysis, should be conducted to identify genotypes with consistent performance across environments.")

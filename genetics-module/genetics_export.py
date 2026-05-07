@@ -197,7 +197,15 @@ def _eta_squared_for_source(at: Optional[AnovaTable], source_name: str) -> Optio
     if ss_effect is None:
         return None
 
-    ss_total = sum(float(x) for x in at.ss if x is not None)
+    # Exclude Intercept row — its large SS would artificially deflate η².
+    # η² = SS_source / SS_total where SS_total = Σ of all non-intercept sources
+    # (i.e., replication + treatment + error), following the standard formula.
+    ss_total = sum(
+        float(at.ss[i])
+        for i, src in enumerate(at.source)
+        if at.ss[i] is not None
+        and str(src).strip().lower() not in {"(intercept)", "intercept"}
+    )
     if ss_total <= 0:
         return None
     return float(ss_effect) / ss_total
@@ -946,11 +954,16 @@ def _add_mean_separation_section(
     top_letter = ms.group[0] if ms.group else "a"
     top_genos = [ms.genotype[i] for i, g in enumerate(ms.group) if g == top_letter]
     top_label = "treatment(s)" if is_agronomy else "genotype(s)"
+    _top_phrase = (
+        f"Treatment(s) with the highest observed mean in group '{top_letter}': "
+        if is_agronomy
+        else f"Top-performing {top_label} in group '{top_letter}': "
+    )
     _add_body(
         doc,
         "Means followed by the same letter are not significantly different "
         f"at α = {ms.alpha} ({ms.test}). "
-        f"Top-performing {top_label} in group '{top_letter}': "
+        + _top_phrase
         + ", ".join(top_genos) + ".",
         italic=True,
     )
@@ -1170,12 +1183,23 @@ def _add_interpretation_section(
             if sig in ("***", "**"):
                 practical_text = (
                     f"Treatment differences were highly significant. "
-                    + (f"The top-performing treatment ({top}) can be recommended for adoption under similar growing conditions." if top else "The top-performing treatment can be recommended for adoption under similar growing conditions.")
+                    + (
+                        f"Treatment '{top}' showed comparatively strong performance under the conditions of this experiment "
+                        "and may warrant further evaluation across additional environments and seasons before adoption decisions are made."
+                        if top else
+                        "The leading treatment showed comparatively strong performance under the conditions of this experiment "
+                        "and may warrant further evaluation across additional environments and seasons."
+                    )
                 )
             elif sig == "*":
                 practical_text = (
                     f"Treatment differences were significant. "
-                    + (f"Consider {top} as a leading option, but validate across additional seasons or sites before wide-scale adoption." if top else "Validate the leading treatment across additional seasons or sites before wide-scale adoption.")
+                    + (
+                        f"Treatment '{top}' showed comparatively higher performance among tested treatments; "
+                        "results should be validated across additional environments and seasons before operational decisions."
+                        if top else
+                        "Validate the leading treatment across additional environments and seasons before operational decisions."
+                    )
                 )
             else:
                 practical_text = (
@@ -1327,10 +1351,17 @@ def _add_writing_support_guide(doc: Document, data: DownloadReportRequest) -> No
             top_genotype = result.mean_separation.genotype[0]
             top_group = result.mean_separation.group[0] if result.mean_separation.group else "a"
             top_noun = "treatment" if _guide_agronomy else "genotype"
-            starter_means = (
-                f"Mean separation ({result.mean_separation.test}) grouped {top_genotype} in the leading "
-                f"performance group ({top_group}), supporting its consideration for {_consider} under the tested conditions."
-            )
+            if _guide_agronomy:
+                starter_means = (
+                    f"Mean separation ({result.mean_separation.test}) placed {top_genotype} in the "
+                    f"highest observed mean group ({top_group}), suggesting it warrants further evaluation "
+                    "under similar management conditions."
+                )
+            else:
+                starter_means = (
+                    f"Mean separation ({result.mean_separation.test}) grouped {top_genotype} in the leading "
+                    f"performance group ({top_group}), supporting its consideration for {_consider} under the tested conditions."
+                )
             _add_body(doc, starter_means)
 
         doc.add_paragraph()
@@ -1629,7 +1660,15 @@ def export_traits_to_word(
         if tr.status != "success" or tr.analysis_result is None:
             _add_kv(doc, "Status", "Failed")
             error_msg = tr.error or "No analysis result available."
-            _add_kv(doc, "Reason", error_msg)
+            # Provide informative diagnostic messages instead of raw error text
+            if "residual sum of squares is 0" in (error_msg or "").lower() or "ss" in (error_msg or "").lower() and "0" in (error_msg or ""):
+                display_msg = (
+                    "Residual variance approached zero, which may indicate highly uniform values, "
+                    "duplicated observations, or insufficient variability for ANOVA estimation."
+                )
+            else:
+                display_msg = error_msg
+            _add_kv(doc, "Reason", display_msg)
             logger.warning(
                 "export_traits_to_word: trait '%s' failed — status=%s error=%s",
                 trait, tr.status, tr.error,

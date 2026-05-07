@@ -35,6 +35,17 @@ _FORBIDDEN_PATTERNS = (
     r"\bbest genotype\b",
     r"\btop genotype\b",
     r"\bbreeding implication\b",
+    # Additional breeding terms that must not appear in Agronomy/General reports
+    r"\badvancing promising genotypes\b",
+    r"\badvance promising genotypes\b",
+    r"\bgenotype evaluation\b",
+    r"\bgenetic improvement\b",
+    r"\brecommended for adoption\b",
+    r"\bshould be adopted\b",
+    r"\bsuperior treatment\b",
+    r"\bdefinitive recommendation\b",
+    r"\btop-performing treatment\b",
+    r"\bbest treatment\b",
 )
 _FORBIDDEN_REGEX = [re.compile(p, flags=re.IGNORECASE) for p in _FORBIDDEN_PATTERNS]
 

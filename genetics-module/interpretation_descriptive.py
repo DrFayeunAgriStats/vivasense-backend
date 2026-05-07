@@ -45,7 +45,7 @@ def generate_trait_interpretation(trait: str, stats: dict, precision_class: str)
         interp += f"Observed variability was {variability} (CV = {cv_str}%). "
         interp += f"The coefficient of variation ({cv_str}%) suggests {precision_class} experimental precision."
     else:
-        interp += "Experimental precision could not be fully assessed from the available dataset structure."
+        interp += "Experimental variability could not be precisely quantified; interpret findings within the scope of the available design structure."
     return interp
 
 def generate_global_recommendation(reliable_traits: List[str], caution_traits: List[str], global_flags: List[str]) -> str:
