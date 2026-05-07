@@ -17,7 +17,7 @@ import sys
 sys.path.insert(0, ".")
 
 import pytest
-from domain_guard import find_forbidden_breeding_terms, is_plant_breeding_domain
+from domain_guard import find_forbidden_breeding_terms
 from genetics_interpretation import generate_genetics_interpretation
 from analysis_anova_routes import generate_anova_interpretation
 

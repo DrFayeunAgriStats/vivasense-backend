@@ -1661,7 +1661,8 @@ def export_traits_to_word(
             _add_kv(doc, "Status", "Failed")
             error_msg = tr.error or "No analysis result available."
             # Provide informative diagnostic messages instead of raw error text
-            if "residual sum of squares is 0" in (error_msg or "").lower() or "ss" in (error_msg or "").lower() and "0" in (error_msg or ""):
+            err_lower = (error_msg or "").lower()
+            if "residual sum of squares is 0" in err_lower or "ss is 0" in err_lower:
                 display_msg = (
                     "Residual variance approached zero, which may indicate highly uniform values, "
                     "duplicated observations, or insufficient variability for ANOVA estimation."
