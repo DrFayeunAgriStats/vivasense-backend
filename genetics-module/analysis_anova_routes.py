@@ -164,7 +164,10 @@ def _generate_split_plot_interpretation(
         prec = "good" if cv < 10 else "moderate" if cv <= 20 else "low"
         precision_parts.append(f"The coefficient of variation was {cv:.1f}% ({prec} experimental precision).")
     else:
-        precision_parts.append("Experimental precision could not be fully assessed from the available dataset structure.")
+        precision_parts.append(
+            "Experimental precision assessment requires CV data; "
+            "interpret this trial with awareness of the available design structure."
+        )
     sections.append(("Experimental Precision", " ".join(precision_parts)))
 
     # ── 4–6. Treatment Effects — Interaction Priority Rule ─────────────────────
@@ -332,8 +335,9 @@ def _generate_split_plot_interpretation(
         )
     if not risks:
         risks.append(
-            "No major experimental limitations were identified in this analysis. "
-            "The design structure and precision levels support reliable inference."
+            "Results should be interpreted within the scope of this experiment, "
+            "including the evaluated environment and replication structure. "
+            "The design structure and precision levels support reliable inference within these constraints."
         )
     sections.append(("Risk and Limitations", " ".join(risks)))
 
@@ -478,7 +482,8 @@ def generate_anova_interpretation(
         )
     else:
         overview.append(
-            "Experimental precision could not be fully assessed from the available dataset structure."
+            "Experimental variability could not be quantified precisely; "
+            "interpret findings within the scope of this design structure."
         )
 
     sections.append(("Overview", " ".join(overview)))
@@ -530,7 +535,8 @@ def generate_anova_interpretation(
         )
     elif cv_interpretation_flag == "cv_unavailable":
         desc.append(
-            "Experimental precision could not be fully assessed from the available dataset structure."
+            "Experimental variability could not be precisely quantified from the available data; "
+            "findings should be interpreted within the scope of the design structure."
         )
 
     sections.append(("Descriptive Interpretation", " ".join(desc)))
@@ -595,25 +601,40 @@ def generate_anova_interpretation(
 
         # ── 5. G×E Interaction (multi only) ───────────────────────────────────
         if gxe_significant is True:
-            gxe_text = (
-                f"A significant genotype \u00d7 environment interaction was detected "
-                f"for {trait}, indicating that genotype performance is not consistent "
-                "across environments. This suggests that no single genotype is "
-                "universally superior, and selection strategies should account for "
-                "environmental stability."
-            )
+            if domain == "plant_breeding":
+                gxe_text = (
+                    f"A significant genotype \u00d7 environment interaction was detected "
+                    f"for {trait}, indicating that genotype performance is not consistent "
+                    "across environments. This suggests that no single genotype is "
+                    "universally superior, and selection strategies should account for "
+                    "environmental stability."
+                )
+            else:
+                gxe_text = (
+                    f"A significant treatment \u00d7 environment interaction was detected "
+                    f"for {trait}, indicating that treatment effects are not consistent "
+                    "across environments. Treatment performance should be evaluated "
+                    "within the specific environmental context tested."
+                )
         elif gxe_significant is False:
-            gxe_text = (
-                f"No significant genotype \u00d7 environment interaction was detected "
-                f"for {trait}, suggesting relatively stable genotype performance across "
-                "the tested environments."
-            )
+            if domain == "plant_breeding":
+                gxe_text = (
+                    f"No significant genotype \u00d7 environment interaction was detected "
+                    f"for {trait}, suggesting relatively stable genotype performance across "
+                    "the tested environments."
+                )
+            else:
+                gxe_text = (
+                    f"No significant treatment \u00d7 environment interaction was detected "
+                    f"for {trait}, suggesting relatively consistent treatment effects across "
+                    "the tested environments."
+                )
         else:
             gxe_text = (
-                f"The presence of genotype \u00d7 environment interaction for {trait} "
+                f"The presence of interaction between treatments and environments for {trait} "
                 "could not be determined."
             )
-        sections.append(("G\u00d7E Interaction", gxe_text))
+        sections.append(("G\u00d7E Interaction" if domain == "plant_breeding" else "Treatment \u00d7 Environment Interaction", gxe_text))
 
     # ── 6 (single: 4). Mean Performance and Ranking ───────────────────────────
     ranking = []
@@ -704,10 +725,18 @@ def generate_anova_interpretation(
     # ── 8 (single: 6). Risk and Limitations ───────────────────────────────────
     risks = []
     if is_multi and gxe_significant is True:
-        risks.append(
-            "The significant genotype \u00d7 environment interaction represents a "
-            "major limitation, as it complicates genotype evaluation and selection."
-        )
+        if domain == "plant_breeding":
+            risks.append(
+                "The significant genotype \u00d7 environment interaction represents a "
+                "major limitation, as it complicates genotype evaluation and "
+                "environment-specific inference."
+            )
+        else:
+            risks.append(
+                "The significant treatment \u00d7 environment interaction represents a "
+                "major limitation, as treatment effects differ across environments and "
+                "broad generalisation of results requires caution."
+            )
     if cv_interpretation_flag == "cv_available" and precision_level == "low":
         risks.append(
             "The low experimental precision introduces uncertainty in the results "
@@ -718,27 +747,42 @@ def generate_anova_interpretation(
             "Strong environmental influence may limit the generalisability of these "
             "results to other locations or conditions."
         )
-    if not risks:
-        risks.append("No major experimental limitations were identified in this analysis.")
+    # Always acknowledge experimental scope — never claim no limitations
+    risks.append(
+        "Results should be interpreted within the scope of this experiment, "
+        "including the evaluated environment and replication structure."
+    )
     sections.append(("Risk and Limitations", " ".join(risks)))
 
     # ── 9 (single: 7). Recommendation ─────────────────────────────────────────
     recs = []
     if is_multi and gxe_significant is True:
-        recs.append(
-            "Conduct stability analysis (e.g., AMMI or GGE biplot) to identify "
-            "genotypes with consistent performance across environments."
-        )
-    if selection_feasible is True:
-        if is_multi:
+        if domain == "plant_breeding":
             recs.append(
-                "Consider advancing promising genotypes to further evaluation, "
-                "with appropriate caution regarding environmental interactions."
+                "Conduct stability analysis (e.g., AMMI or GGE biplot) to identify "
+                "genotypes with consistent performance across environments."
             )
         else:
             recs.append(
-                "Consider advancing promising genotypes to further evaluation "
-                "in additional environments to validate their performance."
+                "Conduct stability analysis to identify treatments with consistent "
+                "performance across the tested environments."
+            )
+    if selection_feasible is True:
+        if domain == "plant_breeding":
+            if is_multi:
+                recs.append(
+                    "Consider advancing promising genotypes to further evaluation, "
+                    "with appropriate caution regarding environmental interactions."
+                )
+            else:
+                recs.append(
+                    "Consider advancing promising genotypes to further evaluation "
+                    "in additional environments to validate their performance."
+                )
+        else:
+            recs.append(
+                "Further evaluation across additional environments and management conditions "
+                "may help validate treatment consistency."
             )
     if cv_interpretation_flag == "cv_available" and precision_level == "low":
         recs.append(

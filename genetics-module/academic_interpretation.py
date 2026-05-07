@@ -521,7 +521,11 @@ def _format_anova_prompt(trait: str, result: Dict[str, Any]) -> str:
     pvals   = at.get("p_value") or []
 
     if sources:
-        total_ss = sum(s for s in sss if s is not None)
+        # Exclude Intercept from SS total to avoid artificially deflating η²
+        total_ss = sum(
+            s for i, s in enumerate(sss)
+            if s is not None and str(sources[i]).strip().lower() not in {"(intercept)", "intercept"}
+        )
         lines.append("\nANOVA TABLE:")
         lines.append(f"  {'Source':<22} {'df':>4} {'F':>8} {'p':>8} {'η²':>7}")
         lines.append("  " + "-" * 55)

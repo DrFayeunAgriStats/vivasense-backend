@@ -682,7 +682,8 @@ def generate_genetics_interpretation(
                 f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates HIGH consistency "
                 f"of treatment effects on '{trait_name}'. The advance as percent of mean "
                 f"(GAM = {gam:.2f}%) is HIGH, indicating that treatment differences are strong and "
-                "repeatable. The top-performing treatment can be recommended with confidence."
+                "repeatable. The treatment with the highest observed mean showed comparatively strong "
+                "performance under the conditions of this experiment and may warrant further evaluation."
             )
         else:
             interpretation = (
