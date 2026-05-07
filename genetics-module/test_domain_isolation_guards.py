@@ -1,4 +1,4 @@
-from domain_guard import find_forbidden_breeding_terms
+from domain_guard import find_forbidden_breeding_terms, is_plant_breeding_domain
 from genetics_interpretation import generate_genetics_interpretation
 
 
@@ -52,6 +52,11 @@ def test_forbidden_term_scan_finds_breeding_language():
     text = "Breeding implication: broad-sense heritability (H2) and GAM support genotype advancement."
     hits = find_forbidden_breeding_terms(text)
     assert hits
+
+
+def test_domain_normalization_supports_space_and_hyphen():
+    assert is_plant_breeding_domain("plant breeding")
+    assert is_plant_breeding_domain("plant-breeding")
 
 
 def test_non_plant_domain_adds_low_observation_caution():

@@ -3,7 +3,8 @@ from typing import List, Optional
 
 
 def is_plant_breeding_domain(domain: Optional[str]) -> bool:
-    return (domain or "plant_breeding").strip().lower() == "plant_breeding"
+    normalized = (domain or "plant_breeding").strip().lower().replace("-", "_").replace(" ", "_")
+    return normalized == "plant_breeding"
 
 
 _FORBIDDEN_PATTERNS = (
