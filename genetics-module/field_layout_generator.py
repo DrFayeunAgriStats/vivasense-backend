@@ -11,11 +11,12 @@ read DESIGN_REGISTRY[design]["requires_pro"] and enforce entitlement.
 
 from __future__ import annotations
 
+import datetime
 from itertools import product
 import math
 from pprint import pprint
 import random
-from typing import Any, Callable, Dict, List, Sequence, Tuple, TypeVar
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, TypeVar
 
 
 T = TypeVar("T")
@@ -76,7 +77,7 @@ def _require_list_of_labels(value: Any, field_name: str) -> List[str]:
 
 
 def _require_positive_int(value: Any, field_name: str, minimum: int = 1) -> int:
-    if not isinstance(value, int):
+    if not isinstance(value, int) or isinstance(value, bool):
         raise ValueError(f"'{field_name}' must be an integer.")
     if value < minimum:
         raise ValueError(f"'{field_name}' must be >= {minimum}.")
@@ -98,6 +99,116 @@ def _require_common_numeric_fields(request: Dict[str, Any]) -> None:
 
 def _build_color_index(labels: Sequence[str]) -> Dict[str, int]:
     return {label: idx for idx, label in enumerate(labels)}
+
+
+def _extract_treatment_labels(request: Dict[str, Any]) -> List[str]:
+    """Return the primary treatment label list from a request, design-agnostic.
+
+    For CRD / RCBD / Latin square / lattice designs: returns the ``treatments`` list.
+    For split-plot designs: returns main_treatments.
+    For factorial RCBD: returns all factor-level combination strings, sorted for stability.
+    Falls back to an empty list if the design shape is unrecognised.
+    """
+    if request.get("treatments"):
+        return list(request["treatments"])
+    if request.get("main_treatments"):
+        return list(request["main_treatments"])
+    if isinstance(request.get("factors"), dict) and request["factors"]:
+        factors: Dict[str, List[str]] = request["factors"]
+        factor_names = sorted(factors.keys())
+        combos = list(product(*[factors[k] for k in factor_names]))
+        return [".".join(combo) for combo in combos]
+    return []
+
+
+def _build_plot_labels(fieldbook: Fieldbook) -> List[str]:
+    """Return an ordered flat list of treatment labels indexed by plot order.
+
+    Rows are sorted by ``plot_id`` before extraction so the list is
+    deterministically ordered regardless of fieldbook insertion order.
+    Falls back to recognisable treatment-key variants for all designs.
+    """
+    sorted_fb = sorted(fieldbook, key=lambda r: r.get("plot_id", 0))
+    labels: List[str] = []
+    for row in sorted_fb:
+        for key in ("treatment", "treatment_combination", "sub_treatment", "sub_sub_treatment"):
+            if key in row:
+                labels.append(str(row[key]))
+                break
+    return labels
+
+
+def _build_export_ready(fieldbook: Fieldbook) -> Dict[str, Any]:
+    """Build export-ready structures from a fieldbook for future Word/PDF/print use.
+
+    Returns
+    -------
+    dict with three keys:
+
+    ``printable_plot_numbers``
+        Ordered list of human-readable plot descriptors: ``"Plot 1 | T1"``.
+
+    ``row_col_matrix``
+        2-D list of ``{row, col, plot_id, treatment}`` dicts keyed by the
+        physical row/column position.  Only populated for designs whose
+        fieldbook contains ``row`` and ``column`` fields (CRD, RCBD,
+        Latin square).  Otherwise an empty list.
+
+    ``field_map_labels``
+        2-D list of compact label strings (``"1\\nT1"``) matching the
+        ``row_col_matrix`` shape.  Useful for direct printing or table
+        rendering.
+    """
+    sorted_fb = sorted(fieldbook, key=lambda r: r.get("plot_id", 0))
+
+    # Printable plot numbering
+    printable: List[str] = []
+    for row in sorted_fb:
+        plot_id = row.get("plot_id", "?")
+        treatment: str = (
+            str(row.get("treatment"))
+            if "treatment" in row
+            else str(
+                row.get("treatment_combination")
+                or row.get("sub_treatment")
+                or row.get("sub_sub_treatment")
+                or "?"
+            )
+        )
+        printable.append(f"Plot {plot_id} | {treatment}")
+
+    # Row-column matrix (designs with explicit row/column fields only)
+    row_col_matrix: List[List[Dict[str, Any]]] = []
+    field_map_labels: List[List[str]] = []
+    if sorted_fb and "row" in sorted_fb[0] and "column" in sorted_fb[0]:
+        rows_dict: Dict[int, List[Dict[str, Any]]] = {}
+        for fb_row in sorted_fb:
+            row_num = int(fb_row.get("row", 1))
+            if row_num not in rows_dict:
+                rows_dict[row_num] = []
+            trt: str = (
+                str(fb_row.get("treatment"))
+                if "treatment" in fb_row
+                else str(fb_row.get("treatment_combination") or "?")
+            )
+            rows_dict[row_num].append(
+                {
+                    "row": row_num,
+                    "col": int(fb_row.get("column", 1)),
+                    "plot_id": fb_row.get("plot_id"),
+                    "treatment": trt,
+                }
+            )
+        for row_num in sorted(rows_dict.keys()):
+            sorted_row = sorted(rows_dict[row_num], key=lambda x: x["col"])
+            row_col_matrix.append(sorted_row)
+            field_map_labels.append([f"{cell['plot_id']}\n{cell['treatment']}" for cell in sorted_row])
+
+    return {
+        "printable_plot_numbers": printable,
+        "row_col_matrix": row_col_matrix,
+        "field_map_labels": field_map_labels,
+    }
 
 
 def _is_prime(value: int) -> bool:
@@ -1220,13 +1331,27 @@ def generate_field_layout(request: Dict[str, Any]) -> Dict[str, Any]:
     Returns
     -------
     dict
-        {
-          "design_type": str,
-          "plot_matrix": list[list[dict]],
-          "fieldbook": list[dict],
-          "layout_summary": dict,
-          "alpha_value": float | None,
-        }
+        Standardized response with all required fields plus backward-compat aliases::
+
+          {
+            # Standardized (new)
+            "design": str,
+            "seed": int,
+            "treatments": list[str],
+            "replications": int | None,
+            "total_plots": int,
+            "layout_matrix": list[list[dict]],
+            "plot_labels": list[str],
+            "timestamp": str,         # ISO-8601 UTC
+            "export_ready": dict,     # printable_plot_numbers, row_col_matrix, field_map_labels
+
+            # Backward-compat (legacy keys unchanged)
+            "design_type": str,
+            "plot_matrix": list[list[dict]],
+            "fieldbook": list[dict],
+            "layout_summary": dict,
+            "alpha_value": float | None,
+          }
     """
     design_type = str(request.get("design_type", "")).strip().lower()
     if not design_type:
@@ -1238,7 +1363,7 @@ def generate_field_layout(request: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError(f"Unsupported design_type '{design_type}'. Supported designs: {supported}.")
 
     seed_value = request.get("seed", 0)
-    if not isinstance(seed_value, int):
+    if isinstance(seed_value, bool) or not isinstance(seed_value, int):
         raise ValueError("'seed' must be an integer for reproducible randomization.")
 
     set_seed(seed_value)
@@ -1250,7 +1375,25 @@ def generate_field_layout(request: Dict[str, Any]) -> Dict[str, Any]:
     validator(request)
     generated = generator(request, rng)
 
+    # Build standardized response fields
+    total_plots: int = generated["layout_summary"].get("n_plots", 0)
+    treatments_list = _extract_treatment_labels(request)
+    plot_labels = _build_plot_labels(generated["fieldbook"])
+    export_ready = _build_export_ready(generated["fieldbook"])
+    timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
     return {
+        # Standardized fields
+        "design": design_type,
+        "seed": seed_value,
+        "treatments": treatments_list,
+        "replications": request.get("replications"),
+        "total_plots": total_plots,
+        "layout_matrix": generated["plot_matrix"],
+        "plot_labels": plot_labels,
+        "timestamp": timestamp,
+        "export_ready": export_ready,
+        # Backward-compat legacy fields
         "design_type": design_type,
         "plot_matrix": generated["plot_matrix"],
         "fieldbook": generated["fieldbook"],
