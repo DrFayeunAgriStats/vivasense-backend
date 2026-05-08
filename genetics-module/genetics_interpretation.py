@@ -345,15 +345,13 @@ def _describe_gcv_pcv(gcv: float, pcv: float, trait_name: str, domain: str = "pl
         if is_agronomy:
             return (
                 f"GCV ({gcv:.2f}%) and PCV ({pcv:.2f}%) are nearly identical "
-                f"(difference: {inflation_pct:.1f}%), indicating relatively limited environmental "
-                f"variance influence under the evaluated conditions. The treatment signal for {trait_name} is exceptionally "
-                f"consistent — treatment differences reliably reflect true performance variation."
+                f"(difference: {inflation_pct:.1f}%). GCV and PCV values were relatively close, "
+                "suggesting limited environmental influence on phenotypic expression under the evaluated conditions."
             )
         return (
             f"GCV ({gcv:.2f}%) and PCV ({pcv:.2f}%) are nearly identical "
-            f"(difference: {inflation_pct:.1f}%), indicating relatively limited environmental "
-            "variance influence under the evaluated conditions. GCV and PCV values were relatively close, suggesting limited "
-            "environmental influence on phenotypic expression under the evaluated conditions."
+            f"(difference: {inflation_pct:.1f}%). GCV and PCV values were relatively close, "
+            "suggesting limited environmental influence on phenotypic expression under the evaluated conditions."
         )
     elif inflation_pct < 10:
         if is_agronomy:

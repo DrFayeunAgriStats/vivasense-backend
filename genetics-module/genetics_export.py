@@ -63,6 +63,20 @@ router = APIRouter(tags=["Export"])
 
 FAILED_TRAIT_CV_MESSAGE = "CV% unavailable due to failed ANOVA estimation."
 
+_REPORT_BLOCKED_PHRASES = [
+    "clean genetic signal",
+    "top-performing genotype",
+    "additive gene effects",
+    "non-additive effects",
+]
+
+_DUPLICATE_ENV_SENTENCE_1 = (
+    "indicating relatively limited environmental variance influence under the evaluated conditions."
+)
+_DUPLICATE_ENV_SENTENCE_2 = (
+    "GCV and PCV values were relatively close, suggesting limited environmental influence on phenotypic expression under the evaluated conditions."
+)
+
 
 # ============================================================================
 # REQUEST MODEL
@@ -200,6 +214,79 @@ def _find_breeding_governance_hits(text: str, analysis_type: Optional[str]) -> L
         "gxe interaction was non-significant" in lower_text or "gx e interaction was non-significant" in lower_text
     ):
         hits.append("GxE non-significant (single-environment)")
+    return hits
+
+
+def _cv_from_anova_error_ms(at: Optional[AnovaTable], grand_mean: Optional[float]) -> Optional[float]:
+    if at is None or grand_mean is None:
+        return None
+    try:
+        gm = float(grand_mean)
+    except (TypeError, ValueError):
+        return None
+    if gm == 0:
+        return None
+    if not hasattr(at, "source") or not hasattr(at, "ms"):
+        return None
+
+    error_terms = ["Error B", "Residuals", "residuals", "Residual", "residual", "error", "Error"]
+    for term in error_terms:
+        try:
+            idx = at.source.index(term)
+            mse = at.ms[idx]
+            if mse is None:
+                continue
+            mse_val = float(mse)
+            if mse_val < 0:
+                continue
+            return abs((mse_val ** 0.5) / gm * 100.0)
+        except (ValueError, IndexError, TypeError):
+            continue
+    return None
+
+
+def _resolve_cv_percent(result: GeneticsResult) -> Optional[float]:
+    ds = result.descriptive_stats or {}
+    ds_cv = _clean_cv_percent(ds.get("cv_percent")) if isinstance(ds, dict) else None
+    if ds_cv is not None:
+        return ds_cv
+    return _cv_from_anova_error_ms(result.anova_table, result.grand_mean)
+
+
+def _map_precision_label(cv_percent: Optional[float]) -> Optional[str]:
+    cv = _clean_cv_percent(cv_percent)
+    if cv is None:
+        return None
+    if cv < 10:
+        return "high"
+    if cv < 20:
+        return "acceptable"
+    return "caution"
+
+
+def _find_export_quality_hits(report_text: str, data: "DownloadReportRequest") -> List[str]:
+    hits: List[str] = []
+    lower_text = report_text.lower()
+
+    has_success_trait = any(
+        (tr is not None)
+        and (tr.status == "success")
+        and (tr.analysis_result is not None)
+        and (tr.analysis_result.result is not None)
+        for tr in (data.trait_results or {}).values()
+    )
+    if has_success_trait and "cv (%): unavailable" in lower_text:
+        hits.append("CV (%): Unavailable present despite successful ANOVA trait(s)")
+
+    s1 = _DUPLICATE_ENV_SENTENCE_1.lower()
+    s2 = _DUPLICATE_ENV_SENTENCE_2.lower()
+    if s1 in lower_text and s2 in lower_text:
+        hits.append("Duplicate environmental variance interpretation sentences detected")
+
+    for phrase in _REPORT_BLOCKED_PHRASES:
+        if phrase in lower_text:
+            hits.append(f"Forbidden phrase detected: {phrase}")
+
     return hits
 
 
@@ -850,8 +937,7 @@ def _add_executive_summary(
             fields.append(("CV (%)", "Unavailable"))
     elif is_agronomy:
         # Show CV% and treatment significance for agronomy executive summary
-        ds = result.descriptive_stats or {}
-        cv = _clean_cv_percent(ds.get("cv_percent")) if isinstance(ds, dict) else None
+        cv = _resolve_cv_percent(result)
         if cv is not None:
             fields.append(("CV (%)", _fmt_cv(cv)))
         at = result.anova_table
@@ -1211,14 +1297,13 @@ def _add_interpretation_section(
         try:
             from analysis_anova_routes import (
                 generate_anova_interpretation,
-                classify_precision_level,
                 get_cv_interpretation_flag,
                 is_genotype_effect_significant,
                 is_environment_effect_significant,
                 is_gxe_effect_significant,
             )
             ds = result.descriptive_stats or {}
-            cv_pct = _clean_cv_percent(ds.get("cv_percent")) if isinstance(ds, dict) else None
+            cv_pct = _resolve_cv_percent(result)
             summary = {
                 "grand_mean":     result.grand_mean,
                 "cv_percent":     cv_pct,
@@ -1228,10 +1313,10 @@ def _add_interpretation_section(
                 "standard_error": ds.get("standard_error") if isinstance(ds, dict) else None,
             }
             gxe_sig = is_gxe_effect_significant(result.anova_table)
-            return generate_anova_interpretation(
+            interpretation = generate_anova_interpretation(
                 trait=trait_name,
                 summary=summary,
-                precision_level=classify_precision_level(cv_pct),
+                precision_level=_map_precision_label(cv_pct),
                 cv_interpretation_flag=get_cv_interpretation_flag(cv_pct),
                 genotype_significant=is_genotype_effect_significant(result.anova_table),
                 environment_significant=is_environment_effect_significant(result.anova_table),
@@ -1244,6 +1329,12 @@ def _add_interpretation_section(
                 n_reps=result.n_reps,
                 domain=domain or "plant_breeding",
             )
+            if is_plant_breeding_domain(domain or "plant_breeding"):
+                interpretation = interpretation.replace(
+                    "Experimental variability appeared acceptable for treatment comparison under the evaluated conditions.",
+                    "Experimental variability appeared acceptable for genotype comparison under the evaluated conditions.",
+                )
+            return interpretation
         except Exception as _exc:
             logger.warning("Could not generate ANOVA interpretation on-the-fly: %s", _exc)
             return None
@@ -2175,6 +2266,18 @@ async def export_word_report(data: DownloadReportRequest) -> Response:
     try:
         doc = _build_document(data)
         report_text = _collect_doc_text(doc)
+
+        quality_hits = _find_export_quality_hits(report_text, data)
+        if quality_hits:
+            logger.warning("Blocked export due to report quality violations: %s", quality_hits)
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "detail": "Export blocked: report quality validation failed.",
+                    "quality_violations": quality_hits,
+                },
+            )
+
         analysis_type = "multi_environment" if getattr(data.dataset_summary, "mode", "") == "multi" else "single_environment"
         if is_plant_breeding_domain(data.domain):
             governance_hits = _find_breeding_governance_hits(report_text, analysis_type=analysis_type)

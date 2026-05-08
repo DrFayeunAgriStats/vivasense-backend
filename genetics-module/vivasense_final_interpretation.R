@@ -97,20 +97,20 @@ generate_interpretation_single <- function(result) {
     para2 <- sprintf(
       "The joint occurrence of high heritability (H² = %.3f) and high genetic advance as percent of mean (GAM = %.2f%%) " %+%
       "indicates strong genetic control with substantial expected response to direct selection. " %+%
-      "This pattern suggests that additive gene effects are substantial; phenotypic selection should be effective.",
+      "This pattern indicates that phenotypic selection should be effective within this experimental context.",
       h2, gp$GAM_percent
     )
   } else if (h2_class == "high" && gam_class == "Medium") {
     para2 <- sprintf(
       "Although broad-sense heritability was high (H² = %.3f), the genetic advance as percent of mean was moderate (GAM = %.2f%%). " %+%
       "This dissociation suggests that while genetic effects explain substantial phenotypic variation, " %+%
-      "expected gains from single-generation selection are limited. Non-additive gene effects or restriction in allele frequency may account for the reduced additive response.",
+      "expected gains from single-generation selection are limited. Genetic architecture constraints or restriction in allele frequency may account for the reduced response.",
       h2, gp$GAM_percent
     )
   } else if (h2_class == "high" && gam_class == "Low") {
     para2 <- sprintf(
       "Despite high heritability (H² = %.3f), genetic advance as percent of mean was low (GAM = %.2f%%). " %+%
-      "This pattern suggests that genetic effects are predominantly non-additive; direct phenotypic selection is unlikely to generate rapid genetic improvement.",
+      "This pattern suggests that direct phenotypic selection is unlikely to generate rapid genetic improvement within the current study.",
       h2, gp$GAM_percent
     )
   } else if (h2_class == "moderate" && gam_class == "High") {
@@ -272,13 +272,13 @@ generate_interpretation_multi <- function(result) {
     para2 <- sprintf(
       "The joint occurrence of high heritability (H² = %.3f) and high genetic advance as percent of mean (GAM = %.2f%%) " %+%
       "indicates strong genetic control with substantial expected response to across-environment selection. " %+%
-      "This pattern suggests that additive gene effects are substantial and relatively stable across environments.",
+      "This pattern indicates substantial and relatively stable selection response across environments.",
       h2, gp$GAM_percent
     )
   } else if (h2_class == "high" && gam_class == "Medium") {
     para2 <- sprintf(
       "Although broad-sense heritability was high (H² = %.3f), genetic advance as percent of mean was moderate (GAM = %.2f%%). " %+%
-      "This indicates substantial genetic effects with limited additive response; non-additive effects or genotype-by-environment " %+%
+      "This indicates substantial genetic effects with limited response; genotype-by-environment " %+%
       "interactions may restrict the additive gains.",
       h2, gp$GAM_percent
     )

@@ -116,19 +116,19 @@ interpret_single_environment_strict <- function(result, warnings_vc) {
       interp <- paste0(
         sprintf("The estimated broad-sense heritability (H\\u00b2 = %.3f) indicates HIGH genetic control of the trait within this environment. ", h2),
         sprintf("The corresponding genetic advance as percent of mean (GAM = %.2f%%) is HIGH, suggesting substantial expected response to direct selection. ", gp$GAM_percent),
-        "The joint pattern of high H\\u00b2 and high GAM indicates that additive gene effects are likely important; direct phenotypic selection should be effective."
+        "The joint pattern of high H\\u00b2 and high GAM indicates that direct phenotypic selection should be effective within this experimental context."
       )
     } else if (h2_class == "high" && gam_class == "Medium") {
       interp <- paste0(
         sprintf("The estimated broad-sense heritability (H\\u00b2 = %.3f) indicates HIGH genetic control within this environment. ", h2),
         sprintf("The genetic advance as percent of mean (GAM = %.2f%%) is MODERATE, indicating a meaningful selection response. ", gp$GAM_percent),
-        "Direct phenotypic selection should yield steady genetic progress. Both additive and non-additive gene effects likely contribute to trait variation."
+        "Direct phenotypic selection should yield steady genetic progress. Both transmissible and residual components likely contribute to trait variation."
       )
     } else if (h2_class == "high" && gam_class == "Low") {
       interp <- paste0(
         sprintf("The estimated broad-sense heritability (H\\u00b2 = %.3f) indicates HIGH genetic control, yet the genetic advance as percent of mean (GAM = %.2f%%) is LOW. ", h2, gp$GAM_percent),
         "This dissociation suggests that while phenotypic variation is substantially genetic, the expected response to selection is limited. ",
-        "Non-additive gene effects, low effective population size, or strong inbreeding depression may be responsible."
+        "Genetic architecture constraints, low effective population size, or strong inbreeding depression may be responsible."
       )
     } else if (h2_class == "moderate" && gam_class == "High") {
       interp <- paste0(
@@ -300,12 +300,12 @@ interpret_multi_environment_strict <- function(result, warnings_vc) {
     if (h2_class == "high" && gam_class == "High") {
       interp <- paste0(interp,
         "The combination of high H\\u00b2 and high GAM indicates strong genetic control with substantial expected response to selection. ",
-        "Additive gene effects appear important; direct selection across environments should be effective."
+        "Direct selection across environments should be effective within the current study context."
       )
     } else if (h2_class == "high" && gam_class == "Medium") {
       interp <- paste0(interp,
         "High H\\u00b2 with moderate GAM indicates heritable control with a meaningful selection response across environments. ",
-        "Steady genetic progress is expected from direct selection; non-additive effects may limit the rate of improvement."
+        "Steady genetic progress is expected from direct selection; residual constraints may limit the rate of improvement."
       )
     } else if (h2_class == "moderate" && gam_class == "High") {
       interp <- paste0(interp,
