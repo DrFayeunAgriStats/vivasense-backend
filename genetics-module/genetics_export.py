@@ -24,6 +24,7 @@ import io
 import logging
 import math
 import datetime
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -52,6 +53,7 @@ from genetics_interpretation import (
     build_breeding_synthesis,
     _describe_env_effects,
     _describe_gcv_pcv,
+    _is_single_environment_analysis,
 )
 from domain_guard import find_forbidden_breeding_terms, is_plant_breeding_domain
 from interpretation import InterpretationEngine
@@ -190,12 +192,11 @@ def _find_breeding_governance_hits(text: str, analysis_type: Optional[str]) -> L
     for label, needle in blocked_patterns:
         if needle in lower_text:
             hits.append(label)
-    if "environmental effects" in lower_text and "non-significant" in lower_text:
+    if re.search(r"\benvironmental effects[^.]*\bnon-significant\b|\bnon-significant\b[^.]*\benvironmental effects\b", lower_text):
         hits.append("environmental effects non-significant")
 
-    if (
-        (analysis_type or "").strip().lower() in {"single", "single_environment"}
-        and ("gxe interaction was non-significant" in lower_text or "gx e interaction was non-significant" in lower_text)
+    if _is_single_environment_analysis(analysis_type) and (
+        "gxe interaction was non-significant" in lower_text or "gx e interaction was non-significant" in lower_text
     ):
         hits.append("GxE non-significant (single-environment)")
     return hits
