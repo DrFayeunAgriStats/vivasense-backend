@@ -95,43 +95,39 @@ class InterpretationEngine:
                 f"The estimated broad-sense heritability (H\\u00b2 = {h2:.3f}) indicates HIGH genetic control "
                 f"of '{trait_name}'. The genetic advance as percent of mean (GAM = {gam:.2f}%) is HIGH, "
                 "suggesting substantial expected response to direct selection. "
-                "Additive gene effects are likely important; direct phenotypic selection should be effective."
+                "Direct phenotypic selection may be effective under the conditions evaluated in this study."
             )
         elif h2_class == "high" and gam_class == "Medium":
             interpretation = (
                 f"The estimated broad-sense heritability (H\\u00b2 = {h2:.3f}) indicates HIGH genetic control "
                 f"of '{trait_name}'. The genetic advance as percent of mean (GAM = {gam:.2f}%) is MODERATE, "
-                "indicating a meaningful selection response. Direct phenotypic selection should yield steady "
-                "genetic progress; both additive and non-additive gene effects likely contribute."
+                "indicating a meaningful selection response. The trait showed moderate expected response "
+                "to phenotypic selection under the evaluated conditions."
             )
         elif h2_class == "high" and gam_class == "Low":
             interpretation = (
                 f"The estimated broad-sense heritability (H\\u00b2 = {h2:.3f}) indicates HIGH genetic control, "
                 f"yet the genetic advance as percent of mean (GAM = {gam:.2f}%) is LOW for '{trait_name}'. "
                 "This dissociation suggests that while phenotypic variation is substantially genetic, the "
-                "expected response to selection is limited. Non-additive gene effects or strong inbreeding "
-                "depression may be responsible."
+                "expected response to selection is limited under the evaluated conditions."
             )
         elif h2_class == "moderate" and gam_class == "High":
             interpretation = (
                 f"The estimated broad-sense heritability (H\\u00b2 = {h2:.3f}) indicates MODERATE genetic control "
                 f"of '{trait_name}', with the genetic advance as percent of mean (GAM = {gam:.2f}%) being HIGH. "
-                "Useful selection response is achievable despite environmental influence. "
-                "Both genetic and environmental management should be considered."
+                "Selection response may be influenced by environmental conditions and should be interpreted cautiously."
             )
         elif h2_class == "moderate" and gam_class == "Medium":
             interpretation = (
                 f"The estimated broad-sense heritability (H\\u00b2 = {h2:.3f}) and genetic advance as percent "
                 f"of mean (GAM = {gam:.2f}%) both indicate MODERATE genetic control for '{trait_name}'. "
-                "Selection may be useful, though environmental factors remain important. "
-                "Progress should be steady but not rapid."
+                "Selection response may be influenced by environmental conditions and should be interpreted cautiously."
             )
         elif h2_class == "moderate" and gam_class == "Low":
             interpretation = (
                 f"The estimated broad-sense heritability (H\\u00b2 = {h2:.3f}) suggests MODERATE genetic control "
                 f"of '{trait_name}', but the genetic advance as percent of mean (GAM = {gam:.2f}%) is LOW. "
-                "Direct phenotypic selection may be slow. Consider investigating additive effects more carefully "
-                "or combining selection with environmental optimization."
+                "Selection response may be influenced by environmental conditions and should be interpreted cautiously."
             )
         else:  # low h2
             interpretation = (
@@ -171,21 +167,18 @@ class InterpretationEngine:
             )
         elif h2_class == "high":
             recommendation = (
-                "Strong genetic basis for the trait. Direct phenotypic selection should be effective "
-                "in this environment. Prioritize identification and advancement of high-value individuals "
-                "for next-generation breeding."
+                "Direct phenotypic selection may be effective under the conditions evaluated in this study. "
+                "These results may support further evaluation of promising genotypes under additional testing environments."
             )
         elif h2_class == "moderate":
             recommendation = (
-                "Moderate genetic basis. Direct selection is possible but should be combined with "
-                "attention to environmental standardization. Consider multi-environment evaluation "
-                "to assess stability of selected genotypes."
+                "Selection response may be influenced by environmental conditions and should be interpreted cautiously. "
+                "These results may support further evaluation of promising genotypes under additional testing environments."
             )
         else:  # low
             recommendation = (
                 "Weak genetic basis under present conditions. Direct selection will be unreliable. "
-                "Prioritize improvement of growing conditions, management practices, and measurement "
-                "precision before intensifying selection."
+                "These results may support further evaluation of promising genotypes under additional testing environments."
             )
 
         return {"interpretation": interpretation, "recommendation": recommendation}

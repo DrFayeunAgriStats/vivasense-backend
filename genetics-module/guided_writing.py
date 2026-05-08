@@ -440,14 +440,14 @@ def _build_gp_writing(
         template=(
             "The genetic advance as percent of mean (GAM = ___%) was ___, "
             "and together with H² = ___, this combination suggests that "
-            "direct phenotypic selection ___ expected to produce "
+            "direct phenotypic selection ___ be effective under the conditions evaluated in this study, with "
             "___ progress for {trait} in this experiment."
         ).format(trait=trait),
         values_to_fill=[
             "GAM% value from Genetic Parameters table",
             "GAM classification: 'high' (> 10%), 'moderate' (5–10%), or 'low' (< 5%)",
             "H² value",
-            "write 'is' if both H² and GAM are moderate or high, 'is not' if both are low",
+            "write 'may' for supportive combinations and 'may not' when evidence is weak",
             "write 'substantial' / 'moderate' / 'limited' matching the GAM class",
         ],
         hint="Genetic Advance Estimates table → GAM%",
@@ -476,12 +476,12 @@ def _build_gp_writing(
         purpose="Breeding implication",
         template=(
             "Based on the H² and GAM values observed in this experiment, "
-            "direct phenotypic selection for {trait} ___ likely to be "
-            "___ under the environmental conditions of this study."
+            "direct phenotypic selection for {trait} may be interpreted as ___ under the "
+            "environmental conditions of this study, and these results may support further evaluation "
+            "of promising genotypes under additional testing environments."
         ).format(trait=trait),
         values_to_fill=[
-            "write 'is' or 'is not' based on combined H² and GAM levels",
-            "write 'effective' / 'moderately effective' / 'ineffective' matching the parameter levels",
+            "write 'potentially effective' / 'moderate expected response' / 'cautious response' matching the parameter levels",
         ],
         hint="Interpretation section of the Genetic Parameters output",
     ))

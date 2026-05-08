@@ -639,6 +639,7 @@ def _extract_genotype_stats(analysis_result: GeneticsResponse) -> tuple[Optional
 def _build_breeding_input(
     summary_table: List[SummaryTableRow],
     trait_results: Dict[str, TraitResult],
+    mode: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     summary_map = {row.trait: row for row in summary_table if row.status == "success"}
     synthesis_input: List[Dict[str, Any]] = []
@@ -686,6 +687,11 @@ def _build_breeding_input(
             "h2": h2_value,
             "gam_class": gam_class,
             "top_genotype": top_genotype,
+            "analysis_type": (
+                "multi_environment"
+                if ((result.n_environments is not None and result.n_environments > 1) or mode == "multi")
+                else "single_environment"
+            ),
             "f_gxe": float(f_gxe) if f_gxe is not None else None,
             "p_gxe": float(p_gxe) if p_gxe is not None else None,
             "f_value": f_genotype,
@@ -1071,7 +1077,10 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
         failed_traits=failed_traits,
         anova_type_warning=anova_type_warning,
         dataset_token=dataset_token,
-        breeding_summary=build_breeding_synthesis(_build_breeding_input(summary_table, trait_results)),
+        breeding_summary=build_breeding_synthesis(
+            _build_breeding_input(summary_table, trait_results, mode=request.mode),
+            analysis_type="multi_environment" if request.mode == "multi" else "single_environment",
+        ),
     )
 
     print(f"[EXPORT] Generating {actual_module.upper()} report — {len(summary_table)} trait(s) processed", flush=True)

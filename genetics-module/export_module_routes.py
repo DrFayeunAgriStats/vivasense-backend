@@ -401,6 +401,7 @@ def _add_gp_tables(doc: Document, tr: GeneticParametersTraitResult) -> None:
                     p_env=float(tr.anova_p_env) if tr.anova_p_env is not None else None,
                     f_gxe=float(tr.anova_f_gxe) if tr.anova_f_gxe is not None else 0.0,
                     p_gxe=float(tr.anova_p_gxe) if tr.anova_p_gxe is not None else None,
+                    analysis_type="multi_environment" if (tr.n_environments is not None and tr.n_environments > 1) else "single_environment",
                 )
                 gcv_pcv_sentence = _describe_gcv_pcv(gcv, pcv, tr.trait)
                 cv_comment = gcv_pcv_sentence

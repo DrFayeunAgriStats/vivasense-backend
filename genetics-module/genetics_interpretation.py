@@ -12,7 +12,35 @@ from interpretation import InterpretationEngine
 from domain_guard import is_plant_breeding_domain
 
 
-def build_breeding_synthesis(trait_results: list[dict]) -> str:
+def _is_single_environment_analysis(analysis_type: Optional[str]) -> bool:
+    mode = (analysis_type or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return mode in {"single", "single_environment"}
+
+
+def _cv_precision_narrative(cv_percent: Optional[float], domain: str = "plant_breeding") -> str:
+    if cv_percent is None:
+        return ""
+    try:
+        cv_val = abs(float(cv_percent))
+    except (TypeError, ValueError):
+        return ""
+
+    if cv_val < 10:
+        base = "Residual variability was relatively low, suggesting high experimental precision within the scope of this design."
+    elif cv_val < 20:
+        base = (
+            "Experimental variability appeared acceptable for genotype comparison under the evaluated conditions."
+            if is_plant_breeding_domain(domain)
+            else "Experimental variability appeared acceptable for treatment comparison under the evaluated conditions."
+        )
+    else:
+        base = "Residual variability was comparatively high, and findings should therefore be interpreted cautiously."
+    if cv_val < 1:
+        base += " Residual variability was extremely low relative to the trait mean. Verify raw data consistency and experimental realism."
+    return base
+
+
+def build_breeding_synthesis(trait_results: list[dict], analysis_type: Optional[str] = None) -> str:
     """
     Rule-based breeding synthesis engine.
     Each dict in trait_results must have:
@@ -34,6 +62,8 @@ def build_breeding_synthesis(trait_results: list[dict]) -> str:
 
     for trait in trait_results:
         trait_name = str(trait.get("trait_name") or "this trait")
+        trait_analysis_type = trait.get("analysis_type") or analysis_type
+        is_single_env = _is_single_environment_analysis(trait_analysis_type)
         means = trait.get("genotype_means", [])
 
         genotype_significant = trait.get("genotype_significant")
@@ -95,20 +125,24 @@ def build_breeding_synthesis(trait_results: list[dict]) -> str:
                 perf_score = 1
 
             p_gxe = trait.get("p_gxe")
-            if p_gxe is not None and p_gxe < 0.001:
+            if is_single_env:
+                sig_score = 1
+                stab_score = 1
+            elif p_gxe is not None and p_gxe < 0.001:
                 sig_score = 3
+                stab_score = 1 if (trait.get("f_gxe", 0) or 0) >= 15 else 2
             elif p_gxe is not None and p_gxe < 0.05:
                 sig_score = 2
+                stab_score = 1 if (trait.get("f_gxe", 0) or 0) >= 15 else 2
             else:
                 sig_score = 1
-
-            f_gxe = trait.get("f_gxe", 0) or 0
-            if f_gxe < 5:
-                stab_score = 3
-            elif f_gxe < 15:
-                stab_score = 2
-            else:
-                stab_score = 1
+                f_gxe = trait.get("f_gxe", 0) or 0
+                if f_gxe < 5:
+                    stab_score = 3
+                elif f_gxe < 15:
+                    stab_score = 2
+                else:
+                    stab_score = 1
 
             trait_strength = (
                 0.5 * perf_score +
@@ -127,13 +161,20 @@ def build_breeding_synthesis(trait_results: list[dict]) -> str:
 
     high_h2_traits = [t["trait_name"] for t in trait_results
                       if (t.get("h2") or 0) >= 0.80]
+    all_single_env = all(
+        _is_single_environment_analysis(t.get("analysis_type") or analysis_type)
+        for t in trait_results
+    )
     if len(high_h2_traits) == n_traits:
         paragraphs.append(
             f"All {n_traits} traits showed high entry-mean broad-sense heritability "
             f"(H2 >= 0.80), indicating that genetic differences among genotypes "
-            f"are reliably expressed across the tested environments. "
-            f"Direct phenotypic selection is expected to be effective "
-            f"for all traits evaluated in this study."
+            + (
+                "were relatively prominent under the evaluated conditions. "
+                if all_single_env
+                else "were consistently expressed across the evaluated environments. "
+            )
+            + "Direct phenotypic selection may be effective under the conditions evaluated in this study."
         )
     elif high_h2_traits:
         low_h2 = [t["trait_name"] for t in trait_results
@@ -141,10 +182,10 @@ def build_breeding_synthesis(trait_results: list[dict]) -> str:
         paragraphs.append(
             f"High heritability was observed for "
             f"{', '.join(high_h2_traits)}, making these traits most "
-            f"amenable to direct selection. "
+            f"amenable to phenotypic selection under the evaluated conditions. "
             + (f"{', '.join(low_h2)} showed comparatively lower "
-               f"heritability and may require replicated multi-environment "
-               f"evaluation before selection decisions are finalised."
+                f"heritability and may require replicated multi-environment "
+                f"evaluation before selection decisions are finalised."
                if low_h2 else "")
         )
 
@@ -200,21 +241,15 @@ def build_breeding_synthesis(trait_results: list[dict]) -> str:
             # Multi-trait elite - strong in ALL evaluated traits
             if is_stable:
                 paragraphs.append(
-                    f"{geno} consistently ranked among the top-performing "
-                    f"genotypes across all {n_total} evaluated traits "
-                    f"({', '.join(all_traits)}), with relatively consistent "
-                    f"expression across environments. It is a promising "
-                    f"candidate for inclusion in broad-based breeding programmes."
+                    f"{geno} showed high observed means across all {n_total} evaluated traits "
+                    f"({', '.join(all_traits)}) under the evaluated conditions. "
+                    "These results may support further evaluation under additional testing environments."
                 )
             else:
                 paragraphs.append(
-                    f"{geno} consistently ranked among the top-performing "
-                    f"genotypes across all {n_total} evaluated traits "
-                    f"({', '.join(all_traits)}), indicating strong overall "
-                    f"genetic potential. However, significant "
-                    f"genotype-by-environment interaction across traits "
-                    f"suggests that further stability assessment is required "
-                    f"before deployment in breeding programmes."
+                    f"{geno} showed high observed means across all {n_total} evaluated traits "
+                    f"({', '.join(all_traits)}), indicating broad performance potential. "
+                    "These results may support further evaluation under additional testing environments."
                 )
 
         elif n_strong >= 2:
@@ -223,15 +258,13 @@ def build_breeding_synthesis(trait_results: list[dict]) -> str:
                 paragraphs.append(
                     f"{geno} showed strong performance across multiple traits "
                     f"({', '.join(strong_traits)}), making it a promising "
-                    f"candidate for crossing programmes targeting combined "
-                    f"trait improvement."
+                    "candidate for further multi-trait evaluation."
                 )
             else:
                 paragraphs.append(
                     f"{geno} showed strong performance across multiple traits "
                     f"({', '.join(strong_traits)}), indicating broad genetic "
-                    f"potential. Genotype-by-environment interaction warrants "
-                    f"stability evaluation before selection decisions are finalised."
+                    "potential. These results may support further evaluation under additional testing environments."
                 )
 
     trait_specific_groups = defaultdict(list)
@@ -242,23 +275,27 @@ def build_breeding_synthesis(trait_results: list[dict]) -> str:
 
     for trait_name, genos in sorted(trait_specific_groups.items()):
         if len(genos) == 1:
-            paragraphs.append(
-                f"{genos[0]} showed high performance for {trait_name}, "
-                f"although genotype-by-environment interaction suggests "
-                f"its use in breeding should account for specific adaptation."
-            )
+            if all_single_env:
+                paragraphs.append(
+                    f"{genos[0]} showed high observed mean performance for {trait_name} in this experiment."
+                )
+            else:
+                paragraphs.append(
+                    f"{genos[0]} showed high performance for {trait_name}, and further multi-environment evaluation is advisable."
+                )
         else:
             geno_list = " and ".join(genos)
-            paragraphs.append(
-                f"{geno_list} both showed strong performance for "
-                f"{trait_name}, though genotype-by-environment interaction "
-                f"indicates that specific adaptation should be considered "
-                f"in their use for breeding programmes."
-            )
+            if all_single_env:
+                paragraphs.append(
+                    f"{geno_list} showed strong observed mean performance for {trait_name} in this experiment."
+                )
+            else:
+                paragraphs.append(
+                    f"{geno_list} showed strong performance for {trait_name}; additional multi-environment testing is advisable."
+                )
 
-    unstable = [t["trait_name"] for t in trait_results
-                if (t.get("f_gxe") or 0) > 15]
-    if unstable:
+    unstable = [t["trait_name"] for t in trait_results if (t.get("f_gxe") or 0) > 15]
+    if unstable and not all_single_env:
         paragraphs.append(
             f"Substantial genotype-by-environment interaction was "
             f"detected for {', '.join(unstable)}. Stability analysis "
@@ -303,8 +340,8 @@ def _describe_gcv_pcv(gcv: float, pcv: float, trait_name: str, domain: str = "pl
         return (
             f"GCV ({gcv:.2f}%) and PCV ({pcv:.2f}%) are nearly identical "
             f"(difference: {inflation_pct:.1f}%), indicating negligible environmental "
-            f"variance inflation. The genetic signal for {trait_name} is exceptionally "
-            f"clean - direct phenotypic selection will closely track underlying genotypic value."
+            "variance inflation. GCV and PCV values were relatively close, suggesting limited "
+            "environmental influence on phenotypic expression under the evaluated conditions."
         )
     elif inflation_pct < 10:
         if is_agronomy:
@@ -318,7 +355,7 @@ def _describe_gcv_pcv(gcv: float, pcv: float, trait_name: str, domain: str = "pl
             f"GCV ({gcv:.2f}%) is slightly lower than PCV ({pcv:.2f}%) "
             f"(inflation: {inflation_pct:.1f}%), suggesting a small but non-trivial "
             f"environmental contribution to phenotypic variance in {trait_name}. "
-            f"Selection efficiency remains high given the elevated H2."
+            "Observed environmental variance inflation was relatively low under the conditions of this experiment."
         )
     elif inflation_pct < 20:
         if is_agronomy:
@@ -356,7 +393,14 @@ def _describe_env_effects(
     f_gxe: float,
     p_gxe: float,
     domain: str = "plant_breeding",
+    analysis_type: Optional[str] = None,
 ) -> str:
+    if _is_single_environment_analysis(analysis_type):
+        return ""
+
+    if p_env is None and p_gxe is None and f_env in (None, 0) and f_gxe in (None, 0):
+        return ""
+
     env_sig = p_env is not None and p_env < 0.05
     gxe_sig = p_gxe is not None and p_gxe < 0.05
     is_agronomy = not is_plant_breeding_domain(domain)
@@ -433,6 +477,8 @@ def generate_genetics_interpretation_sections(
     anova_p_env: Optional[float] = None,
     anova_f_gxe: Optional[float] = None,
     anova_p_gxe: Optional[float] = None,
+    cv_percent: Optional[float] = None,
+    analysis_type: Optional[str] = None,
 ) -> GeneticsInterpretationSections:
     """
     Generate VALIDATED genetic parameters interpretation as strict section objects.
@@ -530,6 +576,7 @@ def generate_genetics_interpretation_sections(
                     p_env=anova_p_env,
                     f_gxe=anova_f_gxe,
                     p_gxe=anova_p_gxe,
+                    analysis_type=analysis_type,
                 )
             )
         elif diff <= 7:
@@ -546,6 +593,9 @@ def generate_genetics_interpretation_sections(
         )
     
     variance_interp = " ".join(variance_interp_parts)
+    cv_sentence = _cv_precision_narrative(cv_percent)
+    if cv_sentence:
+        variance_interp = f"{variance_interp} {cv_sentence}".strip()
     
     # ── Section 5: Breeding Interpretation ───────────────────────────────
     if h2_class == "not_computed":
@@ -555,13 +605,13 @@ def generate_genetics_interpretation_sections(
         )
     elif h2_class == "high":
         breeding_interp = (
-            "Strong genetic basis justifies direct phenotypic selection. Prioritize "
-            "identification and advancement of high-performing individuals."
+            "Direct phenotypic selection may be effective under the conditions evaluated in this study. "
+            "These results may support further evaluation of promising genotypes under additional testing environments."
         )
     elif h2_class == "moderate":
         breeding_interp = (
-            "Moderate genetic basis allows direct selection, but should be combined with "
-            "environmental standardization and multi-environment evaluation for stability assessment."
+            "Selection response may be influenced by environmental conditions and should be interpreted cautiously. "
+            "These results may support further evaluation of promising genotypes under additional testing environments."
         )
     else:  # low
         breeding_interp = (
@@ -596,13 +646,13 @@ def generate_genetics_interpretation_sections(
     # ── Section 7: Recommendation ────────────────────────────────────────
     if h2_class == "high":
         recommendation = (
-            f"Proceed with direct phenotypic selection for {trait_name}. "
-            "High heritability and meaningful expected response suggest selection will be effective."
+            f"Direct phenotypic selection for {trait_name} may be effective under the conditions evaluated in this study. "
+            "These results may support further evaluation of promising genotypes under additional testing environments."
         )
     elif h2_class == "moderate":
         recommendation = (
-            f"Consider direct phenotypic selection for {trait_name} combined with environmental "
-            f"optimization. Conduct multi-environment testing to verify genotype stability."
+            f"Selection response for {trait_name} may be influenced by environmental conditions and should be interpreted cautiously. "
+            "These results may support further evaluation of promising genotypes under additional testing environments."
         )
     else:
         recommendation = (
@@ -634,6 +684,8 @@ def generate_genetics_interpretation(
     anova_p_env: Optional[float] = None,
     anova_f_gxe: Optional[float] = None,
     anova_p_gxe: Optional[float] = None,
+    cv_percent: Optional[float] = None,
+    analysis_type: Optional[str] = None,
     domain: str = "plant_breeding",
 ) -> Tuple[str, str]:
     """
@@ -690,7 +742,7 @@ def generate_genetics_interpretation(
                 f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates HIGH genetic control "
                 f"of '{trait_name}'. The genetic advance as percent of mean (GAM = {gam:.2f}%) is HIGH, "
                 "suggesting substantial expected response to direct selection. "
-                "Additive gene effects are likely important; direct phenotypic selection should be effective."
+                "Direct phenotypic selection may be effective under the conditions evaluated in this study."
             )
     elif h2_class == "high" and gam_class == "Medium":
         if is_agronomy:
@@ -704,8 +756,8 @@ def generate_genetics_interpretation(
             interpretation = (
                 f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates HIGH genetic control "
                 f"of '{trait_name}'. The genetic advance as percent of mean (GAM = {gam:.2f}%) is MODERATE, "
-                "indicating a meaningful selection response. Direct phenotypic selection should yield steady "
-                "genetic progress; both additive and non-additive gene effects likely contribute."
+                "indicating a meaningful selection response. The trait showed moderate expected response to phenotypic "
+                "selection under the evaluated conditions."
             )
     elif h2_class == "high" and gam_class == "Low":
         if is_agronomy:
@@ -721,8 +773,7 @@ def generate_genetics_interpretation(
                 f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates HIGH genetic control, "
                 f"yet the genetic advance as percent of mean (GAM = {gam:.2f}%) is LOW for '{trait_name}'. "
                 "This dissociation suggests that while phenotypic variation is substantially genetic, the "
-                "expected response to selection is limited. Non-additive gene effects or strong inbreeding "
-                "depression may be responsible."
+                "expected response to selection is limited under the evaluated conditions."
             )
     elif h2_class == "moderate" and gam_class == "High":
         if is_agronomy:
@@ -736,8 +787,7 @@ def generate_genetics_interpretation(
             interpretation = (
                 f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates MODERATE genetic control "
                 f"of '{trait_name}', with the genetic advance as percent of mean (GAM = {gam:.2f}%) being HIGH. "
-                "Useful selection response is achievable despite environmental influence. "
-                "Both genetic and environmental management should be considered."
+                "Selection response may be influenced by environmental conditions and should be interpreted cautiously."
             )
     elif h2_class == "moderate" and gam_class == "Medium":
         if is_agronomy:
@@ -751,8 +801,7 @@ def generate_genetics_interpretation(
             interpretation = (
                 f"The estimated broad-sense heritability (H2 = {h2:.3f}) and genetic advance as percent "
                 f"of mean (GAM = {gam:.2f}%) both indicate MODERATE genetic control for '{trait_name}'. "
-                "Selection may be useful, though environmental factors remain important. "
-                "Progress should be steady but not rapid."
+                "Selection response may be influenced by environmental conditions and should be interpreted cautiously."
             )
     elif h2_class == "moderate" and gam_class == "Low":
         if is_agronomy:
@@ -766,8 +815,7 @@ def generate_genetics_interpretation(
             interpretation = (
                 f"The estimated broad-sense heritability (H2 = {h2:.3f}) suggests MODERATE genetic control "
                 f"of '{trait_name}', but the genetic advance as percent of mean (GAM = {gam:.2f}%) is LOW. "
-                "Direct phenotypic selection may be slow. Consider investigating additive effects more carefully "
-                "or combining selection with environmental optimization."
+                "Selection response may be influenced by environmental conditions and should be interpreted cautiously."
             )
     else:  # low h2
         if is_agronomy:
@@ -800,6 +848,7 @@ def generate_genetics_interpretation(
                 f_gxe=anova_f_gxe,
                 p_gxe=anova_p_gxe,
                 domain=domain,
+                analysis_type=analysis_type,
             )
             if gcv_pcv_sentence and env_sentence:
                 interpretation += f"\n\n{gcv_pcv_sentence}\n\n{env_sentence}"
@@ -809,6 +858,10 @@ def generate_genetics_interpretation(
                 interpretation += f"\n\n{env_sentence}"
         except (TypeError, ValueError):
             pass
+
+    cv_sentence = _cv_precision_narrative(cv_percent, domain=domain)
+    if cv_sentence:
+        interpretation += f"\n\n{cv_sentence}"
 
     # ── Practical / breeding implication ────────────────────────────────
     if h2_class == "not_computed":
@@ -824,9 +877,8 @@ def generate_genetics_interpretation(
             )
         else:
             breeding_implication = (
-                "Strong genetic basis for the trait. Direct phenotypic selection should be effective "
-                "in this environment. Prioritize identification and advancement of high-value individuals "
-                "for next-generation breeding."
+                "Direct phenotypic selection may be effective under the conditions evaluated in this study. "
+                "These results may support further evaluation of promising genotypes under additional testing environments."
             )
     elif h2_class == "moderate":
         if is_agronomy:
@@ -836,9 +888,8 @@ def generate_genetics_interpretation(
             )
         else:
             breeding_implication = (
-                "Moderate genetic basis. Direct selection is possible but should be combined with "
-                "attention to environmental standardization. Consider multi-environment evaluation "
-                "to assess stability of selected genotypes."
+                "Selection response may be influenced by environmental conditions and should be interpreted cautiously. "
+                "These results may support further evaluation of promising genotypes under additional testing environments."
             )
     else:  # low
         if is_agronomy:
@@ -849,8 +900,7 @@ def generate_genetics_interpretation(
         else:
             breeding_implication = (
                 "Weak genetic basis under present conditions. Direct selection will be unreliable. "
-                "Prioritize improvement of growing conditions, management practices, and measurement "
-                "precision before intensifying selection."
+                "These results may support further evaluation of promising genotypes under additional testing environments."
             )
 
     return interpretation, breeding_implication

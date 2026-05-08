@@ -20,6 +20,7 @@ import pytest
 from domain_guard import find_forbidden_breeding_terms
 from genetics_interpretation import generate_genetics_interpretation
 from analysis_anova_routes import generate_anova_interpretation
+from genetics_export import _find_breeding_governance_hits
 
 
 # ============================================================================
@@ -355,3 +356,73 @@ def test_agronomy_recommendation_uses_further_evaluation_not_adoption():
     assert "further evaluation" in interp_lower or "additional environments" in interp_lower
     assert "recommended for adoption" not in interp_lower
     assert "advance promising genotypes" not in interp_lower
+
+
+def test_breeding_single_environment_omits_env_and_gxe_non_significant_claims():
+    interpretation, implication = generate_genetics_interpretation(
+        trait_name="grain_yield",
+        h2=0.72,
+        gam=11.5,
+        gcv=14.0,
+        pcv=14.2,
+        anova_f_env=0.0,
+        anova_p_env=None,
+        anova_f_gxe=0.0,
+        anova_p_gxe=None,
+        analysis_type="single_environment",
+        domain="plant_breeding",
+    )
+    text = f"{interpretation} {implication}".lower()
+    assert "environmental effects were non-significant" not in text
+    assert "gxe interaction was non-significant" not in text
+    assert "consistent across environments" not in text
+    assert "stability analysis" not in text
+
+
+def test_breeding_replaces_gene_action_and_overconfident_phrasing():
+    interpretation, implication = generate_genetics_interpretation(
+        trait_name="plant_height",
+        h2=0.81,
+        gam=12.1,
+        gcv=9.0,
+        pcv=9.1,
+        analysis_type="single_environment",
+        domain="plant_breeding",
+    )
+    text = f"{interpretation} {implication}".lower()
+    assert "additive gene effects" not in text
+    assert "non-additive effects" not in text
+    assert "gene action" not in text
+    assert "clean genetic signal" not in text
+    assert "closely track underlying genotypic value" not in text
+    assert "may be effective under the conditions evaluated in this study" in text
+
+
+def test_breeding_cv_precision_narrative_uses_governed_language():
+    interpretation, _ = generate_genetics_interpretation(
+        trait_name="seed_weight",
+        h2=0.65,
+        gam=7.0,
+        gcv=6.2,
+        pcv=7.1,
+        cv_percent=0.8,
+        analysis_type="single_environment",
+        domain="plant_breeding",
+    )
+    lowered = interpretation.lower()
+    assert "residual variability was relatively low" in lowered
+    assert "experimental precision within the scope of this design" in lowered
+    assert "residual variability was extremely low relative to the trait mean" in lowered
+
+
+def test_breeding_export_governance_scan_flags_single_env_forbidden_phrases():
+    report_text = (
+        "Environmental effects were non-significant. "
+        "GxE interaction was non-significant. "
+        "Top-performing genotype in group a."
+    )
+    hits = _find_breeding_governance_hits(report_text, analysis_type="single_environment")
+    hits_text = " | ".join(hits).lower()
+    assert "environmental effects non-significant" in hits_text
+    assert "gxe non-significant" in hits_text
+    assert "top-performing genotype" in hits_text
