@@ -156,8 +156,11 @@ def _build_export_ready(fieldbook: Fieldbook) -> Dict[str, Any]:
 
     ``field_map_labels``
         2-D list of compact label strings (``"1\\nT1"``) matching the
-        ``row_col_matrix`` shape.  Useful for direct printing or table
-        rendering.
+        ``row_col_matrix`` shape.  The ``\\n`` separator is intentional:
+        these strings are designed for physical-field printouts, Word tables,
+        and PDF renderers where multi-line cell content is supported.
+        Callers targeting HTML or plain-text contexts should replace ``\\n``
+        with the appropriate separator (e.g. ``" | "`` or ``"<br>"``).
     """
     sorted_fb = sorted(fieldbook, key=lambda r: r.get("plot_id", 0))
 

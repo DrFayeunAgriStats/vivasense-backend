@@ -270,7 +270,7 @@ class TestValidationFailures(unittest.TestCase):
         self.assertIn("duplicate", str(ctx.exception).lower())
 
     def test_invalid_design_type_raises(self):
-        """Unrecognised design type is rejected."""
+        """Unrecognized design type is rejected."""
         with self.assertRaises(ValueError) as ctx:
             generate_field_layout({
                 "design_type": "magic_design",
