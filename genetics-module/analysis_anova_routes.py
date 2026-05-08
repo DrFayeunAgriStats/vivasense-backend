@@ -75,14 +75,19 @@ def _map_precision_level(precision_level: Optional[str], cv: Optional[float]) ->
     return _precision_label_from_cv(cv)
 
 
-def _cv_tier_narrative(cv: Optional[float]) -> Optional[str]:
+def _cv_tier_narrative(cv: Optional[float], domain: str = "general") -> Optional[str]:
     cv_val = _sanitize_cv_percent(cv)
     if cv_val is None:
         return None
     if cv_val < 10:
         base = "Residual variability was relatively low, suggesting high experimental precision within the scope of this design."
     elif cv_val < 20:
-        base = "Experimental variability appeared acceptable for treatment comparison under the evaluated conditions."
+        from domain_guard import is_plant_breeding_domain
+        base = (
+            "Experimental variability appeared acceptable for genotype comparison under the evaluated conditions."
+            if is_plant_breeding_domain(domain)
+            else "Experimental variability appeared acceptable for treatment comparison under the evaluated conditions."
+        )
     else:
         base = "Residual variability was comparatively high, and findings should therefore be interpreted cautiously."
     if cv_val < 1:
@@ -585,7 +590,7 @@ def generate_anova_interpretation(
             )
 
     if cv_interpretation_flag == "cv_available" and summary.get("cv_percent") is not None:
-        cv_narrative = _cv_tier_narrative(summary.get("cv_percent"))
+        cv_narrative = _cv_tier_narrative(summary.get("cv_percent"), domain=domain)
         if cv_narrative:
             desc.append(cv_narrative)
     elif cv_interpretation_flag == "cv_unavailable":

@@ -5,11 +5,23 @@ Generates VALIDATED genetic parameters interpretation sections.
 Returns strict GeneticsInterpretationSections objects, never freeform prose.
 """
 
+import hashlib
 from collections import defaultdict
 from typing import Optional, Tuple
 from interpretation_sections import GeneticsInterpretationSections
 from interpretation import InterpretationEngine
 from domain_guard import is_plant_breeding_domain
+
+
+def _select_narrative_variant(trait_name: str, options: list, seed: int = 0) -> str:
+    """Select deterministically from options based on trait name hash.
+
+    Produces controlled narrative diversity: each trait consistently maps to
+    the same variant (deterministic per trait), but different trait names
+    resolve to different variants (reducing repetition across a multi-trait report).
+    """
+    h = int(hashlib.md5(f"{trait_name}{seed}".encode()).hexdigest(), 16)
+    return options[h % len(options)]
 
 
 def _is_single_environment_analysis(analysis_type: Optional[str]) -> bool:
@@ -333,14 +345,14 @@ def _describe_gcv_pcv(gcv: float, pcv: float, trait_name: str, domain: str = "pl
         if is_agronomy:
             return (
                 f"GCV ({gcv:.2f}%) and PCV ({pcv:.2f}%) are nearly identical "
-                f"(difference: {inflation_pct:.1f}%), indicating negligible environmental "
-                f"variance inflation. The treatment signal for {trait_name} is exceptionally "
+                f"(difference: {inflation_pct:.1f}%), indicating relatively limited environmental "
+                f"variance influence under the evaluated conditions. The treatment signal for {trait_name} is exceptionally "
                 f"consistent — treatment differences reliably reflect true performance variation."
             )
         return (
             f"GCV ({gcv:.2f}%) and PCV ({pcv:.2f}%) are nearly identical "
-            f"(difference: {inflation_pct:.1f}%), indicating negligible environmental "
-            "variance inflation. GCV and PCV values were relatively close, suggesting limited "
+            f"(difference: {inflation_pct:.1f}%), indicating relatively limited environmental "
+            "variance influence under the evaluated conditions. GCV and PCV values were relatively close, suggesting limited "
             "environmental influence on phenotypic expression under the evaluated conditions."
         )
     elif inflation_pct < 10:
@@ -604,13 +616,32 @@ def generate_genetics_interpretation_sections(
             "before making selection decisions."
         )
     elif h2_class == "high":
+        if gam_class == "High":
+            _sel_variants = [
+                "Direct phenotypic selection may be effective under the conditions evaluated in this study.",
+                "The trait may respond favorably to phenotypic selection under the evaluated conditions.",
+                "Selection progress may be achievable through direct phenotypic evaluation.",
+            ]
+        elif gam_class == "Medium":
+            _sel_variants = [
+                "Moderate selection progress may be achievable through phenotypic evaluation.",
+                "The trait showed moderate expected response to phenotypic selection.",
+            ]
+        else:
+            _sel_variants = [
+                "The trait showed moderate expected response to phenotypic selection under the evaluated conditions.",
+            ]
         breeding_interp = (
-            "Direct phenotypic selection may be effective under the conditions evaluated in this study. "
+            _select_narrative_variant(trait_name, _sel_variants) + " "
             "These results may support further evaluation of promising genotypes under additional testing environments."
         )
     elif h2_class == "moderate":
+        _sel_variants = [
+            "Selection efficiency may partly depend on environmental conditions.",
+            "Environmental influence may contribute to observed phenotypic expression.",
+        ]
         breeding_interp = (
-            "Selection response may be influenced by environmental conditions and should be interpreted cautiously. "
+            _select_narrative_variant(trait_name, _sel_variants) + " "
             "These results may support further evaluation of promising genotypes under additional testing environments."
         )
     else:  # low
@@ -645,13 +676,32 @@ def generate_genetics_interpretation_sections(
     
     # ── Section 7: Recommendation ────────────────────────────────────────
     if h2_class == "high":
+        if gam_class == "High":
+            _rec_variants = [
+                f"Direct phenotypic selection for {trait_name} may be effective under the conditions evaluated in this study.",
+                f"The trait {trait_name} may respond favorably to phenotypic selection under the evaluated conditions.",
+                f"Selection progress for {trait_name} may be achievable through direct phenotypic evaluation.",
+            ]
+        elif gam_class == "Medium":
+            _rec_variants = [
+                f"Moderate selection progress may be achievable for {trait_name} through phenotypic evaluation.",
+                f"{trait_name} showed moderate expected response to phenotypic selection.",
+            ]
+        else:
+            _rec_variants = [
+                f"Direct phenotypic selection for {trait_name} may be effective under the conditions evaluated in this study.",
+            ]
         recommendation = (
-            f"Direct phenotypic selection for {trait_name} may be effective under the conditions evaluated in this study. "
+            _select_narrative_variant(trait_name, _rec_variants, seed=1) + " "
             "These results may support further evaluation of promising genotypes under additional testing environments."
         )
     elif h2_class == "moderate":
+        _rec_variants = [
+            f"Selection efficiency for {trait_name} may partly depend on environmental conditions.",
+            f"Environmental influence may contribute to observed phenotypic expression of {trait_name}.",
+        ]
         recommendation = (
-            f"Selection response for {trait_name} may be influenced by environmental conditions and should be interpreted cautiously. "
+            _select_narrative_variant(trait_name, _rec_variants, seed=1) + " "
             "These results may support further evaluation of promising genotypes under additional testing environments."
         )
     else:
@@ -738,11 +788,16 @@ def generate_genetics_interpretation(
                 "performance under the conditions of this experiment and may warrant further evaluation."
             )
         else:
+            _sel_variants = [
+                "Direct phenotypic selection may be effective under the conditions evaluated in this study.",
+                "The trait may respond favorably to phenotypic selection under the evaluated conditions.",
+                "Selection progress may be achievable through direct phenotypic evaluation.",
+            ]
             interpretation = (
                 f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates HIGH genetic control "
                 f"of '{trait_name}'. The genetic advance as percent of mean (GAM = {gam:.2f}%) is HIGH, "
                 "suggesting substantial expected response to direct selection. "
-                "Direct phenotypic selection may be effective under the conditions evaluated in this study."
+                + _select_narrative_variant(trait_name, _sel_variants)
             )
     elif h2_class == "high" and gam_class == "Medium":
         if is_agronomy:
@@ -753,11 +808,15 @@ def generate_genetics_interpretation(
                 "Leading treatments can be identified reliably under the tested conditions."
             )
         else:
+            _sel_variants = [
+                "Moderate selection progress may be achievable through phenotypic evaluation.",
+                "The trait showed moderate expected response to phenotypic selection.",
+            ]
             interpretation = (
                 f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates HIGH genetic control "
                 f"of '{trait_name}'. The genetic advance as percent of mean (GAM = {gam:.2f}%) is MODERATE, "
-                "indicating a meaningful selection response. The trait showed moderate expected response to phenotypic "
-                "selection under the evaluated conditions."
+                "indicating a meaningful selection response. "
+                + _select_narrative_variant(trait_name, _sel_variants)
             )
     elif h2_class == "high" and gam_class == "Low":
         if is_agronomy:
@@ -784,10 +843,14 @@ def generate_genetics_interpretation(
                 "environmental influence; standardizing management conditions may further improve reliability."
             )
         else:
+            _sel_variants = [
+                "Selection efficiency may partly depend on environmental conditions.",
+                "Environmental influence may contribute to observed phenotypic expression.",
+            ]
             interpretation = (
                 f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates MODERATE genetic control "
                 f"of '{trait_name}', with the genetic advance as percent of mean (GAM = {gam:.2f}%) being HIGH. "
-                "Selection response may be influenced by environmental conditions and should be interpreted cautiously."
+                + _select_narrative_variant(trait_name, _sel_variants)
             )
     elif h2_class == "moderate" and gam_class == "Medium":
         if is_agronomy:
@@ -798,10 +861,14 @@ def generate_genetics_interpretation(
                 "will also influence outcomes."
             )
         else:
+            _sel_variants = [
+                "Selection efficiency may partly depend on environmental conditions.",
+                "Environmental influence may contribute to observed phenotypic expression.",
+            ]
             interpretation = (
                 f"The estimated broad-sense heritability (H2 = {h2:.3f}) and genetic advance as percent "
                 f"of mean (GAM = {gam:.2f}%) both indicate MODERATE genetic control for '{trait_name}'. "
-                "Selection response may be influenced by environmental conditions and should be interpreted cautiously."
+                + _select_narrative_variant(trait_name, _sel_variants)
             )
     elif h2_class == "moderate" and gam_class == "Low":
         if is_agronomy:
@@ -812,10 +879,14 @@ def generate_genetics_interpretation(
                 "improving environmental standardization and management uniformity may help."
             )
         else:
+            _sel_variants = [
+                "Selection efficiency may partly depend on environmental conditions.",
+                "Environmental influence may contribute to observed phenotypic expression.",
+            ]
             interpretation = (
                 f"The estimated broad-sense heritability (H2 = {h2:.3f}) suggests MODERATE genetic control "
                 f"of '{trait_name}', but the genetic advance as percent of mean (GAM = {gam:.2f}%) is LOW. "
-                "Selection response may be influenced by environmental conditions and should be interpreted cautiously."
+                + _select_narrative_variant(trait_name, _sel_variants)
             )
     else:  # low h2
         if is_agronomy:
@@ -876,8 +947,13 @@ def generate_genetics_interpretation(
                 "recommended reliably under the tested conditions."
             )
         else:
+            _impl_variants = [
+                "Direct phenotypic selection may be effective under the conditions evaluated in this study.",
+                "The trait may respond favorably to phenotypic selection under the evaluated conditions.",
+                "Selection progress may be achievable through direct phenotypic evaluation.",
+            ]
             breeding_implication = (
-                "Direct phenotypic selection may be effective under the conditions evaluated in this study. "
+                _select_narrative_variant(trait_name, _impl_variants, seed=2) + " "
                 "These results may support further evaluation of promising genotypes under additional testing environments."
             )
     elif h2_class == "moderate":
@@ -887,8 +963,12 @@ def generate_genetics_interpretation(
                 "across environments or seasons is advisable to confirm consistency."
             )
         else:
+            _impl_variants = [
+                "Selection efficiency may partly depend on environmental conditions.",
+                "Environmental influence may contribute to observed phenotypic expression.",
+            ]
             breeding_implication = (
-                "Selection response may be influenced by environmental conditions and should be interpreted cautiously. "
+                _select_narrative_variant(trait_name, _impl_variants, seed=2) + " "
                 "These results may support further evaluation of promising genotypes under additional testing environments."
             )
     else:  # low

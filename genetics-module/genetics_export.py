@@ -188,6 +188,7 @@ def _find_breeding_governance_hits(text: str, analysis_type: Optional[str]) -> L
         ("non-additive effects", "non-additive effects"),
         ("clean genetic signal", "clean genetic signal"),
         ("top-performing genotype", "top-performing genotype"),
+        ("negligible environmental variance inflation", "negligible environmental variance inflation"),
     ]
     for label, needle in blocked_patterns:
         if needle in lower_text:
@@ -837,6 +838,16 @@ def _add_executive_summary(
         ]
         if cv is not None:
             fields.append(("CV (%)", _fmt_cv(cv)))
+        else:
+            fields.append(("CV (%)", "Unavailable"))
+    elif is_anova and not is_agronomy:
+        # ANOVA module + plant_breeding: show CV% (no H²/GAM for ANOVA module)
+        ds = result.descriptive_stats if isinstance(result.descriptive_stats, dict) else {}
+        cv = _clean_cv_percent(ds.get("cv_percent")) if isinstance(ds, dict) else None
+        if cv is not None:
+            fields.append(("CV (%)", _fmt_cv(cv)))
+        else:
+            fields.append(("CV (%)", "Unavailable"))
     elif is_agronomy:
         # Show CV% and treatment significance for agronomy executive summary
         ds = result.descriptive_stats or {}
@@ -853,7 +864,8 @@ def _add_executive_summary(
     for key, val in fields:
         _add_kv(doc, key, val)
 
-    if not is_anova:
+    if not is_agronomy:
+        # Add CV precision narrative for both genetics and ANOVA modules (plant_breeding domain)
         cv_for_note = None
         if isinstance(result.descriptive_stats, dict):
             cv_for_note = _clean_cv_percent(result.descriptive_stats.get("cv_percent"))
@@ -1429,17 +1441,27 @@ def _add_writing_support_guide(doc: Document, data: DownloadReportRequest) -> No
             h2_class = (row.heritability_class or "").lower() if row.heritability_class else ""
             gam_class = (row.gam_class or "").lower() if row.gam_class else ""
             if h2_class == "high" and gam_class == "high":
-                starter_selection = (
-                    "Direct phenotypic selection may be effective under the conditions evaluated in this study."
-                )
+                _sel_variants = [
+                    "Direct phenotypic selection may be effective under the conditions evaluated in this study.",
+                    "The trait may respond favorably to phenotypic selection under the evaluated conditions.",
+                    "Selection progress may be achievable through direct phenotypic evaluation.",
+                ]
+                from genetics_interpretation import _select_narrative_variant as _snv
+                starter_selection = _snv(row.trait, _sel_variants)
             elif h2_class == "high" and gam_class in {"medium", "moderate"}:
-                starter_selection = (
-                    "The trait showed moderate expected response to phenotypic selection under the evaluated conditions."
-                )
+                _sel_variants = [
+                    "Moderate selection progress may be achievable through phenotypic evaluation.",
+                    "The trait showed moderate expected response to phenotypic selection.",
+                ]
+                from genetics_interpretation import _select_narrative_variant as _snv
+                starter_selection = _snv(row.trait, _sel_variants)
             elif h2_class == "moderate":
-                starter_selection = (
-                    "Selection response may be influenced by environmental conditions and should be interpreted cautiously."
-                )
+                _sel_variants = [
+                    "Selection efficiency may partly depend on environmental conditions.",
+                    "Environmental influence may contribute to observed phenotypic expression.",
+                ]
+                from genetics_interpretation import _select_narrative_variant as _snv
+                starter_selection = _snv(row.trait, _sel_variants)
             else:
                 starter_selection = (
                     "These results may support further evaluation of promising genotypes under additional testing environments."
