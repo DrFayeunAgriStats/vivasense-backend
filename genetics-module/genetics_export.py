@@ -905,12 +905,12 @@ def _add_executive_summary(
     if not is_anova and not is_agronomy:
         hp = result.heritability if isinstance(result.heritability, dict) else {}
         gp = result.genetic_parameters if isinstance(result.genetic_parameters, dict) else {}
-        ds = result.descriptive_stats if isinstance(result.descriptive_stats, dict) else {}
         h2 = hp.get("h2_broad_sense")
         gcv = gp.get("GCV")
         pcv = gp.get("PCV")
         gam_pct = gp.get("GAM_percent")
-        cv = _clean_cv_percent(ds.get("cv_percent")) if isinstance(ds, dict) else None
+        # Use _resolve_cv_percent so ANOVA-MSE fallback applies when ds.cv_percent is absent
+        cv = _resolve_cv_percent(result)
         h2_class = (
             "High" if h2 is not None and h2 >= 0.6
             else "Moderate" if h2 is not None and h2 >= 0.3
@@ -929,8 +929,8 @@ def _add_executive_summary(
             fields.append(("CV (%)", "Unavailable"))
     elif is_anova and not is_agronomy:
         # ANOVA module + plant_breeding: show CV% (no H²/GAM for ANOVA module)
-        ds = result.descriptive_stats if isinstance(result.descriptive_stats, dict) else {}
-        cv = _clean_cv_percent(ds.get("cv_percent")) if isinstance(ds, dict) else None
+        # Use _resolve_cv_percent so ANOVA-MSE fallback applies when ds.cv_percent is absent
+        cv = _resolve_cv_percent(result)
         if cv is not None:
             fields.append(("CV (%)", _fmt_cv(cv)))
         else:
@@ -952,9 +952,8 @@ def _add_executive_summary(
 
     if not is_agronomy:
         # Add CV precision narrative for both genetics and ANOVA modules (plant_breeding domain)
-        cv_for_note = None
-        if isinstance(result.descriptive_stats, dict):
-            cv_for_note = _clean_cv_percent(result.descriptive_stats.get("cv_percent"))
+        # _resolve_cv_percent includes ANOVA-MSE fallback so narrative is always available
+        cv_for_note = _resolve_cv_percent(result)
         cv_note = _cv_precision_narrative(cv_for_note, domain=domain)
         if cv_note:
             _add_body(doc, cv_note)
@@ -2267,52 +2266,58 @@ async def export_word_report(data: DownloadReportRequest) -> Response:
         doc = _build_document(data)
         report_text = _collect_doc_text(doc)
 
+        # ── TASK 8: Collect wording/governance issues as WARNINGS (not blocks) ──
+        # Hard-block is reserved for structural/rendering failures (caught below).
+        all_warnings: list[str] = []
+
         quality_hits = _find_export_quality_hits(report_text, data)
-        if quality_hits:
-            logger.warning("Blocked export due to report quality violations: %s", quality_hits)
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "detail": "Export blocked: report quality validation failed.",
-                    "quality_violations": quality_hits,
-                },
+        for hit in quality_hits:
+            logger.debug(
+                "[EXPORT-QUALITY] Warning triggered | phrase=%r | severity=wording | decision=warn-only",
+                hit,
             )
+        all_warnings.extend(quality_hits)
 
         analysis_type = "multi_environment" if getattr(data.dataset_summary, "mode", "") == "multi" else "single_environment"
         if is_plant_breeding_domain(data.domain):
             governance_hits = _find_breeding_governance_hits(report_text, analysis_type=analysis_type)
-            if governance_hits:
-                logger.warning(
-                    "Blocked breeding export for governance violations: %s",
-                    governance_hits,
+            for hit in governance_hits:
+                logger.debug(
+                    "[EXPORT-GOVERNANCE] Warning triggered | phrase=%r | domain=plant_breeding | severity=wording | decision=warn-only",
+                    hit,
                 )
-                return JSONResponse(
-                    status_code=400,
-                    content={
-                        "detail": "Export blocked: forbidden breeding interpretation phrases were detected.",
-                        "forbidden_terms": governance_hits,
-                    },
-                )
+            all_warnings.extend(governance_hits)
         else:
             forbidden_hits = find_forbidden_breeding_terms(report_text)
-            if forbidden_hits:
-                logger.warning(
-                    "Blocked export for non-plant-breeding domain '%s'; forbidden terms detected: %s",
+            for hit in forbidden_hits:
+                logger.debug(
+                    "[EXPORT-DOMAIN-GUARD] Warning triggered | phrase=%r | domain=%s | severity=wording | decision=warn-only",
+                    hit,
                     data.domain,
-                    forbidden_hits,
                 )
-                return JSONResponse(
-                    status_code=400,
-                    content={
-                        "detail": (
-                            "Export blocked: breeding/genetics terminology was detected in a non-Plant Breeding report."
-                        ),
-                        "forbidden_terms": forbidden_hits,
-                    },
-                )
+            all_warnings.extend(forbidden_hits)
+
+        if all_warnings:
+            logger.warning(
+                "Export proceeding with %d quality warning(s): %s",
+                len(all_warnings),
+                all_warnings,
+            )
+
         buf = io.BytesIO()
         doc.save(buf)
         buf.seek(0)
+
+        response_headers: dict[str, str] = {
+            "Content-Disposition": "attachment; filename=vivasense_genetics_report.docx",
+        }
+        if all_warnings:
+            # Expose warnings to frontend via headers for validation-state sync
+            response_headers["X-Export-Quality-Warnings"] = str(len(all_warnings))
+            response_headers["X-Export-Warning-Detail"] = "; ".join(all_warnings)[:500]
+            response_headers["Access-Control-Expose-Headers"] = (
+                "X-Export-Quality-Warnings, X-Export-Warning-Detail"
+            )
 
         return Response(
             content=buf.read(),
@@ -2320,11 +2325,7 @@ async def export_word_report(data: DownloadReportRequest) -> Response:
                 "application/vnd.openxmlformats-officedocument"
                 ".wordprocessingml.document"
             ),
-            headers={
-                "Content-Disposition": (
-                    "attachment; filename=vivasense_genetics_report.docx"
-                )
-            },
+            headers=response_headers,
         )
     except Exception as exc:
         logger.error("Report generation failed: %s", exc, exc_info=True)
