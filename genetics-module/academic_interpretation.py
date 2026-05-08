@@ -266,8 +266,9 @@ patterns. If none: "No data quality concerns detected."
 for genetic control in this experiment. Never interpret alone.
 
 4. JOINT H² AND GAM INTERPRETATION — interpret the combination. \
-High H² + High GAM = additive effects likely, direct selection \
-effective. Other combinations interpreted accordingly.
+High H² + High GAM = direct phenotypic selection may be effective \
+under the conditions evaluated in this study. Other combinations \
+must remain cautious and context-bound.
 
 5. GCV VS PCV INTERPRETATION — compare GCV to PCV. Explain what \
 the gap (or lack of gap) means for environmental influence.

@@ -24,6 +24,7 @@ import io
 import logging
 import math
 import datetime
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -52,6 +53,7 @@ from genetics_interpretation import (
     build_breeding_synthesis,
     _describe_env_effects,
     _describe_gcv_pcv,
+    _is_single_environment_analysis,
 )
 from domain_guard import find_forbidden_breeding_terms, is_plant_breeding_domain
 from interpretation import InterpretationEngine
@@ -157,6 +159,47 @@ def _clean_cv_percent(value: Optional[float]) -> Optional[float]:
 
 def _fmt_cv(value: Optional[float]) -> str:
     return _fmt(_clean_cv_percent(value), 2)
+
+
+def _cv_precision_narrative(cv_percent: Optional[float], domain: Optional[str] = "plant_breeding") -> str:
+    cv_val = _clean_cv_percent(cv_percent)
+    if cv_val is None:
+        return ""
+    if cv_val < 10:
+        base = "Residual variability was relatively low, suggesting high experimental precision within the scope of this design."
+    elif cv_val < 20:
+        base = (
+            "Experimental variability appeared acceptable for treatment comparison under the evaluated conditions."
+            if not is_plant_breeding_domain(domain)
+            else "Experimental variability appeared acceptable for genotype comparison under the evaluated conditions."
+        )
+    else:
+        base = "Residual variability was comparatively high, and findings should therefore be interpreted cautiously."
+    if cv_val < 1:
+        base += " Residual variability was extremely low relative to the trait mean. Verify raw data consistency and experimental realism."
+    return base
+
+
+def _find_breeding_governance_hits(text: str, analysis_type: Optional[str]) -> List[str]:
+    lower_text = (text or "").lower()
+    hits: List[str] = []
+    blocked_patterns = [
+        ("additive gene effects", "additive gene effects"),
+        ("non-additive effects", "non-additive effects"),
+        ("clean genetic signal", "clean genetic signal"),
+        ("top-performing genotype", "top-performing genotype"),
+    ]
+    for label, needle in blocked_patterns:
+        if needle in lower_text:
+            hits.append(label)
+    if re.search(r"\benvironmental effects[^.]*\bnon-significant\b|\bnon-significant\b[^.]*\benvironmental effects\b", lower_text):
+        hits.append("environmental effects non-significant")
+
+    if _is_single_environment_analysis(analysis_type) and (
+        "gxe interaction was non-significant" in lower_text or "gx e interaction was non-significant" in lower_text
+    ):
+        hits.append("GxE non-significant (single-environment)")
+    return hits
 
 
 def _fmt_p(p: Optional[float]) -> str:
@@ -606,6 +649,11 @@ def _build_breeding_input_for_export(data: UploadAnalysisResponse) -> List[Dict[
             "h2": float(summary_row.h2) if summary_row is not None and summary_row.h2 is not None else None,
             "gam_class": summary_row.gam_class if summary_row is not None else None,
             "top_genotype": top_genotype,
+            "analysis_type": (
+                "multi_environment"
+                if (result.n_environments is not None and result.n_environments > 1)
+                else "single_environment"
+            ),
             "f_gxe": float(f_gxe) if f_gxe is not None else None,
             "p_gxe": float(p_gxe) if p_gxe is not None else None,
             "f_value": f_genotype,
@@ -769,10 +817,12 @@ def _add_executive_summary(
     if not is_anova and not is_agronomy:
         hp = result.heritability if isinstance(result.heritability, dict) else {}
         gp = result.genetic_parameters if isinstance(result.genetic_parameters, dict) else {}
+        ds = result.descriptive_stats if isinstance(result.descriptive_stats, dict) else {}
         h2 = hp.get("h2_broad_sense")
         gcv = gp.get("GCV")
         pcv = gp.get("PCV")
         gam_pct = gp.get("GAM_percent")
+        cv = _clean_cv_percent(ds.get("cv_percent")) if isinstance(ds, dict) else None
         h2_class = (
             "High" if h2 is not None and h2 >= 0.6
             else "Moderate" if h2 is not None and h2 >= 0.3
@@ -785,6 +835,8 @@ def _add_executive_summary(
             ("PCV (%)", _fmt(pcv, 2)),
             ("GAM (%)", _fmt(gam_pct, 2)),
         ]
+        if cv is not None:
+            fields.append(("CV (%)", _fmt_cv(cv)))
     elif is_agronomy:
         # Show CV% and treatment significance for agronomy executive summary
         ds = result.descriptive_stats or {}
@@ -800,6 +852,14 @@ def _add_executive_summary(
 
     for key, val in fields:
         _add_kv(doc, key, val)
+
+    if not is_anova:
+        cv_for_note = None
+        if isinstance(result.descriptive_stats, dict):
+            cv_for_note = _clean_cv_percent(result.descriptive_stats.get("cv_percent"))
+        cv_note = _cv_precision_narrative(cv_for_note, domain=domain)
+        if cv_note:
+            _add_body(doc, cv_note)
 
     doc.add_paragraph()
 
@@ -972,7 +1032,7 @@ def _add_mean_separation_section(
     _top_phrase = (
         f"Treatment(s) with the highest observed mean in group '{top_letter}': "
         if is_agronomy
-        else f"Top-performing {top_label} in group '{top_letter}': "
+        else f"Genotype(s) with the highest observed mean in group '{top_letter}': "
     )
     _add_body(
         doc,
@@ -1256,6 +1316,8 @@ def _add_interpretation_section(
     else:
         gcv_val = gp.get("GCV")
         pcv_val = gp.get("PCV")
+        cv_val = _clean_cv_percent((result.descriptive_stats or {}).get("cv_percent") if isinstance(result.descriptive_stats, dict) else None)
+        analysis_type = "multi_environment" if (result.n_environments is not None and result.n_environments > 1) else "single_environment"
         anova_f_env, anova_p_env, anova_f_gxe, anova_p_gxe = _anova_env_effect_stats(result.anova_table)
         interpretation_text, generated_implication = generate_genetics_interpretation(
             trait_name=trait_name,
@@ -1267,6 +1329,8 @@ def _add_interpretation_section(
             anova_p_env=anova_p_env,
             anova_f_gxe=anova_f_gxe,
             anova_p_gxe=anova_p_gxe,
+            cv_percent=cv_val,
+            analysis_type=analysis_type,
             domain=domain or "plant_breeding",
         )
         logger.info("Generated genetics interpretation: %d characters", len(interpretation_text))
@@ -1358,9 +1422,29 @@ def _add_writing_support_guide(doc: Document, data: DownloadReportRequest) -> No
             starter_genetic = (
                 f"For {row.trait}, broad-sense heritability was H² = {_fmt(h2, 3, thousands=False)} "
                 f"and genetic advance as percent of mean was GAM% = {_fmt(gam_pct, 2, thousands=False)}, "
-                f"indicating {row.gam_class or 'the observed'} selection potential."
+                "and this should be interpreted within the conditions evaluated in this study."
             )
             _add_body(doc, starter_genetic)
+
+            h2_class = (row.heritability_class or "").lower() if row.heritability_class else ""
+            gam_class = (row.gam_class or "").lower() if row.gam_class else ""
+            if h2_class == "high" and gam_class == "high":
+                starter_selection = (
+                    "Direct phenotypic selection may be effective under the conditions evaluated in this study."
+                )
+            elif h2_class == "high" and gam_class in {"medium", "moderate"}:
+                starter_selection = (
+                    "The trait showed moderate expected response to phenotypic selection under the evaluated conditions."
+                )
+            elif h2_class == "moderate":
+                starter_selection = (
+                    "Selection response may be influenced by environmental conditions and should be interpreted cautiously."
+                )
+            else:
+                starter_selection = (
+                    "These results may support further evaluation of promising genotypes under additional testing environments."
+                )
+            _add_body(doc, starter_selection)
 
         if result.mean_separation and result.mean_separation.genotype:
             top_genotype = result.mean_separation.genotype[0]
@@ -1374,10 +1458,20 @@ def _add_writing_support_guide(doc: Document, data: DownloadReportRequest) -> No
                 )
             else:
                 starter_means = (
-                    f"Mean separation ({result.mean_separation.test}) grouped {top_genotype} in the leading "
-                    f"performance group ({top_group}), supporting its consideration for {_consider} under the tested conditions."
+                    f"Mean separation ({result.mean_separation.test}) placed {top_genotype} among genotype(s) "
+                    f"with the highest observed mean in group '{top_group}'."
                 )
             _add_body(doc, starter_means)
+
+        if not _guide_agronomy:
+            cv_value = None
+            if isinstance(result.descriptive_stats, dict):
+                cv_value = _clean_cv_percent(result.descriptive_stats.get("cv_percent"))
+            if cv_value is not None:
+                _add_body(
+                    doc,
+                    f"For {row.trait}, CV% was {_fmt_cv(cv_value)}. {_cv_precision_narrative(cv_value, domain='plant_breeding')}",
+                )
 
         doc.add_paragraph()
 
@@ -1878,7 +1972,10 @@ def _build_document(data: DownloadReportRequest) -> Document:
     doc.add_paragraph()
 
     all_trait_results = _build_breeding_input_for_export(data)
-    synthesis_text = build_breeding_synthesis(all_trait_results)
+    synthesis_text = build_breeding_synthesis(
+        all_trait_results,
+        analysis_type="multi_environment" if ds.mode == "multi" else "single_environment",
+    )
     if is_plant_breeding_domain(report_domain) and synthesis_text:
         _add_heading(doc, "Breeding Strategy Summary", level=1)
         for para in synthesis_text.split("\n\n"):
@@ -2055,8 +2152,23 @@ async def export_word_report(data: DownloadReportRequest) -> Response:
 
     try:
         doc = _build_document(data)
-        if not is_plant_breeding_domain(data.domain):
-            report_text = _collect_doc_text(doc)
+        report_text = _collect_doc_text(doc)
+        analysis_type = "multi_environment" if getattr(data.dataset_summary, "mode", "") == "multi" else "single_environment"
+        if is_plant_breeding_domain(data.domain):
+            governance_hits = _find_breeding_governance_hits(report_text, analysis_type=analysis_type)
+            if governance_hits:
+                logger.warning(
+                    "Blocked breeding export for governance violations: %s",
+                    governance_hits,
+                )
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "detail": "Export blocked: forbidden breeding interpretation phrases were detected.",
+                        "forbidden_terms": governance_hits,
+                    },
+                )
+        else:
             forbidden_hits = find_forbidden_breeding_terms(report_text)
             if forbidden_hits:
                 logger.warning(

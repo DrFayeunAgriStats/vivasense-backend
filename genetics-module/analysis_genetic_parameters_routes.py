@@ -141,9 +141,13 @@ def _build_gp_text(
         gam_val = gp.get("GAM_percent")
         gcv_val = gp.get("GCV")
         pcv_val = gp.get("PCV")
+        cv_val = None
+        if isinstance(res.descriptive_stats, dict):
+            cv_val = res.descriptive_stats.get("cv_percent")
 
         env_significant, gxe_significant = _get_anova_flags(res.anova_table)
         f_env, p_env, f_gxe, p_gxe = _get_anova_effect_stats(res.anova_table)
+        analysis_type = "multi_environment" if (res.n_environments is not None and res.n_environments > 1) else "single_environment"
 
         interpretation, breeding_implication = generate_genetics_interpretation(
             trait_name=trait,
@@ -157,6 +161,8 @@ def _build_gp_text(
             anova_p_env=p_env,
             anova_f_gxe=f_gxe,
             anova_p_gxe=p_gxe,
+            cv_percent=float(cv_val) if cv_val is not None else None,
+            analysis_type=analysis_type,
         )
 
         logger.info(

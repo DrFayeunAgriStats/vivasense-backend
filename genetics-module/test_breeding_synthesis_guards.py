@@ -48,3 +48,28 @@ def test_same_tukey_group_message_replaces_top_performer_claim():
         "All genotypes were assigned to the same mean separation group."
     ) in text
     assert "consistently ranked among the top-performing" not in text
+
+
+def test_single_environment_synthesis_avoids_gxe_stability_language():
+    text = build_breeding_synthesis(
+        [
+            {
+                "trait_name": "Yield",
+                "h2": 0.85,
+                "gam_class": "High",
+                "analysis_type": "single_environment",
+                "genotype_significant": True,
+                "f_gxe": 22.0,
+                "p_gxe": 0.001,
+                "genotype_means": [
+                    {"genotype": "G1", "mean": 10.0, "rank": 1, "group": "a"},
+                    {"genotype": "G2", "mean": 9.6, "rank": 2, "group": "b"},
+                ],
+            }
+        ],
+        analysis_type="single_environment",
+    )
+    lowered = text.lower()
+    assert "top-performing genotype" not in lowered
+    assert "consistent across environments" not in lowered
+    assert "stability analysis" not in lowered
