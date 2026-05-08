@@ -82,15 +82,19 @@ def interpret_results(r_results, traits):
         outliers = r_results["outliers"].get(trait, [])
 
         # 1. Variability
-        cv = stats.get("cv_percent")
+        cv_raw = stats.get("cv_percent")
+        cv = abs(float(cv_raw)) if cv_raw is not None else None
         if cv is None:
-            var_interp = "Experimental precision could not be fully assessed from the available dataset structure."
+            var_interp = "CV% was unavailable, so residual precision could not be interpreted for this trait."
         elif cv < 10:
-            var_interp = f"Low variability (CV = {cv:.2f}%)."
-        elif cv <= 30:
-            var_interp = f"Moderate variability (CV = {cv:.2f}%)."
+            var_interp = "Residual variability was relatively low, suggesting high experimental precision within the scope of this design."
+        elif cv < 20:
+            var_interp = "Experimental variability appeared acceptable for treatment comparison under the evaluated conditions."
         else:
-            var_interp = f"High variability (CV = {cv:.2f}%)."
+            var_interp = "Residual variability was comparatively high, and findings should therefore be interpreted cautiously."
+
+        if cv is not None and cv < 1:
+            var_interp += " Residual variability was extremely low relative to the trait mean. Verify raw data consistency and experimental realism."
 
         # 2. Distribution
         skew = stats.get("skewness", 0)

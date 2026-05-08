@@ -59,6 +59,8 @@ from interpretation import InterpretationEngine
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Export"])
 
+FAILED_TRAIT_CV_MESSAGE = "CV% unavailable due to failed ANOVA estimation."
+
 
 # ============================================================================
 # REQUEST MODEL
@@ -142,6 +144,19 @@ def _fmt(value: Optional[float], decimals: int = 2, thousands: bool = True) -> s
     if value is None:
         return "—"
     return f"{value:,.{decimals}f}" if thousands else f"{value:.{decimals}f}"
+
+
+def _clean_cv_percent(value: Optional[float]) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        return abs(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _fmt_cv(value: Optional[float]) -> str:
+    return _fmt(_clean_cv_percent(value), 2)
 
 
 def _fmt_p(p: Optional[float]) -> str:
@@ -773,9 +788,9 @@ def _add_executive_summary(
     elif is_agronomy:
         # Show CV% and treatment significance for agronomy executive summary
         ds = result.descriptive_stats or {}
-        cv = ds.get("cv_percent") if isinstance(ds, dict) else None
+        cv = _clean_cv_percent(ds.get("cv_percent")) if isinstance(ds, dict) else None
         if cv is not None:
-            fields.append(("CV (%)", _fmt(cv, 2)))
+            fields.append(("CV (%)", _fmt_cv(cv)))
         at = result.anova_table
         if at and hasattr(at, "source") and "genotype" in at.source:
             idx = at.source.index("genotype")
@@ -1131,7 +1146,7 @@ def _add_interpretation_section(
                 is_gxe_effect_significant,
             )
             ds = result.descriptive_stats or {}
-            cv_pct = ds.get("cv_percent") if isinstance(ds, dict) else None
+            cv_pct = _clean_cv_percent(ds.get("cv_percent")) if isinstance(ds, dict) else None
             summary = {
                 "grand_mean":     result.grand_mean,
                 "cv_percent":     cv_pct,
@@ -1450,6 +1465,7 @@ def _add_trait_section(
     if tr.analysis_result is None:
         error_msg = tr.error or (row.error if row else None) or "No analysis result available"
         _add_body(doc, f"Analysis failed: {error_msg}")
+        _add_body(doc, FAILED_TRAIT_CV_MESSAGE)
         logger.warning("Trait '%s' skipped — analysis_result is None, error=%s", trait_name, error_msg)
         return
 
@@ -1659,6 +1675,7 @@ def export_traits_to_word(
         # ── Primary gate: status field (inferred from analysis_result when absent)
         if tr.status != "success" or tr.analysis_result is None:
             _add_kv(doc, "Status", "Failed")
+            _add_kv(doc, "CV (%)", FAILED_TRAIT_CV_MESSAGE)
             error_msg = tr.error or "No analysis result available."
             # Provide informative diagnostic messages instead of raw error text
             err_lower = (error_msg or "").lower()

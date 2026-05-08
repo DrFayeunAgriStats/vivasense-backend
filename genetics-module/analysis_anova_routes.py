@@ -39,6 +39,56 @@ from academic_interpretation import detect_analysis_domain
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Analysis"])
 
+FAILED_TRAIT_CV_MESSAGE = "CV% unavailable due to failed ANOVA estimation."
+
+
+def _sanitize_cv_percent(cv: Optional[float]) -> Optional[float]:
+    if cv is None:
+        return None
+    try:
+        value = abs(float(cv))
+    except (TypeError, ValueError):
+        return None
+    return value
+
+
+def _precision_label_from_cv(cv: Optional[float]) -> Optional[str]:
+    cv_val = _sanitize_cv_percent(cv)
+    if cv_val is None:
+        return None
+    if cv_val < 10:
+        return "high"
+    if cv_val < 20:
+        return "acceptable"
+    return "caution"
+
+
+def _map_precision_level(precision_level: Optional[str], cv: Optional[float]) -> Optional[str]:
+    if precision_level in {"high", "acceptable", "caution"}:
+        return precision_level
+    if precision_level == "good":
+        return "high"
+    if precision_level == "moderate":
+        return "acceptable"
+    if precision_level == "low":
+        return "caution"
+    return _precision_label_from_cv(cv)
+
+
+def _cv_tier_narrative(cv: Optional[float]) -> Optional[str]:
+    cv_val = _sanitize_cv_percent(cv)
+    if cv_val is None:
+        return None
+    if cv_val < 10:
+        base = "Residual variability was relatively low, suggesting high experimental precision within the scope of this design."
+    elif cv_val < 20:
+        base = "Experimental variability appeared acceptable for treatment comparison under the evaluated conditions."
+    else:
+        base = "Residual variability was comparatively high, and findings should therefore be interpreted cautiously."
+    if cv_val < 1:
+        base += " Residual variability was extremely low relative to the trait mean. Verify raw data consistency and experimental realism."
+    return base
+
 
 def compute_cv_from_anova(
     anova_table,
@@ -130,17 +180,23 @@ def _generate_split_plot_interpretation(
 
     # ── 3. Experimental Precision (Dual CV) ────────────────────────────────────
     precision_parts = []
+    cv_a = _sanitize_cv_percent(cv_a)
+    cv_b = _sanitize_cv_percent(cv_b)
+
     if cv_a is not None and cv_b is not None:
-        prec_a = "good" if cv_a < 10 else "moderate" if cv_a <= 20 else "low"
-        prec_b = "good" if cv_b < 10 else "moderate" if cv_b <= 20 else "low"
+        prec_a = _precision_label_from_cv(cv_a)
+        prec_b = _precision_label_from_cv(cv_b)
         precision_parts.append(
             f"The whole-plot coefficient of variation (CV_A = √(MS_Error_A)/mean × 100) "
-            f"was {cv_a:.1f}%, indicating {prec_a} precision for main-plot comparisons."
+            f"was {cv_a:.2f}%, indicating {prec_a} precision for main-plot comparisons."
         )
         precision_parts.append(
             f"The subplot coefficient of variation (CV_B = √(MS_Error_B)/mean × 100) "
-            f"was {cv_b:.1f}%, indicating {prec_b} precision for subplot and interaction comparisons."
+            f"was {cv_b:.2f}%, indicating {prec_b} precision for subplot and interaction comparisons."
         )
+        cv_b_narrative = _cv_tier_narrative(cv_b)
+        if cv_b_narrative:
+            precision_parts.append(cv_b_narrative)
         if prec_a != prec_b:
             precision_parts.append(
                 "The two CVs reflect the separate error strata of the split-plot design. "
@@ -148,26 +204,32 @@ def _generate_split_plot_interpretation(
                 "whole-plot error typically has larger variability than subplot error."
             )
     elif cv_b is not None:
-        prec_b = "good" if cv_b < 10 else "moderate" if cv_b <= 20 else "low"
+        prec_b = _precision_label_from_cv(cv_b)
         precision_parts.append(
-            f"The subplot coefficient of variation (CV_B) was {cv_b:.1f}%, "
+            f"The subplot coefficient of variation (CV_B) was {cv_b:.2f}%, "
             f"indicating {prec_b} precision for subplot-level comparisons."
         )
+        cv_b_narrative = _cv_tier_narrative(cv_b)
+        if cv_b_narrative:
+            precision_parts.append(cv_b_narrative)
     elif cv_a is not None:
-        prec_a = "good" if cv_a < 10 else "moderate" if cv_a <= 20 else "low"
+        prec_a = _precision_label_from_cv(cv_a)
         precision_parts.append(
-            f"The whole-plot coefficient of variation (CV_A) was {cv_a:.1f}%, "
+            f"The whole-plot coefficient of variation (CV_A) was {cv_a:.2f}%, "
             f"indicating {prec_a} precision for main-plot comparisons."
         )
+        cv_a_narrative = _cv_tier_narrative(cv_a)
+        if cv_a_narrative:
+            precision_parts.append(cv_a_narrative)
     elif cv_interpretation_flag == "cv_available" and summary.get("cv_percent") is not None:
-        cv = summary["cv_percent"]
-        prec = "good" if cv < 10 else "moderate" if cv <= 20 else "low"
-        precision_parts.append(f"The coefficient of variation was {cv:.1f}% ({prec} experimental precision).")
+        cv = _sanitize_cv_percent(summary["cv_percent"])
+        prec = _precision_label_from_cv(cv)
+        precision_parts.append(f"The coefficient of variation was {cv:.2f}% ({prec} experimental precision).")
+        cv_narrative = _cv_tier_narrative(cv)
+        if cv_narrative:
+            precision_parts.append(cv_narrative)
     else:
-        precision_parts.append(
-            "Experimental precision assessment requires CV data; "
-            "interpret this trial with awareness of the available design structure."
-        )
+        precision_parts.append("CV% was unavailable, so residual precision could not be interpreted for this trait.")
     sections.append(("Experimental Precision", " ".join(precision_parts)))
 
     # ── 4–6. Treatment Effects — Interaction Priority Rule ─────────────────────
@@ -474,16 +536,20 @@ def generate_anova_interpretation(
         )
 
     if cv_interpretation_flag == "cv_available" and summary.get("cv_percent") is not None:
-        cv = summary["cv_percent"]
-        precision_word = "good" if cv < 10 else "moderate" if cv <= 20 else "low"
-        overview.append(
-            f"The coefficient of variation (CV) was {cv:.1f}%, indicating "
-            f"{precision_word} experimental precision."
-        )
+        cv = _sanitize_cv_percent(summary["cv_percent"])
+        if cv is not None:
+            precision_word = _precision_label_from_cv(cv)
+            overview.append(
+                f"The coefficient of variation (CV) was {cv:.2f}%, indicating "
+                f"{precision_word} experimental precision."
+            )
+        else:
+            overview.append(
+                "CV% was unavailable, so residual precision could not be interpreted for this trait."
+            )
     else:
         overview.append(
-            "Experimental variability could not be quantified precisely; "
-            "interpret findings within the scope of this design structure."
+            "CV% was unavailable, so residual precision could not be interpreted for this trait."
         )
 
     sections.append(("Overview", " ".join(overview)))
@@ -518,25 +584,13 @@ def generate_anova_interpretation(
                 f"with a total range of {summary['range']:.2f}."
             )
 
-    if cv_interpretation_flag == "cv_available" and precision_level == "good":
-        desc.append(
-            "The experimental precision was good, suggesting reliable and "
-            "reproducible results."
-        )
-    elif cv_interpretation_flag == "cv_available" and precision_level == "moderate":
-        desc.append(
-            "The experimental precision was moderate, indicating acceptable but "
-            "not optimal experimental control."
-        )
-    elif cv_interpretation_flag == "cv_available" and precision_level == "low":
-        desc.append(
-            "The experimental precision was low, suggesting high variability that "
-            "warrants cautious interpretation of the results."
-        )
+    if cv_interpretation_flag == "cv_available" and summary.get("cv_percent") is not None:
+        cv_narrative = _cv_tier_narrative(summary.get("cv_percent"))
+        if cv_narrative:
+            desc.append(cv_narrative)
     elif cv_interpretation_flag == "cv_unavailable":
         desc.append(
-            "Experimental variability could not be precisely quantified from the available data; "
-            "findings should be interpreted within the scope of the design structure."
+            "CV% was unavailable, so residual precision could not be interpreted for this trait."
         )
 
     sections.append(("Descriptive Interpretation", " ".join(desc)))
@@ -737,9 +791,9 @@ def generate_anova_interpretation(
                 "major limitation, as treatment effects differ across environments and "
                 "broad generalisation of results requires caution."
             )
-    if cv_interpretation_flag == "cv_available" and precision_level == "low":
+    if cv_interpretation_flag == "cv_available" and precision_level == "caution":
         risks.append(
-            "The low experimental precision introduces uncertainty in the results "
+            "The caution-level experimental precision introduces uncertainty in the results "
             "and suggests potential issues with experimental control or replication."
         )
     if is_multi and environment_significant is True:
@@ -784,7 +838,7 @@ def generate_anova_interpretation(
                 "Further evaluation across additional environments and management conditions "
                 "may help validate treatment consistency."
             )
-    if cv_interpretation_flag == "cv_available" and precision_level == "low":
+    if cv_interpretation_flag == "cv_available" and precision_level == "caution":
         recs.append(
             "Improve experimental design by increasing replication or enhancing "
             "environmental control to reduce variability."
@@ -1024,7 +1078,11 @@ async def analysis_anova(request: ModuleRequest, http_request: Request):
             # raw-observation SD-based CV when the ANOVA table is available.
             anova_cv = compute_cv_from_anova(res.anova_table, res.grand_mean)
             if anova_cv is not None:
-                trait_descriptive_stats["cv_percent"] = anova_cv
+                trait_descriptive_stats["cv_percent"] = _sanitize_cv_percent(anova_cv)
+
+            trait_descriptive_stats["cv_percent"] = _sanitize_cv_percent(
+                trait_descriptive_stats.get("cv_percent")
+            )
 
             # Build summary from descriptive stats
             summary = {
@@ -1037,7 +1095,11 @@ async def analysis_anova(request: ModuleRequest, http_request: Request):
             }
 
             # Classify precision and flags
-            precision_level = classify_precision_level(trait_descriptive_stats["cv_percent"])
+            precision_level_raw = classify_precision_level(trait_descriptive_stats["cv_percent"])
+            precision_level = _map_precision_level(
+                precision_level_raw,
+                trait_descriptive_stats["cv_percent"],
+            )
             cv_interpretation_flag = get_cv_interpretation_flag(trait_descriptive_stats["cv_percent"])
             genotype_significant = is_genotype_effect_significant(res.anova_table)
             environment_significant = is_environment_effect_significant(res.anova_table)
@@ -1055,8 +1117,8 @@ async def analysis_anova(request: ModuleRequest, http_request: Request):
             # Extract dual CV from variance_components for split-plot
             if is_sp and isinstance(res.variance_components, dict):
                 vc = res.variance_components
-                cv_a = float(vc["cv_A"]) if vc.get("cv_A") is not None else None
-                cv_b = float(vc["cv_B"]) if vc.get("cv_B") is not None else None
+                cv_a = _sanitize_cv_percent(float(vc["cv_A"])) if vc.get("cv_A") is not None else None
+                cv_b = _sanitize_cv_percent(float(vc["cv_B"])) if vc.get("cv_B") is not None else None
                 # Override summary CV with the more precise CV_B for split-plot
                 if cv_b is not None:
                     summary["cv_percent"] = cv_b
@@ -1130,6 +1192,9 @@ async def analysis_anova(request: ModuleRequest, http_request: Request):
             result_obj = AnovaTraitResult(
                 trait=trait,
                 status="failed",
+                cv_interpretation_flag="cv_unavailable",
+                interpretation=FAILED_TRAIT_CV_MESSAGE,
+                data_warnings=[FAILED_TRAIT_CV_MESSAGE],
                 error=str(exc),
             )
             return trait, "failed", result_obj
