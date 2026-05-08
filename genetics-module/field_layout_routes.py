@@ -38,6 +38,17 @@ class FieldLayoutRequest(BaseModel):
 
 
 class FieldLayoutResponse(BaseModel):
+    # Standardized fields (new, required by API contract)
+    design: str
+    seed: int
+    treatments: List[str]
+    replications: Optional[int] = None
+    total_plots: int
+    layout_matrix: List[Any]
+    plot_labels: List[str]
+    timestamp: str
+    export_ready: Dict[str, Any]
+    # Backward-compat legacy fields (kept for existing consumers)
     design_type: str
     plot_matrix: List[Any]
     fieldbook: List[Dict[str, Any]]
@@ -111,6 +122,11 @@ async def generate_layout(
     try:
         result = generate_field_layout(engine_request)
     except ValueError as exc:
+        logger.warning(
+            "Field layout validation failed: design=%s error=%s",
+            design_type,
+            str(exc),
+        )
         raise HTTPException(
             status_code=422,
             detail={
@@ -134,10 +150,11 @@ async def generate_layout(
         ) from exc
 
     logger.info(
-        "Field layout generated: design=%s plots=%s treatments=%s seed=%s",
+        "Field layout generated successfully: design=%s treatments=%s replications=%s plots=%s seed=%s",
         design_type,
-        result["layout_summary"].get("n_plots"),
         result["layout_summary"].get("n_treatments"),
+        result["layout_summary"].get("replications"),
+        result["layout_summary"].get("n_plots"),
         payload.seed,
     )
 

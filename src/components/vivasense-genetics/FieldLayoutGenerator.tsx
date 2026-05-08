@@ -291,6 +291,9 @@ export function FieldLayoutGenerator() {
     seed: 42,
   });
 
+  // ── Generation error state ────────────────────────────────────────────────
+  const [generationError, setGenerationError] = useState<string | null>(null);
+
   // ── Treatment name helpers ────────────────────────────────────────────────
   const handleNTreatmentsChange = (raw: number) => {
     const n = Math.max(2, Math.min(20, raw));
@@ -335,17 +338,25 @@ export function FieldLayoutGenerator() {
   // ── Handlers ──────────────────────────────────────────────────────────────
   const handleGenerate = () => {
     if (!canGenerate) return;
-    setLayout(generateLayout(design, nTreatments, nReps, seed));
-    setSnap({
-      design,
-      nTreatments,
-      nReps,
-      names: [...treatmentNames],
-      plotW: plotWidth,
-      plotL: plotLength,
-      aisleW: aisleWidth,
-      seed,
-    });
+    setGenerationError(null);
+    try {
+      setLayout(generateLayout(design, nTreatments, nReps, seed));
+      setSnap({
+        design,
+        nTreatments,
+        nReps,
+        names: [...treatmentNames],
+        plotW: plotWidth,
+        plotL: plotLength,
+        aisleW: aisleWidth,
+        seed,
+      });
+    } catch (err) {
+      setGenerationError(
+        err instanceof Error ? err.message : "An unexpected error occurred during layout generation."
+      );
+      setLayout(null);
+    }
   };
 
   const handleExportPNG = useCallback(() => {
@@ -605,6 +616,15 @@ export function FieldLayoutGenerator() {
               <span aria-hidden="true">✕</span> {err}
             </p>
           ))}
+        </div>
+      )}
+
+      {/* ── Generation error ─────────────────────────────────────────────── */}
+      {generationError !== null && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+          <p className="flex items-center gap-1.5 text-xs text-red-700">
+            <span aria-hidden="true">✕</span> {generationError}
+          </p>
         </div>
       )}
 
