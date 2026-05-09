@@ -35,6 +35,7 @@ import {
   VivaSenseMode,
 } from "@/services/featureMode";
 import { ProFeatureModal } from "./ProFeatureModal";
+import { deriveAllowedCorrelationModes } from "./domainTerms";
 
 interface TraitRelationshipsProps {
   /**
@@ -140,6 +141,15 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
   const [showProModal, setShowProModal] = useState(false);
   const [mode, setMode] = useState<VivaSenseMode>(() => getVivaSenseMode());
 
+  // ── Domain-aware mode governance ───────────────────────────────────────────
+  // Compute which correlation modes are scientifically appropriate for the
+  // current dataset context. Phenotypic is always allowed; between-genotype
+  // and genotypic depend on domain and genotype-column semantics.
+  const { showBetweenGenotype, showGenotypic } = deriveAllowedCorrelationModes(
+    datasetContext?.research_domain,
+    datasetContext?.genotypeColumn ?? ""
+  );
+
   useEffect(() => {
     const syncMode = () => setMode(getVivaSenseMode());
     window.addEventListener(VIVASENSE_MODE_CHANGED_EVENT, syncMode);
@@ -151,7 +161,7 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
   }, []);
 
   // When a new (or first) dataset context arrives, reset the trait selection
-  // and discard any previous results.
+  // and discard any previous results. Also reset objective/mode to valid defaults.
   useEffect(() => {
     if (datasetContext) {
       setSelectedTraits(datasetContext.availableTraitColumns);
@@ -160,6 +170,8 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
       setError(null);
       setStep("setup");
       setDisplayMode("phenotypic");
+      // Reset objective to "Field understanding" — always valid regardless of domain.
+      setUserObjective("Field understanding");
     }
   }, [datasetContext]);
 
@@ -213,15 +225,25 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
       // Set results and determine initial display mode
       setResults(data);
       
-      // Set initial displayMode based on objective
+      // Set initial displayMode based on objective, constrained by allowed modes.
+      // Domain governance: between_genotype and genotypic may be hidden for
+      // agronomy/general workflows — fall back to phenotypic when disallowed.
       let initialMode: "phenotypic" | "between_genotype" | "genotypic" = "phenotypic";
       if (userObjective === "Field understanding") {
         initialMode = "phenotypic";
       } else if (userObjective === "Genotype comparison") {
-        initialMode = "between_genotype";
+        // Only switch if between-genotype mode is allowed for this domain.
+        initialMode = showBetweenGenotype ? "between_genotype" : "phenotypic";
       } else {
         // "Breeding decision" → prefer VC-based genotypic; fall back if unavailable
-        initialMode = data.genotypic ? "genotypic" : "between_genotype";
+        // or if genotypic mode is not allowed for this domain.
+        if (showGenotypic && data.genotypic) {
+          initialMode = "genotypic";
+        } else if (showBetweenGenotype) {
+          initialMode = "between_genotype";
+        } else {
+          initialMode = "phenotypic";
+        }
       }
       setDisplayMode(initialMode);
       
@@ -434,18 +456,21 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
                 value: "Field understanding",
                 label: "Field Understanding → Phenotypic",
                 desc: "Co-variation among all field observations; reflects genetics + environment jointly",
+                allowed: true,
               },
               {
                 value: "Genotype comparison",
                 label: "Genotype Comparison → Between-Genotype",
                 desc: "Association among genotype means; not a true genetic parameter",
+                allowed: showBetweenGenotype,
               },
               {
                 value: "Breeding decision",
                 label: "Breeding Decision → Genotypic (VC-based)",
                 desc: "Variance-component genotypic correlation via bivariate REML; falls back to between-genotype if unavailable",
+                allowed: showGenotypic,
               },
-            ] as const).map((obj) => (
+            ] as const).filter((obj) => obj.allowed).map((obj) => (
               <label
                 key={obj.value}
                 className={[
@@ -524,18 +549,32 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
       genotypic_available: results.genotypic !== null,
     });
 
+    // Validate that displayMode has valid data AND is allowed by domain governance.
+    // Fall back to phenotypic when the current mode is no longer allowed.
+    let resolvedMode = displayMode;
+    if (resolvedMode === "between_genotype" && !showBetweenGenotype) {
+      resolvedMode = "phenotypic";
+    }
+    if (resolvedMode === "genotypic" && !showGenotypic) {
+      resolvedMode = showBetweenGenotype ? "between_genotype" : "phenotypic";
+    }
+    // Sync state if we had to fall back (avoids a stale displayMode in re-renders).
+    if (resolvedMode !== displayMode) {
+      setDisplayMode(resolvedMode);
+    }
+
     // Validate that displayMode has valid data
     let stats: CorrelationStats | null = null;
-    if (displayMode === "phenotypic") {
+    if (resolvedMode === "phenotypic") {
       stats = results.phenotypic;
-    } else if (displayMode === "between_genotype") {
+    } else if (resolvedMode === "between_genotype") {
       stats = results.between_genotype;
-    } else if (displayMode === "genotypic") {
+    } else if (resolvedMode === "genotypic") {
       stats = results.genotypic ?? results.between_genotype;
     }
 
     if (!stats) {
-      console.warn("[TraitRelationships] No stats available for mode:", displayMode);
+      console.warn("[TraitRelationships] No stats available for mode:", resolvedMode);
       stats = results.phenotypic ?? results.between_genotype;
     }
 
@@ -567,8 +606,10 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
     };
 
     const phenoAvail = checkModeAvailable(results.phenotypic, false);
-    const betweenAvail = checkModeAvailable(results.between_genotype, false);
-    const genoAvail = checkModeAvailable(results.genotypic, true);
+    // Data availability is gated by domain governance: a mode with data but
+    // not allowed by domain is treated as unavailable for display purposes.
+    const betweenAvail = showBetweenGenotype && checkModeAvailable(results.between_genotype, false);
+    const genoAvail = showGenotypic && checkModeAvailable(results.genotypic, true);
 
     const hasMatrix = hasValidMatrix(stats);
     const hasPairwise = hasValidPairwiseResults(stats);
@@ -584,12 +625,12 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
       between_genotype: "Between-Genotype Association",
       genotypic:        "Genotypic (Variance-Component)",
     };
-    const modeLabel = modeLabelMap[displayMode];
+    const modeLabel = modeLabelMap[resolvedMode];
 
     // Debug logs — active mode and matrix dimensions
     const activeMatrix = stats?.r_matrix ?? [];
     console.log("[TraitRelationships] Results view state", {
-      activeMode: displayMode,
+      activeMode: resolvedMode,
       modeLabel,
       n_traits: results.trait_names.length,
       n_observations: stats?.n_observations,
@@ -597,7 +638,17 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
       matrix_cols: activeMatrix[0]?.length ?? 0,
       genotypic_available: results.genotypic !== null,
       inference_approximate: stats?.inference_approximate,
+      domain: datasetContext?.research_domain,
+      showBetweenGenotype,
+      showGenotypic,
     });
+
+    // Domain-aware mode selector: only show modes appropriate for this workflow.
+    const visibleModes = [
+      { value: "phenotypic"       as const, label: "Phenotypic correlation",        desc: "field-level",                visible: true,                available: phenoAvail },
+      { value: "between_genotype" as const, label: "Between-genotype association",  desc: "from genotype means",       visible: showBetweenGenotype, available: betweenAvail },
+      { value: "genotypic"        as const, label: "Genotypic correlation",         desc: "variance-component based",  visible: showGenotypic,       available: genoAvail },
+    ].filter((m) => m.visible);
 
     return (
       <div className="space-y-5">
@@ -605,18 +656,15 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
         <div className="flex items-start justify-between gap-4">
           <div>
             <h3 className="text-lg font-semibold text-gray-800">
-              Three-Mode Correlation Analysis
-              <span className="ml-3 inline-block rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-mono font-medium text-blue-700">
-                3-mode selector mounted
-              </span>
+              Correlation Analysis
             </h3>
             <p className="text-sm text-gray-500">
               {results.trait_names.length} traits ·{" "}
               {stats?.n_observations ?? 0}{" "}
-              {displayMode === "phenotypic" ? "observations" : "genotype means"} ·{" "}
+              {resolvedMode === "phenotypic" ? "observations" : "genotype means"} ·{" "}
               {results.method === "spearman" ? "Spearman" : "Pearson"} · {modeLabel}
             </p>
-            {userObjective === "Breeding decision" && !results.genotypic && (
+            {userObjective === "Breeding decision" && !results.genotypic && showGenotypic && (
               <p className="text-xs text-amber-600 mt-0.5">
                 ⚠ Genotypic VC not available — showing between-genotype association as fallback
               </p>
@@ -653,43 +701,43 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
         </div>
         </div>
 
-        {/* Mode selector — NEW */}
+        {/* Mode selector — domain-aware: only scientifically appropriate modes shown */}
         <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
           <label className="block text-sm font-semibold text-gray-700 mb-3">
             Display Correlation Mode
           </label>
-          <div className="grid gap-2 sm:grid-cols-3">
-            {[
-            { value: "phenotypic", label: "Phenotypic correlation", desc: "field-level", available: phenoAvail },
-            { value: "between_genotype", label: "Between-genotype association", desc: "from genotype means", available: betweenAvail },
-            { value: "genotypic", label: "Genotypic correlation", desc: "variance-component based", available: genoAvail },
-            ] as const).map((mode) => (
+          <div className={`grid gap-2 ${visibleModes.length === 1 ? "sm:grid-cols-1" : visibleModes.length === 2 ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}>
+            {visibleModes.map((m) => (
               <button
-                key={mode.value}
+                key={m.value}
                 type="button"
-                disabled={mode.value === "genotypic" && !mode.available}
+                disabled={!m.available}
                 onClick={() => {
-                  console.log("[TraitRelationships] Mode switched to:", mode.value);
-                  setDisplayMode(mode.value);
+                  console.log("[TraitRelationships] Mode switched to:", m.value);
+                  setDisplayMode(m.value);
                 }}
                 className={[
                   "relative rounded-lg border p-3 text-left text-sm transition-colors",
-                  displayMode === mode.value
+                  resolvedMode === m.value
                     ? "border-emerald-500 bg-emerald-50 text-emerald-900"
-                    : mode.value === "genotypic" && !mode.available
+                    : !m.available
                     ? "border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed opacity-50"
                     : "border-gray-300 bg-white text-gray-700 hover:border-emerald-300",
                 ].join(" ")}
               >
-                <div className="font-medium">{mode.label}</div>
+                <div className="font-medium">{m.label}</div>
                 <div className="text-xs text-gray-500 mt-0.5">
-                  {mode.value === "genotypic" && !mode.available ? "Not available" : mode.desc}
+                  {!m.available ? "Not available" : m.desc}
                 </div>
               </button>
             ))}
           </div>
           <p className="text-xs text-gray-500 mt-2">
-            Switch modes to view different correlation perspectives. Genotypic VC requires ≥3 genotypes per trait pair.
+            {showGenotypic
+              ? "Switch modes to view different correlation perspectives. Genotypic VC requires ≥3 genotypes per trait pair."
+              : showBetweenGenotype
+              ? "Phenotypic and between-genotype modes are available for this workflow."
+              : "Phenotypic correlation is shown for this agronomy/general workflow."}
           </p>
         </div>
 
@@ -722,7 +770,7 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
             unadjusted for multiple comparisons; FDR-adjusted values are reported in the
             interpretation text.
           </p>
-          {displayMode === "genotypic" && results.genotypic?.inference_approximate && (
+          {resolvedMode === "genotypic" && results.genotypic?.inference_approximate && (
             <p className="flex items-start gap-1.5 text-xs text-amber-600">
               <span className="shrink-0 mt-px">⚠</span>
               {results.genotypic.inference_note ??
@@ -744,20 +792,8 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
               {modeLabel} · Red = negative · White = zero · Blue = positive
             </span>
           </div>
-          <CorrelationHeatmap data={results} mode={displayMode} />
+          <CorrelationHeatmap data={results} mode={resolvedMode} />
         </div>
-
-      {/* Debug panel */}
-      <div className="rounded-lg bg-gray-900 text-green-400 p-4 font-mono text-xs space-y-1 mt-4">
-        <p>activeMode: {displayMode}</p>
-        <p>phenotypic available: {String(phenoAvail)}</p>
-        <p>between_genotype available: {String(betweenAvail)}</p>
-        <p>genotypic available: {String(genoAvail)}</p>
-        <p>hasMatrix: {String(hasMatrix)}</p>
-        <p>hasPairwise: {String(hasPairwise)}</p>
-        <p>hasStats: {String(hasStats)}</p>
-        <p>canExport: {String(canExport)}</p>
-      </div>
 
         {/* Interpretation */}
         <div className="rounded-lg bg-emerald-50 border border-emerald-100 p-4">
@@ -775,9 +811,9 @@ export function TraitRelationships({ datasetContext }: TraitRelationshipsProps) 
           moduleName="Correlation Analysis"
           reportTitle="Multi-Trait Correlation Report"
           datasetSummary={`${stats?.n_observations ?? 0} observations · ${results.trait_names.length} traits`}
-          sections={buildCorrelationPreview(results, displayMode, stats!, results.method, userObjective).sections}
-          warnings={buildCorrelationPreview(results, displayMode, stats!, results.method, userObjective).warnings}
-          notes={buildCorrelationPreview(results, displayMode, stats!, results.method, userObjective).notes}
+          sections={buildCorrelationPreview(results, resolvedMode, stats!, results.method, userObjective).sections}
+          warnings={buildCorrelationPreview(results, resolvedMode, stats!, results.method, userObjective).warnings}
+          notes={buildCorrelationPreview(results, resolvedMode, stats!, results.method, userObjective).notes}
           canExport={canExport}
           onExport={handleDownload}
           onClose={() => setShowPreview(false)}
