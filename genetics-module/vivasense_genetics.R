@@ -1190,6 +1190,12 @@ export_to_json <- function(analysis_result) {
     if ("F value" %in% names(at_df)) {
       at_df[["F value"]][!is.finite(at_df[["F value"]])] <- NA_real_
     }
+    # Strip the (Intercept) row — tests H0: grand mean = 0, which is trivially
+    # false for all biological traits and carries no analytical value for users.
+    intercept_rows <- grepl("^\\(Intercept\\)$", rownames(at_df), ignore.case = TRUE)
+    if (any(intercept_rows)) {
+      at_df <- at_df[!intercept_rows, , drop = FALSE]
+    }
     clean_result$result$anova_table <- list(
       source  = rownames(at_df),
       df      = as.integer(at_df[["Df"]]),

@@ -639,6 +639,8 @@ function AnovaTableSection({ at }: { at: AnovaTable }) {
           </thead>
           <tbody>
             {at.source.map((src: string, i: number) => {
+              // Omit the (Intercept) row — not a treatment effect, never shown to users.
+              if (src === "(Intercept)" || src.toLowerCase() === "intercept") return null;
               const { text: pText, stars } = fmtP(at.p_value[i]);
               const isError = src === "Residuals";
               return (
