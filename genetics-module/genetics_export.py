@@ -1176,7 +1176,7 @@ def _add_genetic_parameters_section(doc: Document, result: GeneticsResult, domai
         logger.info("Skipping genetic parameters section for non-plant-breeding domain: %s", domain)
         return
 
-    _add_heading(doc, "Genetic Parameters" if not is_agronomy else "Variance Components", level=2)
+    _add_heading(doc, "Genetic Parameters", level=2)
 
     vc = result.variance_components if isinstance(result.variance_components, dict) else {}
     hp = result.heritability if isinstance(result.heritability, dict) else {}
