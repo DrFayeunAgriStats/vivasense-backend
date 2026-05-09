@@ -68,29 +68,6 @@ export interface VarianceComponentRecord {
   n_locations?: number;
   sigma2_g?: number;
   sigma2_e?: number;
-
-  function getVivaSenseMode(): "free" | "pro" {
-    try {
-      const v = localStorage.getItem("vivasense_mode");
-      if (v === "pro") return "pro";
-    } catch {
-      // ignore storage errors and default to free
-    }
-    return "free";
-  }
-
-  function getAdvancedModuleFromEndpoint(endpoint: string): string | null {
-    const normalized = endpoint.toLowerCase();
-    if (normalized.includes("path-analysis")) return "path-analysis";
-    if (normalized.includes("/analysis/pca") || normalized.includes("/analyze/genetics/multivariate")) return "pca";
-    if (normalized.includes("/analysis/genetic-parameters") || normalized.includes("variance-components")) return "genetic-parameters";
-    if (normalized.includes("/analysis/anova") || normalized.includes("/analyze/genetics/trial") || normalized.includes("/analyze/genetics/ammi") || normalized.includes("/analyze/genetics/gge")) return "combined-anova";
-    if (normalized.includes("/analysis/cluster") || normalized.includes("clustering")) return "clustering";
-    if (normalized.includes("/analysis/selection-index") || normalized.includes("selection-index") || normalized.includes("mgidi")) return "selection-index";
-    if (normalized.includes("/export/") || normalized.includes("/download-results") || normalized.includes("/export-word")) return "export-word";
-    if (normalized.includes("/academic/interpret")) return "advanced-interpretation";
-    return null;
-  }
   sigma2_gl?: number;
   sigma2_p?: number;
   H2_broad?: number;
@@ -108,22 +85,6 @@ export interface GenotypeMeanRecord {
   letter?: string;
   tukey_letter?: string;
 }
-
-    const advancedModule = getAdvancedModuleFromEndpoint(endpoint);
-    const mode = getVivaSenseMode();
-    if (advancedModule && mode !== "pro") {
-      console.log(`[PRO GUARD] mode = free, blocked module = ${advancedModule}`);
-      const err = new Error("Upgrade to access this feature") as Error & {
-        code?: string;
-        feature?: string;
-      };
-      err.code = "PRO_FEATURE";
-      err.feature = advancedModule;
-      throw err;
-    }
-    if (advancedModule && mode === "pro") {
-      console.log(`[PRO GUARD] mode = pro, allowed module = ${advancedModule}`);
-    }
 
 export interface StabilityRecord {
   genotype?: string;
@@ -194,6 +155,33 @@ export interface GeneticsEnvelope {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// HELPER FUNCTIONS
+// ─────────────────────────────────────────────────────────────────────────────
+
+function getVivaSenseMode(): "free" | "pro" {
+  try {
+    const v = localStorage.getItem("vivasense_mode");
+    if (v === "pro") return "pro";
+  } catch {
+    // ignore storage errors and default to free
+  }
+  return "free";
+}
+
+function getAdvancedModuleFromEndpoint(endpoint: string): string | null {
+  const normalized = endpoint.toLowerCase();
+  if (normalized.includes("path-analysis")) return "path-analysis";
+  if (normalized.includes("/analysis/pca") || normalized.includes("/analyze/genetics/multivariate")) return "pca";
+  if (normalized.includes("/analysis/genetic-parameters") || normalized.includes("variance-components")) return "genetic-parameters";
+  if (normalized.includes("/analysis/anova") || normalized.includes("/analyze/genetics/trial") || normalized.includes("/analyze/genetics/ammi") || normalized.includes("/analyze/genetics/gge")) return "combined-anova";
+  if (normalized.includes("/analysis/cluster") || normalized.includes("clustering")) return "clustering";
+  if (normalized.includes("/analysis/selection-index") || normalized.includes("selection-index") || normalized.includes("mgidi")) return "selection-index";
+  if (normalized.includes("/export/") || normalized.includes("/download-results") || normalized.includes("/export-word")) return "export-word";
+  if (normalized.includes("/academic/interpret")) return "advanced-interpretation";
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SHARED UTILITIES
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -245,6 +233,22 @@ async function postGeneticsEndpoint(
 ): Promise<GeneticsEnvelope> {
   const url = `${GENETICS_BASE}${endpoint}`;
 
+  const advancedModule = getAdvancedModuleFromEndpoint(endpoint);
+  const mode = getVivaSenseMode();
+  if (advancedModule && mode !== "pro") {
+    console.log(`[PRO GUARD] mode = free, blocked module = ${advancedModule}`);
+    const err = new Error("Upgrade to access this feature") as Error & {
+      code?: string;
+      feature?: string;
+    };
+    err.code = "PRO_FEATURE";
+    err.feature = advancedModule;
+    throw err;
+  }
+  if (advancedModule && mode === "pro") {
+    console.log(`[PRO GUARD] mode = pro, allowed module = ${advancedModule}`);
+  }
+
   let response: Response;
   try {
     response = await fetch(url, { method: "POST", body: formData });
@@ -252,7 +256,7 @@ async function postGeneticsEndpoint(
     const msg = networkErr instanceof Error ? networkErr.message : String(networkErr);
     throw new Error(
       `Network error reaching ${url}: ${msg}. ` +
-      "Verify the backend is running and VITE_GENETICS_API_BASE is set correctly."
+      "Verify the backend is running and VITE_API_URL is set correctly."
     );
   }
 

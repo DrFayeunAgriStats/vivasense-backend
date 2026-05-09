@@ -12,7 +12,7 @@
  *   // Column names must match CSV header EXACTLY (case-sensitive)
  */
 
-const GENETICS_BASE = "https://vivasense-genetics-docker.onrender.com";
+const GENETICS_BASE = import.meta.env.VITE_API_URL || "https://vivasense-genetics-docker.onrender.com";
 
 function getVivaSenseMode() {
   try {
