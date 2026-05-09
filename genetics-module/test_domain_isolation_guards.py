@@ -1,5 +1,8 @@
 from domain_guard import find_forbidden_breeding_terms, is_plant_breeding_domain
 from genetics_interpretation import generate_genetics_interpretation
+from genetics_export import _add_genetic_parameters_section
+from genetics_schemas import GeneticsResult
+from docx import Document
 
 
 def test_agronomy_domain_has_no_breeding_terminology():
@@ -89,3 +92,24 @@ def test_non_plant_domain_mentions_treatment_environment_interaction():
     assert "Treatment × environment interaction was significant" in interpretation
     assert "management recommendations" in implication
     assert find_forbidden_breeding_terms(f"{interpretation} {implication}") == []
+
+
+def test_agronomy_export_guard_skips_genetic_parameters_section():
+    doc = Document()
+    result = GeneticsResult(
+        environment_mode="single",
+        n_genotypes=6,
+        n_reps=3,
+        n_environments=1,
+        grand_mean=42.0,
+        variance_components={"sigma2_genotype": 1.2, "sigma2_phenotypic": 2.1},
+        heritability={"h2_broad_sense": 0.57},
+        genetic_parameters={"GCV": 10.1, "PCV": 12.2, "GAM_percent": 14.4, "selection_intensity": 1.4},
+    )
+
+    _add_genetic_parameters_section(doc, result, domain="agronomy")
+
+    rendered = " ".join(p.text for p in doc.paragraphs if p.text).lower()
+    assert "genetic parameters" not in rendered
+    assert "heritability" not in rendered
+    assert "falconer" not in rendered

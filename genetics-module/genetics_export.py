@@ -1172,6 +1172,10 @@ def _add_mean_separation_section(
 
 def _add_genetic_parameters_section(doc: Document, result: GeneticsResult, domain: Optional[str] = None) -> None:
     is_agronomy = not is_plant_breeding_domain(domain)
+    if is_agronomy:
+        logger.info("Skipping genetic parameters section for non-plant-breeding domain: %s", domain)
+        return
+
     _add_heading(doc, "Genetic Parameters" if not is_agronomy else "Variance Components", level=2)
 
     vc = result.variance_components if isinstance(result.variance_components, dict) else {}

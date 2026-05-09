@@ -192,7 +192,9 @@ export function DataSourceTabs({
               ? "Variance Components"
               : "Genetic Parameters",
             icon: "🧬",
-            description: "Heritability, GCV, PCV, GAM",
+            description: datasetContext?.research_domain === "agronomy"
+              ? "Variance decomposition and treatment effects"
+              : "Heritability, GCV, PCV, GAM",
             badge: "pro" as const,
           },
         ]
