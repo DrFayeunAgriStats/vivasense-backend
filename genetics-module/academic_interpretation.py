@@ -531,6 +531,9 @@ def _format_anova_prompt(trait: str, result: Dict[str, Any]) -> str:
         lines.append(f"  {'Source':<22} {'df':>4} {'F':>8} {'p':>8} {'η²':>7}")
         lines.append("  " + "-" * 55)
         for i, src in enumerate(sources):
+            # Skip Intercept — not a treatment effect; omitted from all user-facing output.
+            if str(src).strip().lower() in {"(intercept)", "intercept"}:
+                continue
             f   = fvals[i] if i < len(fvals) else None
             p   = pvals[i] if i < len(pvals) else None
             ss  = sss[i]   if i < len(sss)   else None
@@ -814,7 +817,10 @@ class _AnovaFallback:
             (i for i, src in enumerate(sources) if src == "genotype"), None
         )
 
-        total_ss = sum(x for x in sss if x is not None)
+        total_ss = sum(
+            x for i, x in enumerate(sss)
+            if x is not None and str(sources[i]).strip().lower() not in {"(intercept)", "intercept"}
+        )
 
         n_g = result.get("n_genotypes")
         n_e = result.get("n_environments")
@@ -854,6 +860,9 @@ class _AnovaFallback:
         # ── STATISTICAL EVIDENCE ─────────────────────────────────────────────
         evidence_lines = []
         for i, src in enumerate(sources):
+            # Omit Intercept — not a treatment effect and not shown in user-facing tables.
+            if str(src).strip().lower() in {"(intercept)", "intercept"}:
+                continue
             f  = fvals[i] if i < len(fvals) else None
             p  = pvals[i] if i < len(pvals) else None
             ss = sss[i]   if i < len(sss)   else None
