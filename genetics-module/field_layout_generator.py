@@ -15,6 +15,7 @@ from itertools import product
 import math
 from pprint import pprint
 import random
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Sequence, Tuple, TypeVar
 
 
@@ -24,24 +25,6 @@ Fieldbook = List[Dict[str, Any]]
 GeneratorResult = Dict[str, Any]
 ValidatorFn = Callable[[Dict[str, Any]], None]
 GeneratorFn = Callable[[Dict[str, Any], random.Random], GeneratorResult]
-
-
-_GLOBAL_RANDOM = random.Random()
-
-
-def set_seed(seed: int) -> None:
-    """Set the module-level random seed.
-
-    Parameters
-    ----------
-    seed : int
-        Seed value used to initialize deterministic randomization.
-
-    Returns
-    -------
-    None
-    """
-    _GLOBAL_RANDOM.seed(seed)
 
 
 def shuffle_copy(items: List[T], rng: random.Random) -> List[T]:
@@ -76,10 +59,18 @@ def _require_list_of_labels(value: Any, field_name: str) -> List[str]:
 
 
 def _require_positive_int(value: Any, field_name: str, minimum: int = 1) -> int:
-    if not isinstance(value, int):
+    if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"'{field_name}' must be an integer.")
     if value < minimum:
         raise ValueError(f"'{field_name}' must be >= {minimum}.")
+    return value
+
+
+def _require_non_negative_int(value: Any, field_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"'{field_name}' must be an integer.")
+    if value < 0:
+        raise ValueError(f"'{field_name}' must be >= 0.")
     return value
 
 
@@ -279,8 +270,24 @@ def validate_crd(request: Dict[str, Any]) -> None:
     -------
     None
     """
-    _require_list_of_labels(request.get("treatments"), "treatments")
-    _require_positive_int(request.get("replications"), "replications", minimum=1)
+    treatments = _require_list_of_labels(request.get("treatments"), "treatments")
+    reps = _require_positive_int(request.get("replications"), "replications", minimum=1)
+
+    rows = request.get("rows")
+    cols = request.get("columns")
+    if rows is not None:
+        _require_positive_int(rows, "rows", minimum=1)
+    if cols is not None:
+        _require_positive_int(cols, "columns", minimum=1)
+
+    if isinstance(rows, int) and isinstance(cols, int):
+        total_plots = len(treatments) * reps
+        if rows * cols < total_plots:
+            raise ValueError(
+                "Impossible CRD layout: rows x columns is smaller than required plots. "
+                f"Received rows={rows}, columns={cols}, required_plots={total_plots}."
+            )
+
     _require_common_numeric_fields(request)
 
 
@@ -796,7 +803,8 @@ def validate_factorial_rcbd(request: Dict[str, Any]) -> None:
     if not isinstance(factors, dict) or not factors:
         raise ValueError("'factors' must be a non-empty dictionary of factor levels.")
 
-    for factor_name, levels in factors.items():
+    for factor_name in sorted(factors.keys()):
+        levels = factors[factor_name]
         if not isinstance(factor_name, str) or not factor_name.strip():
             raise ValueError("Each factor must have a non-empty name.")
         _require_list_of_labels(levels, f"factors.{factor_name}")
@@ -824,7 +832,7 @@ def generate_factorial_rcbd(request: Dict[str, Any], rng: random.Random) -> Gene
     if not isinstance(factors_raw, dict):
         raise ValueError("'factors' must be provided for factorial RCBD.")
 
-    factor_names = list(factors_raw.keys())
+    factor_names = sorted(factors_raw.keys())
     factor_levels: List[List[str]] = [_require_list_of_labels(factors_raw[name], f"factors.{name}") for name in factor_names]
     reps = _require_positive_int(request.get("replications"), "replications", minimum=2)
 
@@ -1228,6 +1236,10 @@ def generate_field_layout(request: Dict[str, Any]) -> Dict[str, Any]:
           "alpha_value": float | None,
         }
     """
+    if not isinstance(request, dict):
+        raise ValueError("Request payload must be a JSON object.")
+
+    request = dict(request)
     design_type = str(request.get("design_type", "")).strip().lower()
     if not design_type:
         raise ValueError("'design_type' is required.")
@@ -1237,11 +1249,10 @@ def generate_field_layout(request: Dict[str, Any]) -> Dict[str, Any]:
         supported = ", ".join(sorted(DESIGN_REGISTRY.keys()))
         raise ValueError(f"Unsupported design_type '{design_type}'. Supported designs: {supported}.")
 
-    seed_value = request.get("seed", 0)
-    if not isinstance(seed_value, int):
-        raise ValueError("'seed' must be an integer for reproducible randomization.")
+    seed_value = request.get("seed", 42)
+    seed_value = _require_non_negative_int(seed_value, "seed")
+    request["seed"] = seed_value
 
-    set_seed(seed_value)
     rng = random.Random(seed_value)
 
     validator: ValidatorFn = config["validator"]
@@ -1250,11 +1261,124 @@ def generate_field_layout(request: Dict[str, Any]) -> Dict[str, Any]:
     validator(request)
     generated = generator(request, rng)
 
+    plot_matrix = generated.get("plot_matrix")
+    fieldbook = generated.get("fieldbook")
+    summary = generated.get("layout_summary")
+
+    if not isinstance(plot_matrix, list):
+        raise ValueError("Layout generation failed: 'plot_matrix' is malformed.")
+    if not isinstance(fieldbook, list):
+        raise ValueError("Layout generation failed: 'fieldbook' is malformed.")
+    if not isinstance(summary, dict):
+        raise ValueError("Layout generation failed: 'layout_summary' is malformed.")
+
+    plot_ids: List[int] = []
+    for row in fieldbook:
+        if not isinstance(row, dict):
+            raise ValueError("Layout generation failed: fieldbook rows must be objects.")
+        plot_id_raw = row.get("plot_id")
+        if isinstance(plot_id_raw, bool) or not isinstance(plot_id_raw, int) or plot_id_raw <= 0:
+            raise ValueError("Layout generation failed: each fieldbook row requires positive integer 'plot_id'.")
+        plot_ids.append(plot_id_raw)
+
+    if len(plot_ids) != len(set(plot_ids)):
+        raise ValueError("Generated layout has duplicate plot_id values. Please retry with a different input.")
+
+    total_plots = int(summary.get("n_plots") or len(fieldbook))
+    if total_plots != len(fieldbook):
+        raise ValueError(
+            "Plot count consistency check failed: total plots in summary does not match fieldbook rows. "
+            f"summary={total_plots}, fieldbook_rows={len(fieldbook)}."
+        )
+
+    ordered_fieldbook = sorted(fieldbook, key=lambda row: int(row["plot_id"]))
+
+    def _plot_label(row: Dict[str, Any]) -> str:
+        if "treatment_combination" in row and row.get("treatment_combination"):
+            return str(row["treatment_combination"])
+        if all(k in row for k in ("main_treatment", "sub_treatment", "sub_sub_treatment")):
+            return f"{row['main_treatment']}/{row['sub_treatment']}/{row['sub_sub_treatment']}"
+        if all(k in row for k in ("main_treatment", "sub_treatment")):
+            return f"{row['main_treatment']}/{row['sub_treatment']}"
+        for key in ("treatment", "sub_sub_treatment", "sub_treatment", "main_treatment"):
+            if key in row and row.get(key) is not None:
+                return str(row[key])
+        return "N/A"
+
+    plot_labels = [_plot_label(row) for row in ordered_fieldbook]
+    treatment_set = sorted({label for label in plot_labels if label != "N/A"})
+
+    matrix_by_row_col: List[List[Dict[str, Any]]] = []
+    if ordered_fieldbook and all(("row" in r and "column" in r) for r in ordered_fieldbook):
+        grouped: Dict[int, List[Dict[str, Any]]] = {}
+        for row in ordered_fieldbook:
+            row_idx = int(row["row"])
+            grouped.setdefault(row_idx, []).append(row)
+        for row_idx in sorted(grouped.keys()):
+            row_cells: List[Dict[str, Any]] = []
+            for col_row in sorted(grouped[row_idx], key=lambda x: int(x.get("column", 0))):
+                row_cells.append(
+                    {
+                        "plot_id": int(col_row["plot_id"]),
+                        "row": int(col_row["row"]),
+                        "column": int(col_row["column"]),
+                        "label": _plot_label(col_row),
+                    }
+                )
+            matrix_by_row_col.append(row_cells)
+    else:
+        matrix_by_row_col = [
+            [
+                {
+                    "plot_id": int(row["plot_id"]),
+                    "row": idx,
+                    "column": 1,
+                    "label": _plot_label(row),
+                }
+            ]
+            for idx, row in enumerate(ordered_fieldbook, start=1)
+        ]
+
+    printable_plot_numbering = [
+        {
+            "plot_id": int(row["plot_id"]),
+            "printable_label": f"P{int(row['plot_id']):03d}",
+            "field_label": _plot_label(row),
+        }
+        for row in ordered_fieldbook
+    ]
+
+    field_map_labels = [
+        {
+            "plot_id": int(row["plot_id"]),
+            "label": f"Plot {int(row['plot_id'])} - {_plot_label(row)}",
+        }
+        for row in ordered_fieldbook
+    ]
+
+    timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    replications = request.get("replications")
+
     return {
+        # Standardized fields
+        "design": design_type,
+        "seed": seed_value,
+        "treatments": treatment_set,
+        "replications": replications,
+        "total_plots": total_plots,
+        "layout_matrix": plot_matrix,
+        "plot_labels": plot_labels,
+        "timestamp": timestamp,
+        "export_data": {
+            "printable_plot_numbering": printable_plot_numbering,
+            "row_column_matrix": matrix_by_row_col,
+            "field_map_labels": field_map_labels,
+        },
+        # Backward-compatible fields
         "design_type": design_type,
-        "plot_matrix": generated["plot_matrix"],
-        "fieldbook": generated["fieldbook"],
-        "layout_summary": generated["layout_summary"],
+        "plot_matrix": plot_matrix,
+        "fieldbook": fieldbook,
+        "layout_summary": summary,
         "alpha_value": generated.get("alpha_value"),
     }
 

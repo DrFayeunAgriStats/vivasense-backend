@@ -335,10 +335,10 @@ def build_breeding_synthesis(trait_results: list[dict], analysis_type: Optional[
     return synthesis
 
 
-def _describe_gcv_pcv(gcv: float, pcv: float, trait_name: str, domain: str = "plant_breeding") -> str:
+def _describe_gcv_pcv(gcv: float, pcv: float, trait_name: str, domain: str = "plant_breeding", analysis_type: Optional[str] = None) -> str:
     if gcv <= 0:
         return ""
-    inflation_pct = ((pcv - gcv) / gcv) * 100
+    inflation_pct = ((pcv - gcv) / gcv) * 100 if gcv > 0 else float('inf')
     is_agronomy = not is_plant_breeding_domain(domain)
 
     if inflation_pct < 3:
@@ -346,12 +346,12 @@ def _describe_gcv_pcv(gcv: float, pcv: float, trait_name: str, domain: str = "pl
             return (
                 f"GCV ({gcv:.2f}%) and PCV ({pcv:.2f}%) are nearly identical "
                 f"(difference: {inflation_pct:.1f}%). GCV and PCV values were relatively close, "
-                "suggesting limited environmental influence on phenotypic expression under the evaluated conditions."
+                f"suggesting limited environmental influence on phenotypic expression under the evaluated conditions."
             )
         return (
             f"GCV ({gcv:.2f}%) and PCV ({pcv:.2f}%) are nearly identical "
             f"(difference: {inflation_pct:.1f}%). GCV and PCV values were relatively close, "
-            "suggesting limited environmental influence on phenotypic expression under the evaluated conditions."
+            f"suggesting limited environmental influence on phenotypic expression under the evaluated conditions."
         )
     elif inflation_pct < 10:
         if is_agronomy:
@@ -371,9 +371,8 @@ def _describe_gcv_pcv(gcv: float, pcv: float, trait_name: str, domain: str = "pl
         if is_agronomy:
             return (
                 f"PCV ({pcv:.2f}%) is moderately higher than GCV ({gcv:.2f}%) "
-                f"(inflation: {inflation_pct:.1f}%), indicating meaningful environmental "
-                f"effects on {trait_name} expression. Evaluating treatments in multiple "
-                f"environments or seasons is advisable."
+                f"(inflation: {inflation_pct:.1f}%), indicating meaningful environmental effects on {trait_name} expression. "
+                + ("Evaluating treatments in multiple environments or seasons is advisable." if not _is_single_environment_analysis(analysis_type) else "Interpretation should be limited to the tested environment.")
             )
         return (
             f"PCV ({pcv:.2f}%) is moderately higher than GCV ({gcv:.2f}%) "
@@ -386,8 +385,8 @@ def _describe_gcv_pcv(gcv: float, pcv: float, trait_name: str, domain: str = "pl
             return (
                 f"PCV ({pcv:.2f}%) substantially exceeds GCV ({gcv:.2f}%) "
                 f"(inflation: {inflation_pct:.1f}%), indicating strong environmental masking "
-                f"of treatment differences for {trait_name}. Replicated multi-environment "
-                f"evaluation is essential before treatment recommendations are finalized."
+                f"of treatment differences for {trait_name}. "
+                + ("Replicated multi-environment evaluation is essential before treatment recommendations are finalized." if not _is_single_environment_analysis(analysis_type) else "Interpretation should be limited to the tested environment.")
             )
         return (
             f"PCV ({pcv:.2f}%) substantially exceeds GCV ({gcv:.2f}%) "
@@ -513,6 +512,10 @@ def generate_genetics_interpretation_sections(
     if n_observations is not None and n_observations < 10:
         overview_parts.append("The sample size is limited, indicating preliminary estimates.")
     overview = " ".join(overview_parts)
+    if _is_single_environment_analysis(analysis_type):
+        overview += " This is a single-environment estimate."
+    else:
+        overview += " This is a multi-environment estimate."
     
     # ── Section 2: Heritability Interpretation ───────────────────────────
     if h2_class == "not_computed":
@@ -523,26 +526,38 @@ def generate_genetics_interpretation_sections(
     elif h2_class == "high":
         heritability_interp = (
             f"Broad-sense heritability is estimated at H2 = {h2:.3f} (high), "
-            f"indicating that the majority of observed phenotypic variation in {trait_name} "
-            "is attributable to genetic differences among genotypes under these conditions."
+            f"indicating that a substantial proportion of observed phenotypic variation in {trait_name} "
+            "is attributable to genetic differences among genotypes. "
+            "High broad-sense heritability supports reliable phenotypic selection. "
+            "Narrow-sense heritability from mating designs is required to partition additive from non-additive genetic variance."
         )
     elif h2_class == "moderate":
         heritability_interp = (
             f"Broad-sense heritability is estimated at H2 = {h2:.3f} (moderate), "
             f"indicating that both genetic and environmental factors contribute substantially "
-            f"to phenotypic variation in {trait_name}."
+            f"to phenotypic variation in {trait_name}. "
+            "Moderate broad-sense heritability suggests that phenotypic selection may be effective, but environmental factors will also play a significant role. "
+            "Narrow-sense heritability from mating designs is required to partition additive from non-additive genetic variance."
         )
     else:  # low
         heritability_interp = (
             f"Broad-sense heritability is estimated at H2 = {h2:.3f} (low), "
             f"indicating that environmental factors and/or measurement variation dominate "
-            f"the phenotypic variation in {trait_name}."
+            f"the phenotypic variation in {trait_name}. "
+            "Low broad-sense heritability suggests that direct phenotypic selection will be unreliable. "
+            "Focus on improving growing conditions and management practices."
         )
     
     # ── Section 3: Genetic Advance Interpretation ────────────────────────
     if gam_class == "not_computed":
         genetic_advance_interp = (
             f"Genetic advance for {trait_name} could not be estimated due to data limitations."
+        )
+    elif _is_single_environment_analysis(analysis_type) and gxe_significant:
+        genetic_advance_interp = (
+            f"Genetic advance for {trait_name} is estimated at GAM = {gam:.2f}% ({gam_class.lower()}), "
+            "but cross-environment inference is not possible from a single environment. "
+            "Interpretation of selection response should be limited to the tested environment."
         )
     elif gam_class == "High":
         genetic_advance_interp = (
@@ -571,23 +586,14 @@ def generate_genetics_interpretation_sections(
             f"The genotypic coefficient of variation (GCV = {gcv:.2f}%) and "
             f"phenotypic coefficient of variation (PCV = {pcv:.2f}%) indicate"
         )
-        
-        if diff <= 2:
+
+        if _is_single_environment_analysis(analysis_type):
+            variance_interp_parts.append(
+                "limited environmental influence on trait expression within this environment."
+            )
+        elif diff <= 2: # Multi-environment, low inflation
             variance_interp_parts.append(
                 "limited variance inflation between genetic and phenotypic components."
-            )
-            anova_f_env = float(anova_f_env) if anova_f_env is not None else 0.0
-            anova_p_env = float(anova_p_env) if anova_p_env is not None else None
-            anova_f_gxe = float(anova_f_gxe) if anova_f_gxe is not None else 0.0
-            anova_p_gxe = float(anova_p_gxe) if anova_p_gxe is not None else None
-            variance_interp_parts.append(
-                _describe_env_effects(
-                    f_env=anova_f_env,
-                    p_env=anova_p_env,
-                    f_gxe=anova_f_gxe,
-                    p_gxe=anova_p_gxe,
-                    analysis_type=analysis_type,
-                )
             )
         elif diff <= 7:
             variance_interp_parts.append(
@@ -597,6 +603,17 @@ def generate_genetics_interpretation_sections(
             variance_interp_parts.append(
                 "substantial variance inflation, indicating strong environmental effects on trait expression."
             )
+
+        anova_f_env = float(anova_f_env) if anova_f_env is not None else 0.0
+        anova_p_env = float(anova_p_env) if anova_p_env is not None else None
+        anova_f_gxe = float(anova_f_gxe) if anova_f_gxe is not None else 0.0
+        anova_p_gxe = float(anova_p_gxe) if anova_p_gxe is not None else None
+        variance_interp_parts.append(
+            _describe_env_effects(
+                f_env=anova_f_env, p_env=anova_p_env, f_gxe=anova_f_gxe, p_gxe=anova_p_gxe,
+                analysis_type=analysis_type, domain="plant_breeding" # Always plant_breeding for this context
+            )
+        )
     else:
         variance_interp_parts.append(
             "Coefficients of variation (GCV, PCV) were not computed or data unavailable."
@@ -652,10 +669,14 @@ def generate_genetics_interpretation_sections(
     risk_parts = []
     
     if n_observations is not None and n_observations < 10:
-        risk_parts.append(
-            f"The sample size ({n_observations} genotypes) is small, indicating these estimates "
-            "are preliminary and should be treated with caution."
-        )
+        if _is_single_environment_analysis(analysis_type):
+            risk_parts.append(
+                f"The sample size ({n_observations} genotypes) is small, indicating these estimates "
+                "are preliminary and should be treated with caution."
+            )
+        else:
+            risk_parts.append(f"The sample size ({n_observations} genotypes) is small, indicating these estimates "
+                              "are preliminary and should be treated with caution. Multi-environment analysis with small sample sizes can be unstable.")
     
     if gxe_significant:
         risk_parts.append(
@@ -669,7 +690,9 @@ def generate_genetics_interpretation_sections(
             f"Significant environmental effects were detected, indicating that trait expression "
             "is sensitive to growing conditions. Environmental standardization will increase precision."
         )
-    
+
+    if _is_single_environment_analysis(analysis_type):
+        risk_parts.append("Cross-environment inference (e.g., GxE interaction, stability analysis) requires at least two environments.")
     risk_limitations = " ".join(risk_parts) if risk_parts else "No major limitations identified."
     
     # ── Section 7: Recommendation ────────────────────────────────────────
@@ -938,6 +961,11 @@ def generate_genetics_interpretation(
             "Heritability could not be reliably estimated. Redesign or expand the experiment "
             "to improve precision before making treatment or selection decisions."
         )
+    elif _is_single_environment_analysis(analysis_type):
+        breeding_implication = (
+            "Heritability could not be reliably estimated. Redesign or expand the experiment "
+            "to improve precision before making treatment or selection decisions."
+        )
     elif h2_class == "high":
         if is_agronomy:
             breeding_implication = (
@@ -950,6 +978,10 @@ def generate_genetics_interpretation(
                 "The trait may respond favorably to phenotypic selection under the evaluated conditions.",
                 "Selection progress may be achievable through direct phenotypic evaluation.",
             ]
+            if _is_single_environment_analysis(analysis_type):
+                breeding_implication += " This is a single-environment estimate."
+            else:
+                breeding_implication += " This is a multi-environment estimate."
             breeding_implication = (
                 _select_narrative_variant(trait_name, _impl_variants, seed=2) + " "
                 "These results may support further evaluation of promising genotypes under additional testing environments."
@@ -965,6 +997,10 @@ def generate_genetics_interpretation(
                 "Selection efficiency may partly depend on environmental conditions.",
                 "Environmental influence may contribute to observed phenotypic expression.",
             ]
+            if _is_single_environment_analysis(analysis_type):
+                breeding_implication += " This is a single-environment estimate."
+            else:
+                breeding_implication += " This is a multi-environment estimate."
             breeding_implication = (
                 _select_narrative_variant(trait_name, _impl_variants, seed=2) + " "
                 "These results may support further evaluation of promising genotypes under additional testing environments."
@@ -980,6 +1016,7 @@ def generate_genetics_interpretation(
                 "Weak genetic basis under present conditions. Direct selection will be unreliable. "
                 "These results may support further evaluation of promising genotypes under additional testing environments."
             )
+
 
     return interpretation, breeding_implication
 

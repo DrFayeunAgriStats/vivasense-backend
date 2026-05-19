@@ -188,6 +188,7 @@ class AnovaTraitResult(BaseModel):
     interaction_means: Optional[Dict[str, Any]] = None  # split-plot A×B cell means for interaction plot
     cv_a: Optional[float] = None  # split-plot whole-plot CV (sqrt(MSEA)/grand_mean*100)
     cv_b: Optional[float] = None  # split-plot subplot CV (sqrt(MSEB)/grand_mean*100)
+    interaction_significant: Optional[bool] = None # For split-plot interaction significance
     interpretation: Optional[str] = None
     data_warnings: List[str] = Field(default_factory=list)
     error: Optional[str] = None
@@ -300,6 +301,14 @@ class AnovaExportRequest(BaseModel):
     mode: str = "single"
     trait_results: Dict[str, AnovaTraitResult]
     failed_traits: List[str] = Field(default_factory=list)
+    domain: str = Field(
+        default="plant_breeding",
+        description=(
+            "Active research domain: 'plant_breeding' | 'agronomy' | 'general'. "
+            "Controls domain-aware titles, labels, and section guards. "
+            "Defaults to 'plant_breeding' for backward compatibility."
+        ),
+    )
 
 
 class GeneticParametersExportRequest(BaseModel):
@@ -308,6 +317,13 @@ class GeneticParametersExportRequest(BaseModel):
     mode: str = "single"
     trait_results: Dict[str, GeneticParametersTraitResult]
     failed_traits: List[str] = Field(default_factory=list)
+    domain: str = Field(
+        default="plant_breeding",
+        description=(
+            "Active research domain. Controls domain guards for genetics-specific "
+            "content (Genetic Advance, selection intensity, Falconer citations)."
+        ),
+    )
 
 
 class CorrelationExportRequest(CorrelationModuleResponse):

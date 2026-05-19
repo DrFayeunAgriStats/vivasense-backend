@@ -65,6 +65,9 @@ from guided_writing import build_guided_writing
 from academic_schemas import GuidedWritingBlock
 from genetics_interpretation import _describe_env_effects, _describe_gcv_pcv
 from interpretation import InterpretationEngine
+from report_validator import ReportValidator
+from domain_guard import is_plant_breeding_domain
+from report_terms import TERMS, GOVERNANCE, get_report_title
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Export"])
@@ -73,12 +76,236 @@ _DOCX_MIME = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 )
 
-# ── Cautious scope reminder appended to every per-trait section ───────────────
-_SCOPE_NOTE = (
-    "Note: These results apply to this experiment and should be interpreted "
-    "within this context. Single-experiment results cannot support general "
-    "management recommendations."
-)
+# Use the governance-controlled scope note from the shared terms module.
+_SCOPE_NOTE = GOVERNANCE.SCOPE_NOTE
+
+
+# ============================================================================
+# VARIANCE COMPONENT COMPUTATION FROM ANOVA TABLE
+# ============================================================================
+
+def _compute_variance_components_from_anova(
+    anova_table: Any,
+    n_reps: Optional[int],
+) -> Dict[str, Optional[float]]:
+    """
+    Derive simple variance components from an ANOVA table's MS values.
+
+    Used by the ANOVA Word export to add a Treatment Variance section
+    (σ²g, σ²e, σ²p, Repeatability) after Tukey HSD — mirroring what the UI
+    shows in the Treatment Variance panel.
+    """
+    if anova_table is None or not hasattr(anova_table, "source"):
+        return {}
+
+    ms_treatment: Optional[float] = None
+    ms_error:     Optional[float] = None
+
+    for i, src in enumerate(anova_table.source):
+        src_l = str(src).strip().lower()
+        if src_l in {"genotype", "genotypes", "treatment", "treatments"}:
+            val = anova_table.ms[i] if i < len(anova_table.ms) else None
+            if val is not None:
+                ms_treatment = float(val)
+        elif src_l in {"residuals", "residual", "error", "error b"}:
+            val = anova_table.ms[i] if i < len(anova_table.ms) else None
+            if val is not None:
+                ms_error = float(val)
+
+    if ms_error is None:
+        return {}
+
+    r = max(int(n_reps or 1), 1)
+    sigma2_e = ms_error
+    sigma2_g: Optional[float] = None
+    sigma2_p: Optional[float] = None
+    repeatability: Optional[float] = None
+
+    if ms_treatment is not None:
+        raw_g = (ms_treatment - ms_error) / r
+        sigma2_g = max(0.0, raw_g)   # clamp negative to 0
+        sigma2_p = sigma2_g + sigma2_e / r
+        if sigma2_p > 0:
+            repeatability = sigma2_g / sigma2_p
+
+    return {
+        "sigma2_g":     sigma2_g,
+        "sigma2_e":     sigma2_e,
+        "sigma2_p":     sigma2_p,
+        "repeatability": repeatability,
+    }
+
+
+# ============================================================================
+# TREATMENT VARIANCE SECTION (BUG FIX: absent from ANOVA Word export)
+# ============================================================================
+
+def _add_treatment_variance_section(
+    doc: Any,
+    trait: str,
+    anova_table: Any,
+    n_reps: Optional[int],
+    domain: str = "plant_breeding",
+) -> None:
+    """
+    Render variance components after the Tukey HSD section.
+
+    BUG FIX (Part 7): The variance component block visible in the UI was
+    absent from the Word ANOVA export. This function synchronises both outputs.
+    """
+    is_agronomy = not is_plant_breeding_domain(domain)
+    heading = TERMS.treatment_variance if is_agronomy else TERMS.variance_components
+    _add_heading(doc, heading, level=2)
+
+    vc = _compute_variance_components_from_anova(anova_table, n_reps)
+
+    if not vc:
+        _add_body(doc, "Variance components not available for this trait.", italic=True)
+        doc.add_paragraph()
+        return
+
+    rows: List[List[str]] = []
+    g_label = "Treatment Variance" if is_agronomy else "Genotypic Variance"
+
+    if vc.get("sigma2_g") is not None:
+        flag = " ⚠" if vc["sigma2_g"] == 0.0 else ""
+        rows.append([g_label, "σ²g", _fmt(vc["sigma2_g"], 4) + flag])
+    if vc.get("sigma2_e") is not None:
+        rows.append(["Error Variance", "σ²e", _fmt(vc["sigma2_e"], 4)])
+    if vc.get("sigma2_p") is not None:
+        rows.append(["Phenotypic Variance", "σ²p", _fmt(vc["sigma2_p"], 4)])
+    if vc.get("repeatability") is not None:
+        r_label = "Repeatability"
+        rows.append([r_label, "H²", _fmt(vc["repeatability"], 4)])
+
+    if rows:
+        _add_stat_table(doc, ["Component", "Symbol", "Value"], rows, numeric_cols={2})
+
+    doc.add_paragraph()
+
+
+# ============================================================================
+# STRUCTURED ACADEMIC INTERPRETATION (BUG FIX: UI sub-sections absent in Word)
+# ============================================================================
+
+def _add_structured_academic_interpretation(
+    doc: Any,
+    tr: Any,
+    trait: str,
+    domain: str = "plant_breeding",
+    analysis_type: Optional[str] = None, # Added for SingleEnvironmentGuard
+) -> None:
+    """
+    Render the 5-panel structured interpretation block that mirrors the UI
+    AcademicInterpretationPanel.
+
+    BUG FIX (Part 8): The UI shows Overall Finding / Statistical Evidence /
+    Treatment Interpretation / Assumption Check / Examiner Checkpoint as
+    distinct sub-sections. The Word export previously rendered a flat block.
+
+    Shapiro-Wilk and Levene absence is explicitly stated per the spec.
+    """
+    _add_heading(doc, TERMS.academic_interpretation, level=2)
+    is_agronomy = not is_plant_breeding_domain(domain)
+
+    # ── 1. Overall Finding ────────────────────────────────────────────────────
+    _add_heading(doc, TERMS.overall_finding, level=3)
+    interp_text = getattr(tr, "interpretation", None) or ""
+    first_para = interp_text.split("\n\n")[0].strip() if interp_text else ""
+    if first_para:
+        _add_body(doc, first_para)
+    else:
+        _add_body(doc, "Interpretation not available for this trait.", italic=True)
+    doc.add_paragraph()
+
+    # ── 2. Statistical Evidence ───────────────────────────────────────────────
+    _add_heading(doc, TERMS.statistical_evidence, level=3)
+    genotype_sig = getattr(tr, "genotype_significant", None)
+    if genotype_sig is not None:
+        effect_term = "treatment" if is_agronomy else "genotype"
+        sig_word = "significant" if genotype_sig else "not significant"
+        _add_body(
+            doc,
+            f"The {effect_term} effect was {sig_word} "
+            f"{GOVERNANCE.WITHIN_SCOPE}.",
+        )
+    else:
+        _add_body(doc, "Statistical significance information not available.", italic=True)
+    doc.add_paragraph()
+
+    # ── 3. Treatment Interpretation ───────────────────────────────────────────
+    _add_heading(doc, TERMS.treatment_interpretation, level=3)
+    ms = getattr(tr, "mean_separation", None)
+    if ms and getattr(ms, "genotype", None):
+        top   = ms.genotype[0]
+        group = ms.group[0] if ms.group else "a"
+        _add_body(
+            doc,
+            f"{top} was placed in group '{group}' — "
+            f"{GOVERNANCE.COMPARATIVELY_HIGHER} "
+            f"among tested entries {GOVERNANCE.WITHIN_SCOPE}.",
+        )
+    else:
+        _add_body(doc, "Mean separation data not available.", italic=True)
+    doc.add_paragraph()
+
+    # ── 4. Assumption Check ───────────────────────────────────────────────────
+    _add_heading(doc, TERMS.assumption_check, level=3)
+    assumption_tests = getattr(tr, "assumption_tests", None) or {}
+
+    def _extract_assumption(tests: dict, *keys: str) -> Optional[dict]:
+        for k in keys:
+            result = tests.get(k)
+            if result and isinstance(result, dict):
+                return result
+        return None
+
+    def _format_assumption(test_dict: Optional[dict], label: str) -> str:
+        if test_dict is None:
+            return GOVERNANCE.SHAPIRO_NOT_REPORTED
+        p = (
+            test_dict.get("p_value")
+            or test_dict.get("p.value")
+            or test_dict.get("p")
+        )
+        verdict = test_dict.get("conclusion") or test_dict.get("verdict")
+        if verdict:
+            return verdict
+        if p is not None:
+            outcome = "Passed (p ≥ 0.05)" if p >= 0.05 else "Failed (p < 0.05)"
+            return f"{outcome} — {_fmt_p(p)}"
+        return GOVERNANCE.SHAPIRO_NOT_REPORTED
+
+    sw = _extract_assumption(assumption_tests, "shapiro_wilk", "normality", "shapiro")
+    lv = _extract_assumption(assumption_tests, "levene", "homogeneity", "bartlett")
+
+    _add_body(doc, f"Normality (Shapiro-Wilk): {_format_assumption(sw, 'Shapiro-Wilk')}")
+    _add_body(doc, f"Homogeneity of Variance (Levene): {_format_assumption(lv, 'Levene')}")
+    doc.add_paragraph()
+
+    # ── 5. Examiner Checkpoint ────────────────────────────────────────────────
+    _add_heading(doc, TERMS.examiner_checkpoint, level=3)
+    try:
+        gw: GuidedWritingBlock = build_guided_writing("anova", trait, tr.model_dump())
+        if gw.examiner_checkpoint:
+            for item in gw.examiner_checkpoint:
+                item_p = doc.add_paragraph(f"☐  {item}")
+                item_p.paragraph_format.left_indent = Inches(0.3)
+                item_p.paragraph_format.space_before = Pt(1)
+                item_p.paragraph_format.space_after  = Pt(1)
+                for run in item_p.runs:
+                    run.font.size = Pt(10)
+        else:
+            _add_body(doc, "Examiner checkpoint not available.", italic=True)
+    except Exception as exc:
+        logger.warning("Examiner checkpoint failed for %s: %s", trait, exc)
+        _add_body(doc, "Examiner checkpoint not available.", italic=True)
+
+    doc.add_paragraph()
+
+    # Single Environment Guard: Force disclaimer
+    if _is_single_environment_analysis(analysis_type):
+        _add_body(doc, GOVERNANCE.SINGLE_ENVIRONMENT_DISCLAIMER, italic=True)
 
 
 # ============================================================================
@@ -192,6 +419,7 @@ def _add_writing_support_section(
     module_type: str,
     trait: Optional[str],
     result_dict: Dict[str, Any],
+    analysis_type: Optional[str] = None, # Added for SingleEnvironmentGuard
 ) -> None:
     """
     Build and render the Layer-C guided writing block for one trait.
@@ -208,7 +436,7 @@ def _add_writing_support_section(
         logger.warning("build_guided_writing failed for %s/%s: %s", module_type, trait, exc)
         return
 
-    _add_heading(doc, "Academic Writing Support", level=2)
+    _add_heading(doc, TERMS.writing_support, level=2)
 
     # Caution note (e.g. low-rep warning)
     if gw.caution_note:
@@ -302,12 +530,21 @@ def _add_writing_support_section(
 # GENETIC PARAMETERS — focused table builder (standalone, no GeneticsResult)
 # ============================================================================
 
-def _add_gp_tables(doc: Document, tr: GeneticParametersTraitResult) -> None:
+def _add_gp_tables(
+    doc: Document,
+    tr: GeneticParametersTraitResult,
+    domain: str = "plant_breeding",
+) -> None:
     """
     Render variance components + heritability + GCV/PCV/GA/GAM tables
     directly from a GeneticParametersTraitResult without the GeneticsResult
     adapter.  This is the VivaSense standard layout for the GP report.
+
+    DOMAIN GUARD: GCV, PCV, Genetic Advance, selection intensity, and
+    Falconer & Mackay references are plant_breeding-specific and are
+    suppressed for agronomy/general domains.
     """
+    is_agronomy = not is_plant_breeding_domain(domain)
     vc = tr.variance_components or {}
     hp = tr.heritability or {}
 
@@ -320,14 +557,16 @@ def _add_gp_tables(doc: Document, tr: GeneticParametersTraitResult) -> None:
     )
 
     # ── 1. Variance Components ────────────────────────────────────────────────
-    _add_heading(doc, "Variance Components", level=2)
-    vc_rows: List[List[str]] = []
+    _add_heading(doc, TERMS.variance_components, level=2)
+    g_label  = "Treatment Variance" if is_agronomy else "Genotypic Variance"
+    ge_label = "T×E Variance"       if is_agronomy else "G×E Variance"
     _vc_keys = [
-        ("sigma2_genotype",  "Genotypic Variance",   "σ²g"),
-        ("sigma2_error",     "Error Variance",        "σ²e"),
-        ("sigma2_ge",        "G×E Variance",          "σ²ge"),
-        ("sigma2_phenotypic","Phenotypic Variance",   "σ²p"),
+        ("sigma2_genotype",   g_label,              "σ²g"),
+        ("sigma2_error",      "Error Variance",      "σ²e"),
+        ("sigma2_ge",         ge_label,              "σ²ge"),
+        ("sigma2_phenotypic", "Phenotypic Variance", "σ²p"),
     ]
+    vc_rows: List[List[str]] = []
     for key, label, sym in _vc_keys:
         val = vc.get(key)
         if val is not None:
@@ -339,119 +578,154 @@ def _add_gp_tables(doc: Document, tr: GeneticParametersTraitResult) -> None:
         _add_body(doc, "Variance components not available.", italic=True)
     doc.add_paragraph()
 
-    # ── 2. Heritability ───────────────────────────────────────────────────────
-    _add_heading(doc, "Heritability", level=2)
+    # ── 2. Heritability / Repeatability ──────────────────────────────────────
+    h2_heading = "Repeatability" if is_agronomy else TERMS.heritability
+    _add_heading(doc, h2_heading, level=2)
     if h2 is not None:
+        h2_label_row = "Repeatability (H²)" if is_agronomy else "Broad-sense Heritability (H²)"
         h2_rows = [
-            ["Broad-sense Heritability (H²)", _fmt(h2, 4)],
+            [h2_label_row, _fmt(h2, 4)],
             ["Classification", h2_class],
             ["Basis", hp.get("interpretation_basis", "—")],
         ]
         _add_stat_table(doc, ["Parameter", "Value"], h2_rows, numeric_cols={1})
         doc.add_paragraph()
 
-        # Cautious narrative
-        if h2_class == "High":
-            _add_body(
-                doc,
-                f"Broad-sense heritability for this trait was estimated at "
-                f"H² = {_fmt(h2, 3)} (high) in this experiment, suggesting "
-                "that a substantial proportion of observed phenotypic variation "
-                "is attributable to genetic differences among genotypes under "
-                "these experimental conditions.",
-            )
-        elif h2_class == "Moderate":
-            _add_body(
-                doc,
-                f"Broad-sense heritability was H² = {_fmt(h2, 3)} (moderate) "
-                "in this experiment. Both genetic and environmental effects "
-                "contributed to phenotypic variation; multi-environment "
-                "evaluation is advisable before drawing selection conclusions.",
-            )
-        else:
-            _add_body(
-                doc,
-                f"Broad-sense heritability was H² = {_fmt(h2, 3)} (low) "
-                "in this experiment, indicating that environmental effects "
-                "accounted for a large share of observed phenotypic variation. "
-                "Phenotypic selection is unlikely to be efficient under these conditions.",
-            )
-    else:
-        _add_body(doc, "Heritability estimate not available.", italic=True)
-    doc.add_paragraph()
-
-    # ── 3. GCV and PCV ───────────────────────────────────────────────────────
-    _add_heading(doc, "Coefficients of Variation", level=2)
-    gcv, pcv = tr.gcv, tr.pcv
-    cv_rows: List[List[str]] = []
-    if gcv is not None:
-        cv_rows.append(["Genotypic Coefficient of Variation (GCV %)", _fmt(gcv, 2)])
-    if pcv is not None:
-        cv_rows.append(["Phenotypic Coefficient of Variation (PCV %)", _fmt(pcv, 2)])
-    if cv_rows:
-        _add_stat_table(doc, ["Parameter", "Value"], cv_rows, numeric_cols={1})
-        doc.add_paragraph()
-        if gcv is not None and pcv is not None:
-            diff = abs(gcv - pcv)
-            env_active = bool(tr.gxe_significant or tr.environment_significant)
-            env_sentence = None
-            if diff < 1.0:
-                env_sentence = _describe_env_effects(
-                    f_env=float(tr.anova_f_env) if tr.anova_f_env is not None else 0.0,
-                    p_env=float(tr.anova_p_env) if tr.anova_p_env is not None else None,
-                    f_gxe=float(tr.anova_f_gxe) if tr.anova_f_gxe is not None else 0.0,
-                    p_gxe=float(tr.anova_p_gxe) if tr.anova_p_gxe is not None else None,
-                    analysis_type="multi_environment" if (tr.n_environments is not None and tr.n_environments > 1) else "single_environment",
+        if is_agronomy:
+            # Agronomy narrative — no genetics/selection language
+            if h2_class == "High":
+                _add_body(
+                    doc,
+                    f"Repeatability was H² = {_fmt(h2, 3)} (high) in this experiment, "
+                    "suggesting that treatment effects were consistently expressed "
+                    "across replications under the evaluated conditions.",
                 )
-                gcv_pcv_sentence = _describe_gcv_pcv(gcv, pcv, tr.trait)
-                cv_comment = gcv_pcv_sentence
-            elif gcv < pcv:
-                cv_comment = (
-                    f"GCV ({_fmt(gcv, 2)}%) < PCV ({_fmt(pcv, 2)}%) — "
-                    "environmental effects contributed to observed phenotypic variation "
-                    "in this experiment (PCV − GCV = "
-                    f"{_fmt(diff, 2)}%)."
+            elif h2_class == "Moderate":
+                _add_body(
+                    doc,
+                    f"Repeatability was H² = {_fmt(h2, 3)} (moderate) in this experiment. "
+                    "Both treatment and environmental replication effects contributed "
+                    "to observed variation.",
                 )
             else:
-                cv_comment = (
-                    f"GCV ({_fmt(gcv, 2)}%) > PCV ({_fmt(pcv, 2)}%) — "
-                    "verify variance component estimates; this relationship is unusual."
+                _add_body(
+                    doc,
+                    f"Repeatability was H² = {_fmt(h2, 3)} (low) in this experiment, "
+                    "indicating that environmental variation within the experiment "
+                    "accounted for a large share of observed phenotypic variation.",
                 )
-            _add_body(doc, cv_comment)
-            if env_sentence:
-                doc.add_paragraph()
-                _add_body(doc, env_sentence)
+        else:
+            # Plant breeding narrative
+            if h2_class == "High":
+                _add_body(
+                    doc,
+                    f"Broad-sense heritability for this trait was estimated at "
+                    f"H² = {_fmt(h2, 3)} (high) in this experiment, suggesting "
+                    "that a substantial proportion of observed phenotypic variation "
+                    "is attributable to genetic differences among genotypes under "
+                    "these experimental conditions.",
+                )
+            elif h2_class == "Moderate":
+                _add_body(
+                    doc,
+                    f"Broad-sense heritability was H² = {_fmt(h2, 3)} (moderate) "
+                    "in this experiment. Both genetic and environmental effects "
+                    "contributed to phenotypic variation; multi-environment "
+                    "evaluation is advisable before drawing selection conclusions.",
+                )
+            else:
+                _add_body(
+                    doc,
+                    f"Broad-sense heritability was H² = {_fmt(h2, 3)} (low) "
+                    "in this experiment, indicating that environmental effects "
+                    "accounted for a large share of observed phenotypic variation. "
+                    "Phenotypic selection is unlikely to be efficient under these conditions.",
+                )
     else:
-        _add_body(doc, "GCV/PCV not available.", italic=True)
+        _add_body(doc, "Heritability/repeatability estimate not available.", italic=True)
     doc.add_paragraph()
 
-    # ── 4. Genetic Advance (GA / GAM) ─────────────────────────────────────────
-    _add_heading(doc, "Genetic Advance", level=2)
-    ga, gam = tr.ga, tr.gam
-    ga_rows: List[List[str]] = []
-    if ga is not None:
-        ga_rows.append(["Genetic Advance (GA, absolute)", _fmt(ga, 4)])
-    if gam is not None:
-        gam_class = InterpretationEngine.classify_gam(gam)
-        gam_class = gam_class.capitalize() if gam_class != "not_computed" else "—"
-        ga_rows.append(["Genetic Advance as % of Mean (GAM %)", f"{_fmt(gam, 2)}  [{gam_class}]"])
-    if ga_rows:
-        _add_stat_table(doc, ["Parameter", "Value"], ga_rows, numeric_cols={1})
+    # ── 3. GCV and PCV (plant_breeding only) ─────────────────────────────────
+    # DOMAIN GUARD: GCV/PCV are genetics-specific — must not appear in agronomy reports.
+    if not is_agronomy:
+        _add_heading(doc, TERMS.coefficients_variation, level=2)
+        gcv, pcv = tr.gcv, tr.pcv
+        cv_rows: List[List[str]] = []
+        if gcv is not None:
+            cv_rows.append(["Genotypic Coefficient of Variation (GCV %)", _fmt(gcv, 2)])
+        if pcv is not None:
+            cv_rows.append(["Phenotypic Coefficient of Variation (PCV %)", _fmt(pcv, 2)])
+        if cv_rows:
+            _add_stat_table(doc, ["Parameter", "Value"], cv_rows, numeric_cols={1})
+            doc.add_paragraph()
+            if gcv is not None and pcv is not None:
+                diff = abs(gcv - pcv)
+                env_sentence = None
+                if diff < 1.0:
+                    env_sentence = _describe_env_effects(
+                        f_env=float(tr.anova_f_env) if tr.anova_f_env is not None else 0.0,
+                        p_env=float(tr.anova_p_env) if tr.anova_p_env is not None else None,
+                        f_gxe=float(tr.anova_f_gxe) if tr.anova_f_gxe is not None else 0.0,
+                        p_gxe=float(tr.anova_p_gxe) if tr.anova_p_gxe is not None else None,
+                        analysis_type=(
+                            "multi_environment"
+                            if (tr.n_environments is not None and tr.n_environments > 1)
+                            else "single_environment"
+                        ),
+                    )
+                    cv_comment = _describe_gcv_pcv(gcv, pcv, tr.trait)
+                elif gcv < pcv:
+                    cv_comment = (
+                        f"GCV ({_fmt(gcv, 2)}%) < PCV ({_fmt(pcv, 2)}%) — "
+                        "environmental effects contributed to observed phenotypic variation "
+                        f"in this experiment (PCV − GCV = {_fmt(diff, 2)}%)."
+                    )
+                else:
+                    cv_comment = (
+                        f"GCV ({_fmt(gcv, 2)}%) > PCV ({_fmt(pcv, 2)}%) — "
+                        "verify variance component estimates; this relationship is unusual."
+                    )
+                _add_body(doc, cv_comment)
+                if env_sentence:
+                    doc.add_paragraph()
+                    _add_body(doc, env_sentence)
+        else:
+            _add_body(doc, "GCV/PCV not available.", italic=True)
         doc.add_paragraph()
-        # Formulas
-        _add_heading(doc, "Formulas Used", level=3)
-        for fml in [
-            "GA  = H² × i × σp",
-            "GAM (%) = (GA / Grand Mean) × 100",
-            "Where: i = selection intensity, σp = √σ²p (phenotypic SD)",
-        ]:
-            fml_p = doc.add_paragraph(fml, style="No Spacing")
-            if fml_p.runs:
-                fml_p.runs[0].font.name = "Courier New"
-                fml_p.runs[0].font.size = Pt(10)
-    else:
-        _add_body(doc, "Genetic advance estimates not available.", italic=True)
-    doc.add_paragraph()
+
+    # ── 4. Genetic Advance (plant_breeding only) ──────────────────────────────
+    # DOMAIN GUARD: Genetic Advance, selection intensity, i = 1.40, and
+    # Falconer & Mackay must NOT appear in agronomy or general reports.
+    if not is_agronomy:
+        _add_heading(doc, TERMS.genetic_advance, level=2)
+        ga, gam = tr.ga, tr.gam
+        ga_rows: List[List[str]] = []
+        if ga is not None:
+            ga_rows.append(["Genetic Advance (GA, absolute)", _fmt(ga, 4)])
+        if gam is not None:
+            gam_class = InterpretationEngine.classify_gam(gam)
+            gam_class = gam_class.capitalize() if gam_class != "not_computed" else "—"
+            ga_rows.append([
+                "Genetic Advance as % of Mean (GAM %)",
+                f"{_fmt(gam, 2)}  [{gam_class}]",
+            ])
+        if ga_rows:
+            _add_stat_table(doc, ["Parameter", "Value"], ga_rows, numeric_cols={1})
+            doc.add_paragraph()
+            _add_heading(doc, TERMS.formulas, level=3)
+            for fml in [
+                "GA  = H² × i × σp",
+                "GAM (%) = (GA / Grand Mean) × 100",
+                "Where: i = selection intensity (Falconer & Mackay, 1996)",
+                "       σp = √σ²p (phenotypic standard deviation)",
+            ]:
+                fml_p = doc.add_paragraph(fml, style="No Spacing")
+                if fml_p.runs:
+                    fml_p.runs[0].font.name = "Courier New"
+                    fml_p.runs[0].font.size = Pt(10)
+        else:
+            _add_body(doc, "Genetic advance estimates not available.", italic=True)
+        doc.add_paragraph()
 
 
 # ============================================================================
@@ -465,34 +739,41 @@ def _add_gp_tables(doc: Document, tr: GeneticParametersTraitResult) -> None:
 )
 async def export_anova_word(data: AnovaExportRequest):
     """
-    VivaSense ANOVA report — one section per trait:
+    VivaSense ANOVA report — one section per trait (section order matches UI):
       1. Descriptive Statistics
-      2. ANOVA Table (with significance narrative)
+      2. ANOVA Table (with significance narrative, Intercept row included)
       3. Assumption Tests
       4. Mean Separation (table + embedded bar chart)
-      5. Interpretation (cleaned academic prose)
-      6. Academic Writing Support (sentence starters + examiner checklist)
-      7. Scope note
+      5. Treatment Variance (σ²g, σ²e, σ²p, Repeatability)  ← BUG FIX
+      6. Academic Interpretation (5 structured sub-sections)  ← BUG FIX
+      7. Academic Writing Support (sentence starters + examiner checklist)
+      8. Scope note
     """
     try:
+        domain     = getattr(data, "domain", "plant_breeding") or "plant_breeding"
         n_traits   = len(data.trait_results)
         n_success  = sum(1 for tr in data.trait_results.values() if tr.status == "success")
         mode_label = "Multi-environment" if data.mode == "multi" else "Single-environment"
+        analysis_type = "multi_environment" if data.mode == "multi" else "single_environment"
 
         logger.info(
-            "ANOVA export started: %d traits, %d successful",
-            n_traits, n_success
+            "ANOVA export started: %d traits, %d successful, domain=%s",
+            n_traits, n_success, domain,
         )
         for trait, tr in data.trait_results.items():
             logger.info(
                 "  trait '%s': status=%s, has_interpretation=%s, interpretation_len=%d",
                 trait, tr.status,
                 "YES" if tr.interpretation else "NO",
-                len(tr.interpretation) if tr.interpretation else 0
+                len(tr.interpretation) if tr.interpretation else 0,
             )
 
+        # Initialize ReportValidator
+        validator = ReportValidator()
+
+        # BUG FIX: domain-aware title (previously hardcoded "VivaSense ANOVA Analysis Report")
         doc = _new_document(
-            "VivaSense ANOVA Analysis Report",
+            get_report_title(domain, module="anova"),
             f"{mode_label}  ·  {n_traits} trait(s)  ·  {n_success} analysed successfully",
         )
 
@@ -514,34 +795,42 @@ async def export_anova_word(data: AnovaExportRequest):
                     f"Analysis failed for this trait: {tr.error or 'No ANOVA result available.'}",
                 )
                 continue
+            
+            # Validate interpretation before adding to report
+            validation_errors = validator.validate_anova_interpretation(
+                interpretation_text=tr.interpretation or "",
+                analysis_type=analysis_type,
+                interaction_significant=tr.interaction_significant # Assuming this field exists or can be derived
+            )
+            all_warnings.extend(validation_errors)
 
             # ── Data warnings ──────────────────────────────────────────────────
             if tr.data_warnings:
-                _add_heading(doc, "Data Warnings", level=3)
+                _add_heading(doc, TERMS.data_warnings, level=3)
                 for w in tr.data_warnings:
                     doc.add_paragraph(f"• {w}", style="List Bullet")
                 doc.add_paragraph()
 
             # ── 1. Descriptive Statistics ──────────────────────────────────────
-            _add_heading(doc, "Descriptive Statistics", level=2)
+            _add_heading(doc, TERMS.descriptive_stats, level=2)
             rows = []
+            is_agronomy = not is_plant_breeding_domain(domain)
+            entry_label = "No. Treatments" if is_agronomy else "No. Genotypes"
             if tr.grand_mean is not None:
                 rows.append(("Grand Mean", _fmt(tr.grand_mean)))
             if tr.n_genotypes:
-                rows.append(("No. Genotypes", str(tr.n_genotypes)))
+                rows.append((entry_label, str(tr.n_genotypes)))
             if tr.n_reps:
                 rows.append(("No. Replications", str(tr.n_reps)))
             if tr.n_environments:
                 rows.append(("No. Environments", str(tr.n_environments)))
             if tr.descriptive_stats:
                 ds = tr.descriptive_stats
-                # Handle both dict and object forms
                 if isinstance(ds, dict):
                     for k, v in ds.items():
                         label = k.replace("_", " ").title()
                         rows.append((label, _fmt(v) if isinstance(v, float) else str(v)))
                 else:
-                    # DescriptiveStats object
                     if ds.standard_deviation is not None:
                         rows.append(("Standard Deviation", _fmt(ds.standard_deviation)))
                     if ds.standard_error is not None:
@@ -561,7 +850,7 @@ async def export_anova_word(data: AnovaExportRequest):
             doc.add_paragraph()
 
             # ── 2. ANOVA Table ─────────────────────────────────────────────────
-            _add_anova_section(doc, tr.anova_table)
+            _add_anova_section(doc, tr.anova_table, domain=domain)
             doc.add_paragraph()
 
             # ── 3. Assumption Tests ────────────────────────────────────────────
@@ -575,10 +864,10 @@ async def export_anova_word(data: AnovaExportRequest):
             if tr.design_type == "split_plot_rcbd":
                 pass  # section omitted — not applicable for this design
             elif tr.mean_separation:
-                _add_mean_separation_section(doc, trait, tr.mean_separation)
+                _add_mean_separation_section(doc, trait, tr.mean_separation, domain=domain)
                 doc.add_paragraph()
             else:
-                _add_heading(doc, "Mean Separation", level=2)
+                _add_heading(doc, TERMS.mean_separation, level=2)
                 _add_body(
                     doc,
                     "Mean separation (Tukey HSD) is not available for this trait — "
@@ -587,13 +876,18 @@ async def export_anova_word(data: AnovaExportRequest):
                 )
                 doc.add_paragraph()
 
-            # ── 5. Interpretation ──────────────────────────────────────────────
+            # ── 5. Treatment Variance (BUG FIX: was absent from Word export) ──
+            _add_treatment_variance_section(
+                doc, trait, tr.anova_table, tr.n_reps, domain=domain
+            )
+
+            # ── 6. Academic Interpretation (structured 5-panel) ────────────────
             logger.info("ANOVA export: processing interpretation for trait '%s'", trait)
             logger.info("  Raw interpretation length: %d chars", len(tr.interpretation or ""))
             cleaned = _clean_interpretation(tr.interpretation, trait)
             logger.info("  Cleaned interpretation length: %d chars", len(cleaned))
             if cleaned:
-                _add_heading(doc, "Interpretation", level=2)
+                _add_heading(doc, TERMS.interpretation, level=2)
                 for para_text in cleaned.split("\n\n"):
                     para_text = para_text.strip()
                     if para_text:
@@ -602,18 +896,20 @@ async def export_anova_word(data: AnovaExportRequest):
             else:
                 logger.warning(
                     "ANOVA export: interpretation is empty for trait '%s' (raw was: %s)",
-                    trait, "None" if tr.interpretation is None else "empty string"
+                    trait, "None" if tr.interpretation is None else "empty string",
                 )
 
-            # ── 6. Academic Writing Support ────────────────────────────────────
-            _add_writing_support_section(
-                doc, "anova", trait, tr.model_dump()
-            )
+            # Structured academic interpretation (mirrors UI AcademicInterpretationPanel)
+            _add_structured_academic_interpretation(doc, tr, trait, domain=domain)
+
+            # ── 7. Academic Writing Support ────────────────────────────────────
+            _add_writing_support_section(doc, "anova", trait, tr.model_dump(), analysis_type=analysis_type)
             doc.add_paragraph()
 
-            # ── 7. Scope note ──────────────────────────────────────────────────
+            # ── 8. Scope note ──────────────────────────────────────────────────
             _scope_paragraph(doc)
 
+        # This was missing in the original
         _add_footer(doc)
         return _docx_response(doc, "vivasense_anova_report.docx")
 
@@ -650,9 +946,13 @@ async def export_genetic_parameters_word(data: GeneticParametersExportRequest):
         n_traits   = len(data.trait_results)
         n_success  = sum(1 for tr in data.trait_results.values() if tr.status == "success")
         mode_label = "Multi-environment" if data.mode == "multi" else "Single-environment"
+        analysis_type = "multi_environment" if data.mode == "multi" else "single_environment"
 
+        domain = getattr(data, "domain", "plant_breeding") or "plant_breeding"
+
+        # BUG FIX: domain-aware title
         doc = _new_document(
-            "VivaSense Genetic Parameters Report",
+            get_report_title(domain, module="genetic_parameters"),
             f"{mode_label}  ·  {n_traits} trait(s)  ·  {n_success} analysed successfully",
         )
 
@@ -663,6 +963,9 @@ async def export_genetic_parameters_word(data: GeneticParametersExportRequest):
                 italic=True,
             )
             doc.add_paragraph()
+
+        # Initialize ReportValidator
+        validator = ReportValidator()
 
         for trait, tr in data.trait_results.items():
             doc.add_page_break()
@@ -675,15 +978,24 @@ async def export_genetic_parameters_word(data: GeneticParametersExportRequest):
                 )
                 continue
 
+            # Validate interpretation before adding to report
+            validation_errors = validator.validate_genetics_interpretation(
+                interpretation_text=tr.interpretation or "",
+                breeding_implication_text=tr.breeding_implication or "",
+                analysis_type=analysis_type,
+                h2_broad_sense=tr.heritability.get("h2_broad_sense") if tr.heritability else None,
+                gxe_significant=tr.gxe_significant,
+            )
+            all_warnings.extend(validation_errors)
             # ── Data warnings ──────────────────────────────────────────────────
             if tr.data_warnings:
-                _add_heading(doc, "Data Warnings", level=3)
+                _add_heading(doc, TERMS.data_warnings, level=3)
                 for w in tr.data_warnings:
                     doc.add_paragraph(f"• {w}", style="List Bullet")
                 doc.add_paragraph()
 
             # ── Descriptive Statistics ─────────────────────────────────────────
-            _add_heading(doc, "Descriptive Statistics", level=2)
+            _add_heading(doc, TERMS.descriptive_stats, level=2)
             ds_rows = []
             if tr.grand_mean is not None:
                 ds_rows.append(("Grand Mean", _fmt(tr.grand_mean)))
@@ -708,14 +1020,15 @@ async def export_genetic_parameters_word(data: GeneticParametersExportRequest):
             doc.add_paragraph()
 
             # ── 1–4. Variance components, heritability, GCV/PCV, GA/GAM ───────
-            _add_gp_tables(doc, tr)
+            # Domain is passed so genetics-specific sections are guarded
+            _add_gp_tables(doc, tr, domain=domain)
 
-            # ── 5. Breeding Implication ────────────────────────────────────────
-            h2  = (tr.heritability or {}).get("h2_broad_sense")
-            gam = tr.gam
-
-            _add_heading(doc, "Breeding Implication", level=2)
-            # Prefer the R-engine implication if present and clean
+            # ── 5. Breeding Implication (plant_breeding only) ──────────────────
+            # DOMAIN GUARD: "Breeding Implication" must not appear in agronomy reports
+            if not is_plant_breeding_domain(domain):
+                _add_heading(doc, "Practical Implication", level=2)
+            else:
+                _add_heading(doc, TERMS.breeding_implication, level=2)
             r_implication = _clean_interpretation(tr.breeding_implication, trait)
             if r_implication:
                 _add_body(doc, r_implication)
@@ -724,7 +1037,7 @@ async def export_genetic_parameters_word(data: GeneticParametersExportRequest):
             # ── 6. Interpretation ──────────────────────────────────────────────
             cleaned = _clean_interpretation(tr.interpretation, trait)
             if cleaned:
-                _add_heading(doc, "Statistical Interpretation", level=2)
+                _add_heading(doc, TERMS.statistical_interp, level=2)
                 for para_text in cleaned.split("\n\n"):
                     para_text = para_text.strip()
                     if para_text:
@@ -732,8 +1045,7 @@ async def export_genetic_parameters_word(data: GeneticParametersExportRequest):
                 doc.add_paragraph()
 
             # ── 7. Academic Writing Support ────────────────────────────────────
-            _add_writing_support_section(
-                doc, "genetic_parameters", trait, tr.model_dump()
+            _add_writing_support_section(doc, "genetic_parameters", trait, tr.model_dump(), analysis_type=analysis_type
             )
             doc.add_paragraph()
 

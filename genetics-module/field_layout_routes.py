@@ -11,7 +11,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from field_layout_generator import DESIGN_REGISTRY, generate_field_layout
 
@@ -21,6 +21,8 @@ router = APIRouter(tags=["Field Layout"])
 
 
 class FieldLayoutRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     design_type: str
     treatments: Optional[List[str]] = None
     replications: Optional[int] = None
@@ -38,6 +40,18 @@ class FieldLayoutRequest(BaseModel):
 
 
 class FieldLayoutResponse(BaseModel):
+    # Standardized response fields
+    design: str
+    seed: int
+    treatments: List[str]
+    replications: Optional[int] = None
+    total_plots: int
+    layout_matrix: List[Any]
+    plot_labels: List[str]
+    timestamp: str
+    export_data: Dict[str, Any]
+
+    # Backward-compatible fields
     design_type: str
     plot_matrix: List[Any]
     fieldbook: List[Dict[str, Any]]
@@ -62,7 +76,7 @@ async def list_designs():
 
 @router.post("/field-layout/generate", response_model=FieldLayoutResponse)
 async def generate_layout(
-    payload: FieldLayoutRequest,
+    payload: Dict[str, Any],
     http_request: Request,
 ):
     """Generate a field layout for the requested design.
@@ -72,7 +86,24 @@ async def generate_layout(
     split plot, split-split plot, factorial RCBD,
     balanced lattice, and alpha lattice.
     """
-    design_type = (payload.design_type or "").strip().lower()
+    try:
+        validated_payload = FieldLayoutRequest.model_validate(payload)
+    except ValidationError as exc:
+        issues: List[str] = []
+        for err in exc.errors():
+            loc = ".".join(str(part) for part in err.get("loc", []))
+            msg = err.get("msg", "Invalid value")
+            issues.append(f"{loc}: {msg}" if loc else msg)
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "malformed_payload",
+                "message": "Malformed request payload. Fix the listed fields and retry.",
+                "issues": issues,
+            },
+        ) from exc
+
+    design_type = (validated_payload.design_type or "").strip().lower()
 
     # Resolve design config from registry
     design_config = DESIGN_REGISTRY.get(design_type)
@@ -105,7 +136,7 @@ async def generate_layout(
             )
 
     # Build engine request from payload
-    engine_request: Dict[str, Any] = payload.model_dump(exclude_none=True)
+    engine_request: Dict[str, Any] = validated_payload.model_dump(exclude_none=True)
 
     # Call engine — ValueError means invalid user input, not a server error
     try:
@@ -134,11 +165,17 @@ async def generate_layout(
         ) from exc
 
     logger.info(
-        "Field layout generated: design=%s plots=%s treatments=%s seed=%s",
-        design_type,
-        result["layout_summary"].get("n_plots"),
-        result["layout_summary"].get("n_treatments"),
-        payload.seed,
+        "Field layout generated successfully:\n"
+        "design=%s\n"
+        "treatments=%s\n"
+        "replications=%s\n"
+        "plots=%s\n"
+        "seed=%s",
+        result.get("design", design_type).upper(),
+        len(result.get("treatments", [])),
+        result.get("replications"),
+        result.get("total_plots", result["layout_summary"].get("n_plots")),
+        result.get("seed"),
     )
 
     return FieldLayoutResponse(**result)
