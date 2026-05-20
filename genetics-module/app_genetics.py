@@ -1,3 +1,10 @@
+# Health check endpoint for /genetics root
+from fastapi.responses import JSONResponse
+
+@app.get("/genetics", tags=["Genetics"])
+async def genetics_health_check():
+    """Health check endpoint for /genetics root."""
+    return JSONResponse(content={"status": "ok", "message": "VivaSense Genetics API is live."})
 """
 VivaSense Genetics API Backend
 FastAPI wrapper for R genetics computation engine
