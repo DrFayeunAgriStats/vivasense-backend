@@ -198,7 +198,6 @@ export function ResultsDisplay({ results, onReset, domain }: ResultsDisplayProps
     setDownloading(true);
     setDownloadError(null);
     try {
-      console.log("[DEBUG] domain at export:", domain);
       await exportWordReport(results, "vivasense_genetics_report.docx", domain);
     } catch (err) {
       if (err instanceof ProFeatureError) {
