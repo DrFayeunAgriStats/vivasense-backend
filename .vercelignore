@@ -1,3 +1,17 @@
+**/*.py
+**/*.R
+**/requirements*.txt
+**/Dockerfile
+**/install_r_packages.R
+app/
+genetics-module/
+main.py
+build_manuscript.py
+analysis_descriptive_routes.py
+fia_proxy.py
+fia_api_client.js
+genetics_api_client.js
+genetics_api_client.ts
 .claude
 **/.pytest_cache
 **/__pycache__

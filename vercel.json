@@ -1,19 +1,6 @@
 {
-  "redirects": [
-    {
-      "source": "/vivasense/workspace/:path*",
-      "destination": "/vivasense/genetics/:path*",
-      "permanent": true
-    }
-  ],
-  "rewrites": [
-    {
-      "source": "/vivasense",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/vivasense/:path*",
-      "destination": "/index.html"
-    }
-  ]
+  "framework": "nextjs",
+  "ignoreCommand": "echo Ignoring backend files",
+  "buildCommand": "cd fia-institute-portal && npm install && npm run build",
+  "outputDirectory": "fia-institute-portal/dist"
 }
