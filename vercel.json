@@ -1,5 +1,5 @@
 {
-  "framework": "nextjs",
+  "framework": "vite",
   "ignoreCommand": "echo Ignoring backend files",
   "buildCommand": "cd fia-institute-portal && npm install && npm run build",
   "outputDirectory": "fia-institute-portal/dist"
