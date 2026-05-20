@@ -203,7 +203,8 @@ async def upload_dataset(request: UploadDatasetRequest):
         )
 
     if request.design_type == "split_plot_rcbd":
-        # ── Generic split-plot RCBD validation ────────────────────────────────
+    # ── Design-specific validation ────────────────────────────────
+    if request.design_type == "split_plot_rcbd":
         # The design is defined entirely by rep / main_plot / sub_plot roles.
         # genotype_column is NOT required. If supplied, it must not duplicate a
         # structural role column and must not be treated as a third treatment
@@ -277,20 +278,28 @@ async def upload_dataset(request: UploadDatasetRequest):
                     "main_plot_column or sub_plot_column."
                 ),
             )
-
         required = [
             request.rep_column,
             request.main_plot_column,
             request.sub_plot_column,
         ]
+    elif request.design_type == "factorial":
+        # For factorial, genotype_column is optional
+        required = []
+        if request.rep_column:
+            required.append(request.rep_column)
+        if request.environment_column:
+            required.append(request.environment_column)
+        if request.factor_column:
+            required.append(request.factor_column)
     else:
-        # All other designs require genotype_column
+        # CRD and RCBD require genotype_column
         if not request.genotype_column:
             raise HTTPException(
                 status_code=400,
                 detail=(
                     "genotype_column is required for this design type. "
-                    "It may be omitted only for split_plot_rcbd."
+                    "It may be omitted only for split_plot_rcbd and factorial."
                 ),
             )
         required = [request.genotype_column]
