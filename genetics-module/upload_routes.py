@@ -74,7 +74,7 @@ async def upload_preview_v2(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
     try:
-        df = read_file(content, file_type)
+        df, mapping = read_file(content, file_type)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -142,6 +142,7 @@ async def upload_preview_v2(file: UploadFile = File(...)):
         column_names=list(df.columns),
         warnings=warnings,
         dataset_token=preview_token,
+        column_name_mapping=mapping,
     )
 
 
@@ -172,7 +173,7 @@ async def upload_dataset(request: UploadDatasetRequest):
         raise HTTPException(status_code=400, detail="Invalid base64 content") from exc
 
     try:
-        df = read_file(file_bytes, request.file_type)
+        df, _ = read_file(file_bytes, request.file_type)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -262,34 +263,6 @@ async def upload_dataset(request: UploadDatasetRequest):
                     "rep_column must be distinct from main_plot_column and sub_plot_column."
                 ),
             )
-        # If genotype_column is supplied for split_plot_rcbd, validate its role.
-        if request.genotype_column:
-            if request.genotype_column in (
-                request.main_plot_column, request.sub_plot_column
-            ):
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"genotype_column '{request.genotype_column}' duplicates a "
-                        "treatment factor column. Map genotypes as main_plot_column "
-                        "(whole-plot factor) or sub_plot_column (subplot factor), "
-                        "not as a separate additional term."
-                    ),
-                )
-            # genotype_column is a distinct third column — not valid in the
-            # standard two-factor split-plot model.
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"genotype_column '{request.genotype_column}' is a third "
-                    "independent column separate from main_plot_column and "
-                    "sub_plot_column. The generic split_plot_rcbd module supports "
-                    "exactly two treatment factors (main_plot × sub_plot). "
-                    "If genotype is one of your treatment factors, assign it as "
-                    "main_plot_column or sub_plot_column."
-                ),
-            )
-
         required = [
             request.rep_column,
             request.main_plot_column,

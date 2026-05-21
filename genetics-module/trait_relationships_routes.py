@@ -264,7 +264,7 @@ async def compute_correlation(request: CorrelationRequest):
     from multitrait_upload_routes import read_file
 
     try:
-        df = read_file(file_bytes, request.file_type)
+        df, _ = read_file(file_bytes, request.file_type)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

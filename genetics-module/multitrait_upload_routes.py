@@ -28,6 +28,7 @@ import pandas as pd
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
+from utils.column_utils import sanitise_column_names
 import dataset_cache
 from multitrait_upload_schemas import (
     DatasetSummary,
@@ -245,7 +246,7 @@ def detect_columns(df: pd.DataFrame) -> DetectedColumns:
 # FILE READING
 # ============================================================================
 
-def read_file(content: bytes, file_type: str) -> pd.DataFrame:
+def read_file(content: bytes, file_type: str) -> tuple[pd.DataFrame, dict[str, str]]:
     """Read CSV or Excel bytes into a DataFrame."""
     try:
         if file_type == "csv":
@@ -260,8 +261,9 @@ def read_file(content: bytes, file_type: str) -> pd.DataFrame:
     if len(df) < 6:
         raise ValueError(f"File has only {len(df)} rows; minimum 6 required")
 
-    df.columns = [str(c).strip() for c in df.columns]
-    return df
+    df, column_name_mapping = sanitise_column_names(df)
+    logger.info("Column name mapping: %s", column_name_mapping)
+    return df, column_name_mapping
 
 
 # ============================================================================
@@ -737,7 +739,7 @@ async def upload_preview(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
     try:
-        df = read_file(content, file_type)
+        df, mapping = read_file(content, file_type)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -812,6 +814,7 @@ async def upload_preview(file: UploadFile = File(...)):
         column_names=list(df.columns),
         warnings=warn,
         dataset_token=preview_token,
+        column_name_mapping=mapping,
     )
 
 
@@ -852,7 +855,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
         raise HTTPException(status_code=400, detail="Invalid base64 content") from exc
 
     try:
-        df = read_file(file_bytes, request.file_type)
+        df, _ = read_file(file_bytes, request.file_type)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

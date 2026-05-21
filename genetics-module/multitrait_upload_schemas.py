@@ -69,6 +69,10 @@ class UploadPreviewResponse(BaseModel):
             "Superseded when the user confirms column mapping via POST /upload/dataset."
         ),
     )
+    column_name_mapping: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Mapping of original column names to R-safe sanitised versions."
+    )
 
 
 # ============================================================================
