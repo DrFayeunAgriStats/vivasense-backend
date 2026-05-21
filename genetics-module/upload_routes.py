@@ -173,7 +173,9 @@ async def upload_dataset(request: UploadDatasetRequest):
         raise HTTPException(status_code=400, detail="Invalid base64 content") from exc
 
     try:
+        from column_utils import clean_and_sanitise_column_names
         df, _ = read_file(file_bytes, request.file_type)
+        df, _ = clean_and_sanitise_column_names(df)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -182,12 +184,11 @@ async def upload_dataset(request: UploadDatasetRequest):
 
     # Enforce design presence
     design = request.design_type
-    if not design or design == "single":  # "single" is the default, ensure it's intentional
-        if not request.genotype_column:
-            raise HTTPException(
-                status_code=400,
-                detail="Experimental design type is missing or invalid for the provided mapping."
-            )
+    if not design:
+        raise HTTPException(
+            status_code=400,
+            detail="Experimental design type is missing. Please select a design before analysis."
+        )
 
     # Validate column mapping selections for the chosen design type.
     # Build the list of mapped structural columns (only those provided).
@@ -213,7 +214,6 @@ async def upload_dataset(request: UploadDatasetRequest):
         )
 
     DESIGNS_WITHOUT_GENOTYPE = {"split_plot_rcbd", "factorial"}
-
     if request.design_type not in DESIGNS_WITHOUT_GENOTYPE:
         if not request.genotype_column:
             raise HTTPException(
