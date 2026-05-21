@@ -1,0 +1,1 @@
+CREATE POLICY "Anyone can update adap codes" ON public.adap_student_codes FOR UPDATE USING (true) WITH CHECK (true);

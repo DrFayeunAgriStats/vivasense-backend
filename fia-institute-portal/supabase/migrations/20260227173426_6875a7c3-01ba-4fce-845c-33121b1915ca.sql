@@ -1,0 +1,2 @@
+ALTER TABLE public.certificates ADD COLUMN IF NOT EXISTS certify_phrase text NOT NULL DEFAULT 'This is to certify that';
+ALTER TABLE public.certificates ADD COLUMN IF NOT EXISTS completion_phrase text NOT NULL DEFAULT 'has successfully completed the';

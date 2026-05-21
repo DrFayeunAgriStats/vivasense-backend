@@ -180,6 +180,15 @@ async def upload_dataset(request: UploadDatasetRequest):
     # Numeric-coded treatment columns manually toggled in the mapping UI.
     numeric_factor_columns = [c for c in request.numeric_factor_columns if c and c.strip()]
 
+    # Enforce design presence
+    design = request.design_type
+    if not design or design == "single":  # "single" is the default, ensure it's intentional
+        if not request.genotype_column:
+            raise HTTPException(
+                status_code=400,
+                detail="Experimental design type is missing or invalid for the provided mapping."
+            )
+
     # Validate column mapping selections for the chosen design type.
     # Build the list of mapped structural columns (only those provided).
     mapped_columns: List[str] = []

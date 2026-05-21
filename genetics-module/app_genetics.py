@@ -222,10 +222,10 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://www.fieldtoinsightacademy.com.ng",
-        "https://fieldtoinsightacademy.com.ng",
         "https://fia-institute-portal.vercel.app",
         "http://localhost:8080",
         "http://localhost:5173",
+        "http://localhost:3000",
     ],
     allow_credentials=True,
     allow_methods=["*"],

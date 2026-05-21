@@ -1,0 +1,28 @@
+project_id = "ppdiodhuaygtbddzinyo"
+
+[functions.ai-tutor]
+verify_jwt = false
+
+[functions.csp811-tutor]
+verify_jwt = false
+
+[functions.certificate-admin]
+verify_jwt = false
+
+[functions.thesis-mentor]
+verify_jwt = false
+
+[functions.adap-tutor]
+verify_jwt = false
+
+[functions.adap-admin]
+verify_jwt = false
+
+[functions.vivasense-interpret]
+verify_jwt = false
+
+[functions.rws-ai]
+verify_jwt = false
+
+[functions.plant-improvement-tutor]
+verify_jwt = false

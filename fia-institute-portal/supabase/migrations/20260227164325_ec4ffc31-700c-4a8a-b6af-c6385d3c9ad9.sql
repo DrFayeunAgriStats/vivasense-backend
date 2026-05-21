@@ -1,0 +1,1 @@
+ALTER TABLE public.certificates ADD COLUMN IF NOT EXISTS appreciation_text text;

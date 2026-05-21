@@ -271,6 +271,15 @@ def read_file(content: bytes, file_type: str) -> tuple[pd.DataFrame, dict[str, s
     if len(df) < 6:
         raise ValueError(f"File has only {len(df)} rows; minimum 6 required")
 
+    # Sanitize columns
+    df = df.dropna(axis=1, how='all')
+    df.columns = df.columns.str.strip()
+    df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+
+    empty_cols = [col for col in df.columns if str(col).strip() == ""]
+    if empty_cols:
+        raise ValueError("Your dataset contains empty column headers.")
+
     df, column_name_mapping = sanitise_column_names(df)
     logger.info("Column name mapping: %s", column_name_mapping)
     return df, column_name_mapping
