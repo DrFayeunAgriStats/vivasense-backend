@@ -43,6 +43,7 @@ from module_schemas import (
     GenotypeIndex,
     SelectionIndexRequest,
     SelectionIndexResponse,
+    AnalysisContext,
 )
 from multitrait_upload_routes import read_file
 
@@ -414,6 +415,12 @@ async def analysis_selection_index(request: SelectionIndexRequest):
         n_genotypes=result["n_genotypes"],
     )
 
+    analysis_ctx = AnalysisContext(
+        is_single_environment=True,
+        environment_count=1,
+        design_type=ctx.get("design_type")
+    )
+
     return SelectionIndexResponse(
         status="success",
         traits=request.trait_columns,
@@ -426,4 +433,5 @@ async def analysis_selection_index(request: SelectionIndexRequest):
         relative_efficiency=result["relative_efficiency"],
         selected_genotypes=result["selected_genotypes"],
         interpretation=interpretation,
+        analysis_context=analysis_ctx,
     )

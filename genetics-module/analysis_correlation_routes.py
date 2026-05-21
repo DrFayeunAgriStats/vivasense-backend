@@ -28,7 +28,7 @@ from trait_relationships_routes import (
 )
 from multitrait_upload_routes import read_file
 from trait_relationships_schemas import CorrelationResponse
-from module_schemas import CorrelationModuleResponse, CorrelationModuleRequest
+from module_schemas import CorrelationModuleResponse, CorrelationModuleRequest, AnalysisContext
 from trait_association_interpretation import generate_dual_mode_correlation_interpretation
 import dataset_cache
 
@@ -144,6 +144,12 @@ async def analysis_correlation(request: CorrelationModuleRequest):
         statistical_note=_STATISTICAL_NOTE,
     )
 
+    analysis_ctx = AnalysisContext(
+        is_single_environment=True,
+        environment_count=1,
+        design_type=ctx.get("design_type")
+    )
+
     return CorrelationModuleResponse(
         dataset_token=request.dataset_token,
         trait_names=corr.trait_names,
@@ -154,4 +160,5 @@ async def analysis_correlation(request: CorrelationModuleRequest):
         statistical_note=corr.statistical_note,
         interpretation=corr.interpretation,
         warnings=corr.warnings,
+        analysis_context=analysis_ctx,
     )

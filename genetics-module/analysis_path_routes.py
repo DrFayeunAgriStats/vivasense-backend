@@ -38,6 +38,7 @@ from module_schemas import (
     PathAnalysisRequest,
     PathAnalysisResponse,
     PathCoefficient,
+    AnalysisContext,
 )
 from multitrait_upload_routes import read_file
 
@@ -346,6 +347,12 @@ async def analysis_path_analysis(request: PathAnalysisRequest):
         standardize=request.standardize,
     )
 
+    analysis_ctx = AnalysisContext(
+        is_single_environment=True,
+        environment_count=1,
+        design_type=ctx.get("design_type")
+    )
+
     return PathAnalysisResponse(
         status="success",
         outcome_trait=outcome_trait,
@@ -358,6 +365,7 @@ async def analysis_path_analysis(request: PathAnalysisRequest):
         indirect_effects=result["indirect_effects"],
         interpretation=interpretation,
         path_diagram_data=result["path_diagram_data"],
+        analysis_context=analysis_ctx,
     )
 
 

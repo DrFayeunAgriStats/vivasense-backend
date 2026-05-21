@@ -33,6 +33,7 @@ from module_schemas import (
     BLUPRequest,
     BLUPResponse,
     GenotypeBLUP,
+    AnalysisContext,
 )
 from multitrait_upload_routes import read_file
 
@@ -358,6 +359,12 @@ async def analysis_blup(request: BLUPRequest) -> BLUPResponse:
         for r in result["blup_rows"]
     ]
 
+    analysis_ctx = AnalysisContext(
+        is_single_environment=True,
+        environment_count=1,
+        design_type=ctx.get("design_type")
+    )
+
     return BLUPResponse(
         status="success",
         trait=trait_col,
@@ -366,4 +373,5 @@ async def analysis_blup(request: BLUPRequest) -> BLUPResponse:
         best_genotypes=result["best_genotypes"],
         variance_components=result["variance_components"],
         interpretation=interpretation,
+        analysis_context=analysis_ctx,
     )

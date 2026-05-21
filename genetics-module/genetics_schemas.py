@@ -57,6 +57,13 @@ class MeanSeparation(BaseModel):
     alpha: float = 0.05
 
 
+class AnalysisContext(BaseModel):
+    """Contextual metadata for the analysis run."""
+    is_single_environment: bool = True
+    environment_count: int = 1
+    design_type: Optional[str] = None
+
+
 class GeneticsResult(BaseModel):
     """Core analysis result"""
     environment_mode: str
@@ -117,6 +124,7 @@ class GeneticsResponse(BaseModel):
     result: Optional[GeneticsResult] = None
     interpretation: Optional[str] = None
     anova_type_warning: Optional[str] = None
+    analysis_context: Optional[AnalysisContext] = None
 
     @field_validator("data_validation", "variance_warnings", mode="before")
     @classmethod

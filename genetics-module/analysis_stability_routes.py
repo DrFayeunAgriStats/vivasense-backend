@@ -46,6 +46,7 @@ from module_schemas import (
     StabilityRequest,
     StabilityResponse,
     WhichWonWhere,
+    AnalysisContext,
 )
 from multitrait_upload_routes import read_file
 
@@ -1304,6 +1305,12 @@ async def analysis_stability(request: StabilityRequest) -> StabilityResponse:
         "No methods were computed. Specify at least one method in the 'methods' field."
     )
 
+    analysis_ctx = AnalysisContext(
+        is_single_environment=True,
+        environment_count=1,
+        design_type=ctx.get("design_type")
+    )
+
     return StabilityResponse(
         status="success",
         trait=trait_col,
@@ -1318,4 +1325,5 @@ async def analysis_stability(request: StabilityRequest) -> StabilityResponse:
         gge_results=gge_results,
         interpretation=interpretation,
         plot_data=plot_data if plot_data else None,
+        analysis_context=analysis_ctx,
     )

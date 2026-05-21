@@ -40,6 +40,7 @@ from module_schemas import (
     MANOVARequest,
     MANOVAResponse,
     UnivariateResult,
+    AnalysisContext,
 )
 from multitrait_upload_routes import read_file
 
@@ -354,6 +355,12 @@ async def analysis_manova(request: MANOVARequest):
         "Pillai's Trace is the most robust statistic when assumptions are uncertain."
     )
 
+    analysis_ctx = AnalysisContext(
+        is_single_environment=True,
+        environment_count=1,
+        design_type=ctx.get("design_type")
+    )
+
     return MANOVAResponse(
         status="success",
         n_traits=len(request.trait_columns),
@@ -372,4 +379,5 @@ async def analysis_manova(request: MANOVARequest):
         effect_sizes=result["effect_sizes"],
         interpretation=interpretation,
         assumptions_note=assumptions_note,
+        analysis_context=analysis_ctx,
     )

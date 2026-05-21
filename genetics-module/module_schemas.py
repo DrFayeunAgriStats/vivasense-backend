@@ -16,7 +16,7 @@ Import hierarchy (leaf → root, no cycles):
 
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
-from genetics_schemas import AnovaTable, MeanSeparation
+from genetics_schemas import AnovaTable, MeanSeparation, AnalysisContext
 
 
 # ============================================================================
@@ -192,6 +192,11 @@ class AnovaTraitResult(BaseModel):
     data_warnings: List[str] = Field(default_factory=list)
     error: Optional[str] = None
     design_type: Optional[str] = None   # e.g. "split_plot_rcbd"; used by export to skip inapplicable sections
+    cv_main_plot_pct: Optional[float] = None
+    cv_sub_plot_pct: Optional[float] = None
+    ms_error_a: Optional[float] = None
+    ms_error_b: Optional[float] = None
+    analysis_context: Optional[AnalysisContext] = None
 
 
 class AnovaModuleResponse(BaseModel):
@@ -200,6 +205,7 @@ class AnovaModuleResponse(BaseModel):
     mode: str
     trait_results: Dict[str, AnovaTraitResult]
     failed_traits: List[str] = Field(default_factory=list)
+    analysis_context: Optional[AnalysisContext] = None
 
 
 # ============================================================================
@@ -230,6 +236,7 @@ class GeneticParametersTraitResult(BaseModel):
     anova_p_gxe: Optional[float] = None
     data_warnings: List[str] = Field(default_factory=list)
     error: Optional[str] = None
+    analysis_context: Optional[AnalysisContext] = None
 
 
 class GeneticParametersModuleResponse(BaseModel):
@@ -238,6 +245,7 @@ class GeneticParametersModuleResponse(BaseModel):
     mode: str
     trait_results: Dict[str, GeneticParametersTraitResult]
     failed_traits: List[str] = Field(default_factory=list)
+    analysis_context: Optional[AnalysisContext] = None
 
 
 # ============================================================================
@@ -272,6 +280,7 @@ class CorrelationModuleResponse(BaseModel):
     statistical_note: Optional[str] = None
     interpretation: Optional[str] = None
     warnings: List[str] = Field(default_factory=list)
+    analysis_context: Optional[AnalysisContext] = None
 
 
 # ============================================================================
@@ -288,6 +297,7 @@ class HeatmapModuleResponse(BaseModel):
     method: str
     interpretation: Optional[str] = None
     warnings: List[str] = Field(default_factory=list)
+    analysis_context: Optional[AnalysisContext] = None
 
 
 # ============================================================================
@@ -400,6 +410,7 @@ class TraitAssociationModuleResponse(BaseModel):
     interpretation_placeholder: InterpretationPlaceholder = Field(default_factory=InterpretationPlaceholder)
     dataset_token: str
     warnings: List[str] = Field(default_factory=list)
+    analysis_context: Optional[AnalysisContext] = None
 
 
 # ============================================================================
@@ -431,6 +442,7 @@ class DescriptiveResponse(BaseModel):
     caution_traits: List[str]
     global_flags: List[str]
     recommendation: str
+    analysis_context: Optional[AnalysisContext] = None
 
 
 # ============================================================================
@@ -592,6 +604,7 @@ class StabilityResponse(BaseModel):
     gge_results: Optional[GGEResults] = None
     interpretation: str
     plot_data: Optional[Dict[str, Any]] = None
+    analysis_context: Optional[AnalysisContext] = None
 
 
 # ============================================================================
@@ -624,6 +637,7 @@ class BLUPResponse(BaseModel):
     best_genotypes: List[str]
     variance_components: Dict[str, float]
     interpretation: str
+    analysis_context: Optional[AnalysisContext] = None
 
 
 # ============================================================================
@@ -661,6 +675,7 @@ class PCAResponse(BaseModel):
     scores: List[GenotypeScore]
     biplot_data: BiplotData
     interpretation: str
+    analysis_context: Optional[AnalysisContext] = None
 
 
 # ============================================================================
@@ -702,6 +717,7 @@ class ClusterResponse(BaseModel):
     silhouette_scores: List[float]
     dendrogram_data: Optional[Dict[str, Any]] = None
     interpretation: str
+    analysis_context: Optional[AnalysisContext] = None
 
 
 # ============================================================================
@@ -759,6 +775,7 @@ class NonparametricResponse(BaseModel):
     posthoc_results: Optional[List[PairwiseComparison]] = None
     interpretation: str
     assumptions_met: Dict[str, Any]
+    analysis_context: Optional[AnalysisContext] = None
 
 
 # ============================================================================
@@ -806,6 +823,7 @@ class MANOVAResponse(BaseModel):
     effect_sizes: Dict[str, float]
     interpretation: str
     assumptions_note: str
+    analysis_context: Optional[AnalysisContext] = None
 
 
 # ============================================================================
@@ -874,6 +892,7 @@ class PathAnalysisResponse(BaseModel):
     indirect_effects: Dict[str, Dict[str, float]]
     interpretation: str
     path_diagram_data: Dict[str, Any]
+    analysis_context: Optional[AnalysisContext] = None
 
 
 # ============================================================================
@@ -921,3 +940,4 @@ class SelectionIndexResponse(BaseModel):
     relative_efficiency: Dict[str, float]
     selected_genotypes: List[str]
     interpretation: str
+    analysis_context: Optional[AnalysisContext] = None

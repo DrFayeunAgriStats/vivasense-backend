@@ -32,6 +32,7 @@ from scipy import stats as scipy_stats
 
 import dataset_cache
 from multitrait_upload_routes import read_file
+from genetics_schemas import AnalysisContext
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Analysis"])
@@ -80,6 +81,7 @@ class PathAnalysisResponse(BaseModel):
     correlation_with_target: Dict[str, float]
     interpretation: str
     warnings: List[str]
+    analysis_context: Optional[AnalysisContext] = None
 
 
 # ============================================================================
@@ -336,6 +338,12 @@ async def analysis_path_analysis(request: PathAnalysisRequest):
 
     direct_effects = {row.trait: row.direct_effect for row in path_rows}
 
+    analysis_ctx = AnalysisContext(
+        is_single_environment=True,
+        environment_count=1,
+        design_type=ctx.get("design_type")
+    )
+
     interpretation = _generate_interpretation(
         path_rows, target_trait, r_squared, residual, n
     )
@@ -354,4 +362,5 @@ async def analysis_path_analysis(request: PathAnalysisRequest):
         correlation_with_target=corr_with_target,
         interpretation=interpretation,
         warnings=warnings,
+        analysis_context=analysis_ctx,
     )

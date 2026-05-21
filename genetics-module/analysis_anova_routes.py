@@ -31,15 +31,44 @@ from fastapi.responses import JSONResponse
 
 from genetics_schemas import GeneticsResponse
 from multitrait_upload_routes import build_observations, check_balance, read_file
-from module_schemas import AnovaModuleResponse, AnovaTraitResult, ModuleRequest
+from module_schemas import AnovaModuleResponse, AnovaTraitResult, ModuleRequest, AnalysisContext
 import dataset_cache
 from analysis_utils import compute_descriptive_stats, compute_per_genotype_stats, classify_precision_level
 from academic_interpretation import detect_analysis_domain
+import math
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Analysis"])
 
 FAILED_TRAIT_CV_MESSAGE = "CV% unavailable due to failed ANOVA estimation."
+
+
+def _get_ms_error_a(anova_table) -> Optional[float]:
+    if anova_table is None or not hasattr(anova_table, "source") or not hasattr(anova_table, "ms"):
+        return None
+    # Match labels like "Rep:MainPlot", "Error A", or "Rep × A"
+    error_a_labels = ["Rep:MainPlot", "Error A", "Rep × A", "rep:main_plot"]
+    for label in error_a_labels:
+        try:
+            idx = anova_table.source.index(label)
+            return float(anova_table.ms[idx]) if anova_table.ms[idx] is not None else None
+        except (ValueError, IndexError, TypeError):
+            continue
+    return None
+
+
+def _get_ms_error_b(anova_table) -> Optional[float]:
+    if anova_table is None or not hasattr(anova_table, "source") or not hasattr(anova_table, "ms"):
+        return None
+    # Match labels like "Residual", "Error B"
+    error_b_labels = ["Error B", "Residuals", "residuals", "Residual", "residual", "error", "Error"]
+    for label in error_b_labels:
+        try:
+            idx = anova_table.source.index(label)
+            return float(anova_table.ms[idx]) if anova_table.ms[idx] is not None else None
+        except (ValueError, IndexError, TypeError):
+            continue
+    return None
 
 
 def _sanitize_cv_percent(cv: Optional[float]) -> Optional[float]:
@@ -114,15 +143,9 @@ def compute_cv_from_anova(
     if not hasattr(anova_table, "source") or not hasattr(anova_table, "ms"):
         return None
 
-    error_terms = ["Error B", "Residuals", "residuals", "Residual", "residual", "error", "Error"]
-    for term in error_terms:
-        try:
-            idx = anova_table.source.index(term)
-            mse = anova_table.ms[idx]
-            if mse is not None and mse >= 0:
-                return float((mse ** 0.5) / grand_mean * 100)
-        except (ValueError, IndexError, TypeError):
-            continue
+    mse = _get_ms_error_b(anova_table)
+    if mse is not None and mse >= 0 and grand_mean != 0:
+        return float((mse ** 0.5) / grand_mean * 100)
     return None
 
 
@@ -1119,6 +1142,24 @@ async def analysis_anova(request: ModuleRequest, http_request: Request):
             sub_significant = is_subplot_significant(res.anova_table)     if is_sp else None
             int_significant = is_interaction_significant(res.anova_table) if is_sp else None
 
+            # Extract MS error values and calculate per-stratum CV% for split-plot
+            ms_error_a = _get_ms_error_a(res.anova_table)
+            ms_error_b = _get_ms_error_b(res.anova_table)
+            cv_main_plot_pct = None
+            cv_sub_plot_pct = None
+
+            if is_sp and res.grand_mean and res.grand_mean != 0:
+                if ms_error_a is not None and ms_error_a >= 0:
+                    cv_main_plot_pct = round((math.sqrt(ms_error_a) / res.grand_mean) * 100, 2)
+                if ms_error_b is not None and ms_error_b >= 0:
+                    cv_sub_plot_pct = round((math.sqrt(ms_error_b) / res.grand_mean) * 100, 2)
+
+            analysis_ctx = AnalysisContext(
+                is_single_environment=True,
+                environment_count=1,
+                design_type=design_type
+            )
+
             # Extract dual CV from variance_components for split-plot
             if is_sp and isinstance(res.variance_components, dict):
                 vc = res.variance_components
@@ -1189,6 +1230,11 @@ async def analysis_anova(request: ModuleRequest, http_request: Request):
                 interpretation=anova_interpretation,
                 data_warnings=balance_warnings,
                 design_type=design_type,
+                cv_main_plot_pct=cv_main_plot_pct,
+                cv_sub_plot_pct=cv_sub_plot_pct,
+                ms_error_a=ms_error_a,
+                ms_error_b=ms_error_b,
+                analysis_context=analysis_ctx,
             )
             return trait, "success", result_obj
 
@@ -1223,9 +1269,16 @@ async def analysis_anova(request: ModuleRequest, http_request: Request):
         len(trait_results) - len(failed_traits), len(failed_traits)
     )
 
+    analysis_context = AnalysisContext(
+        is_single_environment=True,
+        environment_count=1,
+        design_type=design_type
+    )
+
     return AnovaModuleResponse(
         dataset_token=request.dataset_token,
         mode=mode,
         trait_results=trait_results,
         failed_traits=failed_traits,
+        analysis_context=analysis_context,
     )

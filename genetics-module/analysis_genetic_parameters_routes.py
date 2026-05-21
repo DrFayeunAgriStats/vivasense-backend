@@ -32,6 +32,7 @@ from module_schemas import (
     GeneticParametersTraitResult,
     DescriptiveStats,
     ModuleRequest,
+    AnalysisContext,
 )
 from analysis_utils import compute_descriptive_stats
 import dataset_cache
@@ -304,6 +305,11 @@ async def analysis_genetic_parameters(request: ModuleRequest):
                 max=trait_descriptive_stats.get("max"),
                 range=trait_descriptive_stats.get("range"),
             )
+            analysis_ctx = AnalysisContext(
+                is_single_environment=True,
+                environment_count=1,
+                design_type=design_type
+            )
             trait_results[trait] = GeneticParametersTraitResult(
                 trait=trait,
                 status="success",
@@ -324,6 +330,7 @@ async def analysis_genetic_parameters(request: ModuleRequest):
                 anova_f_gxe=None,
                 anova_p_gxe=None,
                 data_warnings=[_NON_APPLICABLE_GP_MESSAGE],
+                analysis_context=analysis_ctx,
             )
 
         return GeneticParametersModuleResponse(
@@ -422,6 +429,12 @@ async def analysis_genetic_parameters(request: ModuleRequest):
             # Build interpretation text (now returns ANOVA flags too)
             interp_text, breeding_text, env_sig, gxe_sig, f_env, p_env, f_gxe, p_gxe = _build_gp_text(trait, res)
 
+                analysis_ctx = AnalysisContext(
+                    is_single_environment=True,
+                    environment_count=1,
+                    design_type=design_type
+                )
+
                 # Attach selection intensity label for reporting
                 if gp:
                     gp["selection_intensity_label"] = intensity["label"]
@@ -448,6 +461,7 @@ async def analysis_genetic_parameters(request: ModuleRequest):
                 anova_f_gxe=f_gxe,
                 anova_p_gxe=p_gxe,
                 data_warnings=balance_warnings,
+                analysis_context=analysis_ctx,
             )
             return trait, "success", result_obj
 
@@ -469,9 +483,16 @@ async def analysis_genetic_parameters(request: ModuleRequest):
         if status == "failed":
             failed_traits.append(trait)
 
+    analysis_context = AnalysisContext(
+        is_single_environment=True,
+        environment_count=1,
+        design_type=design_type
+    )
+
     return GeneticParametersModuleResponse(
         dataset_token=request.dataset_token,
         mode=mode,
         trait_results=trait_results,
         failed_traits=failed_traits,
+        analysis_context=analysis_context,
     )

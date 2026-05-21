@@ -3,7 +3,7 @@ import logging
 import pandas as pd
 from fastapi import APIRouter, HTTPException
 
-from module_schemas import ModuleRequest, DescriptiveResponse, TraitDescriptiveResult
+from module_schemas import ModuleRequest, DescriptiveResponse, TraitDescriptiveResult, AnalysisContext
 import dataset_cache
 from multitrait_upload_routes import read_file
 
@@ -79,6 +79,12 @@ async def analyze_descriptive_stats(request: ModuleRequest):
 
     recommendation = generate_global_recommendation(reliable_traits, caution_traits, list(all_flags))
 
+    analysis_ctx = AnalysisContext(
+        is_single_environment=True,
+        environment_count=1,
+        design_type=ctx.get("design_type")
+    )
+
     return DescriptiveResponse(
         dataset_token=request.dataset_token,
         overview={"n_traits": len(request.trait_columns), "n_observations": len(df)},
@@ -86,5 +92,6 @@ async def analyze_descriptive_stats(request: ModuleRequest):
         reliable_traits=reliable_traits,
         caution_traits=caution_traits,
         global_flags=list(all_flags),
-        recommendation=recommendation
+        recommendation=recommendation,
+        analysis_context=analysis_ctx,
     )

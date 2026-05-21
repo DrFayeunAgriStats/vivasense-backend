@@ -46,6 +46,7 @@ from module_schemas import (
     ClusterResponse,
     ClusterSummary,
     GenotypeCluster,
+    AnalysisContext,
 )
 from multitrait_upload_routes import read_file
 
@@ -422,6 +423,12 @@ async def analysis_cluster(request: ClusterRequest) -> ClusterResponse:
         for cs in result["cluster_summary"]
     ]
 
+    analysis_ctx = AnalysisContext(
+        is_single_environment=True,
+        environment_count=1,
+        design_type=ctx.get("design_type")
+    )
+
     return ClusterResponse(
         status="success",
         n_genotypes=result["n_genotypes"],
@@ -433,4 +440,5 @@ async def analysis_cluster(request: ClusterRequest) -> ClusterResponse:
         silhouette_scores=result["silhouette_scores"],
         dendrogram_data=result["dendrogram_data"],
         interpretation=interpretation,
+        analysis_context=analysis_ctx,
     )

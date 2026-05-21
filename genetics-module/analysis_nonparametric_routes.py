@@ -39,6 +39,7 @@ from module_schemas import (
     NonparametricRequest,
     NonparametricResponse,
     PairwiseComparison,
+    AnalysisContext,
 )
 from multitrait_upload_routes import read_file
 
@@ -423,6 +424,12 @@ async def analysis_nonparametric(request: NonparametricRequest):
         posthoc=posthoc_results,
     )
 
+    analysis_ctx = AnalysisContext(
+        is_single_environment=True,
+        environment_count=1,
+        design_type=ctx.get("design_type")
+    )
+
     return NonparametricResponse(
         status="success",
         test_type=test_type,
@@ -439,4 +446,5 @@ async def analysis_nonparametric(request: NonparametricRequest):
         posthoc_results=posthoc_results,
         interpretation=interpretation,
         assumptions_met=assumptions,
+        analysis_context=analysis_ctx,
     )

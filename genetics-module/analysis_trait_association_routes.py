@@ -27,7 +27,7 @@ from trait_association_interpretation import (
     _compute_risk_flags,
 )
 from multitrait_upload_routes import read_file
-from module_schemas import TraitAssociationModuleRequest, TraitAssociationModuleResponse, SignificantPair, StrongestPair, TraitAssociationSummary, TraitAssociationHeatmap, InterpretationPlaceholder
+from module_schemas import TraitAssociationModuleRequest, TraitAssociationModuleResponse, SignificantPair, StrongestPair, TraitAssociationSummary, TraitAssociationHeatmap, InterpretationPlaceholder, AnalysisContext
 import dataset_cache
 
 logger = logging.getLogger(__name__)
@@ -288,6 +288,12 @@ async def analyze_trait_association(request: TraitAssociationModuleRequest):
         environment_context=request.environment_context
     )
 
+    analysis_ctx = AnalysisContext(
+        is_single_environment=True,
+        environment_count=1,
+        design_type=ctx.get("design_type")
+    )
+
     return TraitAssociationModuleResponse(
         analysis_unit=request.analysis_unit,
         n_observations=n_observations,
@@ -306,4 +312,5 @@ async def analyze_trait_association(request: TraitAssociationModuleRequest):
         interpretation=interpretation_text,
         dataset_token=request.dataset_token,
         warnings=warnings,
+        analysis_context=analysis_ctx,
     )

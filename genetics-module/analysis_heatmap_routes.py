@@ -32,7 +32,7 @@ from pydantic import Field
 
 from trait_relationships_routes import _build_wide_records
 from multitrait_upload_routes import read_file
-from module_schemas import HeatmapModuleResponse
+from module_schemas import HeatmapModuleResponse, AnalysisContext
 from analysis_correlation_routes import CorrelationModuleRequest
 import dataset_cache
 
@@ -183,6 +183,12 @@ async def analysis_heatmap(request: CorrelationModuleRequest):
         )
     interpretation = "  ".join(interp_parts)
 
+    analysis_ctx = AnalysisContext(
+        is_single_environment=True,
+        environment_count=1,
+        design_type=ctx.get("design_type")
+    )
+
     return HeatmapModuleResponse(
         dataset_token=request.dataset_token,
         matrix=r_matrix,
@@ -192,4 +198,5 @@ async def analysis_heatmap(request: CorrelationModuleRequest):
         method=request.method,
         interpretation=interpretation,
         warnings=warnings,
+        analysis_context=analysis_ctx,
     )

@@ -33,6 +33,7 @@ from module_schemas import (
     GenotypeScore,
     PCARequest,
     PCAResponse,
+    AnalysisContext,
 )
 from multitrait_upload_routes import read_file
 
@@ -345,6 +346,12 @@ async def analysis_pca(request: PCARequest) -> PCAResponse:
         for s in result["scores"]
     ]
 
+    analysis_ctx = AnalysisContext(
+        is_single_environment=True,
+        environment_count=1,
+        design_type=ctx.get("design_type")
+    )
+
     biplot_data = BiplotData(
         loadings=result["loadings"],
         scores=scores_pydantic,
@@ -360,4 +367,5 @@ async def analysis_pca(request: PCARequest) -> PCAResponse:
         scores=scores_pydantic,
         biplot_data=biplot_data,
         interpretation=interpretation,
+        analysis_context=analysis_ctx,
     )
