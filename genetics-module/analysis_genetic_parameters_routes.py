@@ -37,6 +37,17 @@ from analysis_utils import compute_descriptive_stats
 import dataset_cache
 from genetics_interpretation import generate_genetics_interpretation
 
+SELECTION_INTENSITY_TABLE = {
+    0.05: {"i": 2.063, "label": "Top 5%  (i = 2.063)"},
+    0.10: {"i": 1.755, "label": "Top 10% (i = 1.755)"},
+    0.20: {"i": 1.400, "label": "Top 20% (i = 1.400)"},
+    0.25: {"i": 1.271, "label": "Top 25% (i = 1.271)"},
+    0.50: {"i": 0.798, "label": "Top 50% (i = 0.798)"},
+}
+DEFAULT_SELECTION_INTENSITY = {
+    "pct": 0.20, "i": 1.400, "label": "Top 20% (i = 1.400)"
+}
+
 logger = logging.getLogger(__name__)
 
 _NON_GENETIC_EXPERIMENT_KEYWORDS = {
@@ -337,6 +348,12 @@ async def analysis_genetic_parameters(request: ModuleRequest):
 
             if cached is None:
                 async with semaphore:
+                    # Resolve selection intensity from lookup table
+                    selection_pct = ctx.get("selection_intensity", 0.20)
+                    intensity = SELECTION_INTENSITY_TABLE.get(
+                        selection_pct, DEFAULT_SELECTION_INTENSITY
+                    )
+
                     balance_warnings = check_balance(
                         df,
                         geno_col,
@@ -367,6 +384,7 @@ async def analysis_genetic_parameters(request: ModuleRequest):
                         trait_name=trait,
                         random_environment=random_env,
                         crd_mode=crd_mode,
+                        selection_intensity=intensity["i"],
                     )
 
                 if result_dict.get("status") == "ERROR":
@@ -403,6 +421,10 @@ async def analysis_genetic_parameters(request: ModuleRequest):
 
             # Build interpretation text (now returns ANOVA flags too)
             interp_text, breeding_text, env_sig, gxe_sig, f_env, p_env, f_gxe, p_gxe = _build_gp_text(trait, res)
+
+                # Attach selection intensity label for reporting
+                if gp:
+                    gp["selection_intensity_label"] = intensity["label"]
 
             result_obj = GeneticParametersTraitResult(
                 trait=trait,

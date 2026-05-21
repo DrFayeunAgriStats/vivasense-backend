@@ -125,7 +125,7 @@ async def upload_preview_v2(file: UploadFile = File(...)):
             "mode":               mode_suggestion,
             "design_type":        mode_suggestion,
             "random_environment": False,
-            "selection_intensity": 2.06,
+            "selection_intensity": 0.05,
         })
         logger.info("upload/preview: auto-registered dataset token %s", preview_token)
     except Exception as exc:

@@ -406,7 +406,7 @@ def _describe_env_effects(
     analysis_type: Optional[str] = None,
 ) -> str:
     if _is_single_environment_analysis(analysis_type):
-        return ""
+        return "Single-environment analysis. Cross-environment inference requires data from ≥ 2 environments."
 
     if p_env is None and p_gxe is None and f_env in (None, 0) and f_gxe in (None, 0):
         return ""
@@ -548,6 +548,9 @@ def generate_genetics_interpretation_sections(
         genetic_advance_interp = (
             f"The genetic advance as a percent of the mean (GAM) is {gam:.2f}% (high), "
             f"suggesting that direct phenotypic selection should produce substantial response "
+            "High H² (broad-sense, entry-mean) supports reliable phenotypic selection. "
+            "Additive vs non-additive gene action cannot be determined from broad-sense H² alone. "
+            "Narrow-sense h² from mating designs is required. "
             f"in {trait_name} in the next generation."
         )
     elif gam_class == "Medium":
@@ -795,6 +798,9 @@ def generate_genetics_interpretation(
                 f"The estimated broad-sense heritability (H2 = {h2:.3f}) indicates HIGH genetic control "
                 f"of '{trait_name}'. The genetic advance as percent of mean (GAM = {gam:.2f}%) is HIGH, "
                 "suggesting substantial expected response to direct selection. "
+                "High H² (broad-sense, entry-mean) supports reliable phenotypic selection. "
+                "Additive vs non-additive gene action cannot be determined from broad-sense H² alone. "
+                "Narrow-sense h² from mating designs is required. "
                 + _select_narrative_variant(trait_name, _sel_variants)
             )
     elif h2_class == "high" and gam_class == "Medium":

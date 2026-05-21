@@ -77,7 +77,7 @@ class GeneticsRequest(BaseModel):
         description="Multi-mode only: treat environment as random effect"
     )
     selection_intensity: Optional[float] = Field(
-        default=1.4,
+        default=0.20,
         description="Selection intensity (i) used for GA/GAM computation"
     )
 
@@ -116,6 +116,7 @@ class GeneticParameters(BaseModel):
     PCV: Optional[float] = None
     GAM: Optional[float] = None
     GAM_percent: Optional[float] = None
+    selection_intensity_label: Optional[str] = None
     selection_intensity: float = 1.4
 
 

@@ -140,261 +140,41 @@ def _anova_env_effect_stats(at: Optional[AnovaTable]) -> Tuple[Optional[float], 
 
 _HEADER_BG = "F2F2F2"
 
+# Authorized selection intensity values from Falconer & Mackay (1996)
+SELECTION_INTENSITY_TABLE = {
+    0.05: {"i": 2.063, "label": "Top 5%  (i = 2.063)"},
+    0.10: {"i": 1.755, "label": "Top 10% (i = 1.755)"},
+    0.20: {"i": 1.400, "label": "Top 20% (i = 1.400)"},
+    0.25: {"i": 1.271, "label": "Top 25% (i = 1.271)"},
+    0.50: {"i": 0.798, "label": "Top 50% (i = 0.798)"},
+}
 
-def _collect_doc_text(doc: Document) -> str:
-    chunks: List[str] = []
-    chunks.extend(p.text for p in doc.paragraphs if p.text)
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                if cell.text:
-                    chunks.append(cell.text)
-    return "\n".join(chunks)
-
-
-# ============================================================================
-# NUMBER FORMATTING
-# ============================================================================
-
-def _fmt(value: Optional[float], decimals: int = 2, thousands: bool = True) -> str:
-    if value is None:
-        return "—"
-    return f"{value:,.{decimals}f}" if thousands else f"{value:.{decimals}f}"
-
-
-def _clean_cv_percent(value: Optional[float]) -> Optional[float]:
-    if value is None:
-        return None
-    try:
-        return abs(float(value))
-    except (TypeError, ValueError):
-        return None
-
-
-def _fmt_cv(value: Optional[float]) -> str:
-    return _fmt(_clean_cv_percent(value), 2)
-
-
-def _cv_precision_narrative(cv_percent: Optional[float], domain: Optional[str] = "plant_breeding") -> str:
-    cv_val = _clean_cv_percent(cv_percent)
-    if cv_val is None:
-        return ""
-    if cv_val < 10:
-        base = "Residual variability was relatively low, suggesting high experimental precision within the scope of this design."
-    elif cv_val < 20:
-        base = (
-            "Experimental variability appeared acceptable for treatment comparison under the evaluated conditions."
-            if not is_plant_breeding_domain(domain)
-            else "Experimental variability appeared acceptable for genotype comparison under the evaluated conditions."
-        )
-    else:
-        base = "Residual variability was comparatively high, and findings should therefore be interpreted cautiously."
-    if cv_val < 1:
-        base += " Residual variability was extremely low relative to the trait mean. Verify raw data consistency and experimental realism."
-    return base
-
-
-def _find_breeding_governance_hits(text: str, analysis_type: Optional[str]) -> List[str]:
-    lower_text = (text or "").lower()
-    hits: List[str] = []
-    blocked_patterns = [
-        ("additive gene effects", "additive gene effects"),
-        ("non-additive effects", "non-additive effects"),
-        ("clean genetic signal", "clean genetic signal"),
-        ("top-performing genotype", "top-performing genotype"),
-        ("negligible environmental variance inflation", "negligible environmental variance inflation"),
-    ]
-    for label, needle in blocked_patterns:
-        if needle in lower_text:
-            hits.append(label)
-    if re.search(r"\benvironmental effects[^.]*\bnon-significant\b|\bnon-significant\b[^.]*\benvironmental effects\b", lower_text):
-        hits.append("environmental effects non-significant")
-
-    if _is_single_environment_analysis(analysis_type) and (
-        "gxe interaction was non-significant" in lower_text or "gx e interaction was non-significant" in lower_text
-    ):
-        hits.append("GxE non-significant (single-environment)")
-    return hits
-
-
-def _cv_from_anova_error_ms(at: Optional[AnovaTable], grand_mean: Optional[float]) -> Optional[float]:
-    if at is None or grand_mean is None:
-        return None
-    try:
-        gm = float(grand_mean)
-    except (TypeError, ValueError):
-        return None
-    if gm == 0:
-        return None
-    if not hasattr(at, "source") or not hasattr(at, "ms"):
-        return None
-
-    error_terms = ["Error B", "Residuals", "residuals", "Residual", "residual", "error", "Error"]
-    for term in error_terms:
-        try:
-            idx = at.source.index(term)
-            mse = at.ms[idx]
-            if mse is None:
-                continue
-            mse_val = float(mse)
-            if mse_val < 0:
-                continue
-            return abs((mse_val ** 0.5) / gm * 100.0)
-        except (ValueError, IndexError, TypeError):
-            continue
-    return None
-
-
-def _resolve_cv_percent(result: GeneticsResult) -> Optional[float]:
-    ds = result.descriptive_stats or {}
-    ds_cv = _clean_cv_percent(ds.get("cv_percent")) if isinstance(ds, dict) else None
-    if ds_cv is not None:
-        return ds_cv
-    return _cv_from_anova_error_ms(result.anova_table, result.grand_mean)
-
-
-def _map_precision_label(cv_percent: Optional[float]) -> Optional[str]:
-    cv = _clean_cv_percent(cv_percent)
-    if cv is None:
-        return None
-    if cv < 10:
-        return "high"
-    if cv < 20:
-        return "acceptable"
-    return "caution"
-
-
-def _find_export_quality_hits(report_text: str, data: "DownloadReportRequest") -> List[str]:
-    hits: List[str] = []
-    lower_text = report_text.lower()
-
-    has_success_trait = any(
-        (tr is not None)
-        and (tr.status == "success")
-        and (tr.analysis_result is not None)
-        and (tr.analysis_result.result is not None)
-        for tr in (data.trait_results or {}).values()
-    )
-    if has_success_trait and "cv (%): unavailable" in lower_text:
-        hits.append("CV (%): Unavailable present despite successful ANOVA trait(s)")
-
-    s1 = _DUPLICATE_ENV_SENTENCE_1.lower()
-    s2 = _DUPLICATE_ENV_SENTENCE_2.lower()
-    if s1 in lower_text and s2 in lower_text:
-        hits.append("Duplicate environmental variance interpretation sentences detected")
-
-    for phrase in _REPORT_BLOCKED_PHRASES:
-        if phrase in lower_text:
-            hits.append(f"Forbidden phrase detected: {phrase}")
-
-    return hits
-
-
-def _fmt_p(p: Optional[float]) -> str:
-    if p is None:
-        return "—"
-    if p < 0.001:
-        return "< 0.001 ***"
-    if p < 0.01:
-        return f"{p:.4f} **"
-    if p < 0.05:
-        return f"{p:.4f} *"
-    return f"{p:.4f} ns"
-
-
-def _sig_label(p: Optional[float]) -> str:
-    if p is None:
-        return ""
-    if p < 0.001:
-        return "***"
-    if p < 0.01:
-        return "**"
-    if p < 0.05:
-        return "*"
-    return "ns"
-
-
-def _p_for_sentence(p: Optional[float]) -> str:
-    if p is None:
-        return "p = —"
-    if p < 0.001:
-        return "p < 0.001"
-    return f"p = {p:.3f}"
-
-
-def _extract_source_stats(at: Optional[AnovaTable], source_name: str) -> Tuple[Optional[float], Optional[float], Optional[float]]:
-    if at is None or not at.source:
-        return None, None, None
-    try:
-        idx = at.source.index(source_name)
-    except ValueError:
-        return None, None, None
-
-    f_val = at.f_value[idx] if idx < len(at.f_value) else None
-    p_val = at.p_value[idx] if idx < len(at.p_value) else None
-    ss_val = at.ss[idx] if idx < len(at.ss) else None
-    return f_val, p_val, ss_val
-
-
-def _eta_squared_for_source(at: Optional[AnovaTable], source_name: str) -> Optional[float]:
-    if at is None or not at.source or not at.ss:
-        return None
-    _, _, ss_effect = _extract_source_stats(at, source_name)
-    if ss_effect is None:
-        return None
-
-    # Exclude Intercept row — its large SS would artificially deflate η².
-    # η² = SS_source / SS_total where SS_total = Σ of all non-intercept sources
-    # (i.e., replication + treatment + error), following the standard formula.
-    ss_total = sum(
-        float(at.ss[i])
-        for i, src in enumerate(at.source)
-        if at.ss[i] is not None
-        and str(src).strip().lower() not in {"(intercept)", "intercept"}
-    )
-    if ss_total <= 0:
-        return None
-    return float(ss_effect) / ss_total
-
-
-_SELECTION_INTENSITY_TABLE = {
-    5: 2.06,
-    7: 1.755,
-    10: 1.40,
-    15: 1.268,
-    20: 1.11,
-    30: 0.966,
+DEFAULT_SELECTION_INTENSITY = {
+    "pct": 0.20,
+    "i": 1.400,
+    "label": "Top 20% (i = 1.400)"
 }
 
 
-def _selection_percent_for_intensity(selection_intensity: Optional[float]) -> Optional[int]:
+def _selection_label_for_intensity(selection_intensity: Optional[float]) -> str:
     if selection_intensity is None:
-        return None
+        return DEFAULT_SELECTION_INTENSITY["label"]
     try:
         si = float(selection_intensity)
     except (TypeError, ValueError):
-        return None
+        return DEFAULT_SELECTION_INTENSITY["label"]
 
-    closest_pct = min(
-        _SELECTION_INTENSITY_TABLE,
-        key=lambda pct: abs(_SELECTION_INTENSITY_TABLE[pct] - si),
+    # Match to the closest 'i' value in the authorized table
+    best_pct = min(
+        SELECTION_INTENSITY_TABLE.keys(),
+        key=lambda pct: abs(SELECTION_INTENSITY_TABLE[pct]["i"] - si)
     )
-    return int(closest_pct)
+    return SELECTION_INTENSITY_TABLE[best_pct]["label"]
 
 
 def _selection_intensity_disclosure(selection_intensity: Optional[float]) -> str:
-    if selection_intensity is None:
-        selection_intensity = 1.4
-    pct = _selection_percent_for_intensity(selection_intensity)
-    if pct is None:
-        return (
-            f"Genetic Advance estimated using i = {_fmt(selection_intensity, 2, thousands=False)} "
-            "(Falconer & Mackay, 1996)."
-        )
-    return (
-        f"Genetic Advance estimated using i = {_fmt(selection_intensity, 2, thousands=False)} "
-        f"corresponding to {pct}% selection intensity (Falconer & Mackay, 1996)."
-    )
+    label = _selection_label_for_intensity(selection_intensity)
+    return f"Genetic Advance estimated using {label} (Falconer & Mackay, 1996)."
 
 
 # ============================================================================

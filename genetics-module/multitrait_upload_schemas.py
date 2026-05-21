@@ -117,7 +117,7 @@ class UploadAnalysisRequest(BaseModel):
     trait_columns: List[str] = Field(..., min_length=1)
     mode: str = Field(..., pattern="^(single|multi)$")
     random_environment: bool = False
-    selection_intensity: float = 1.4
+    selection_intensity: float = 0.20
     module: Optional[str] = Field(
         default=None,
         description="Analysis module: 'anova' | 'genetic_parameters' | 'correlation' | 'heatmap'. "

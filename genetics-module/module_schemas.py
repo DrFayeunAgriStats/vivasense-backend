@@ -86,7 +86,7 @@ class UploadDatasetRequest(BaseModel):
     )
     mode: str = Field(default="single", pattern="^(single|multi)$")
     random_environment: bool = False
-    selection_intensity: float = Field(default=2.06, ge=0.0)
+    selection_intensity: float = Field(default=0.20, ge=0.0)
 
 
 class UploadDatasetResponse(BaseModel):

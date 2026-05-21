@@ -28,6 +28,16 @@ import pandas as pd
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
+SELECTION_INTENSITY_TABLE = {
+    0.05: {"i": 2.063, "label": "Top 5%  (i = 2.063)"},
+    0.10: {"i": 1.755, "label": "Top 10% (i = 1.755)"},
+    0.20: {"i": 1.400, "label": "Top 20% (i = 1.400)"},
+    0.25: {"i": 1.271, "label": "Top 25% (i = 1.271)"},
+    0.50: {"i": 0.798, "label": "Top 50% (i = 0.798)"},
+}
+DEFAULT_SELECTION_INTENSITY = {
+    "pct": 0.20, "i": 1.400, "label": "Top 20% (i = 1.400)"
+}
 from utils.column_utils import sanitise_column_names
 import dataset_cache
 from multitrait_upload_schemas import (
@@ -930,6 +940,12 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
             print(f"[PIPELINE] Running {actual_module.upper()} pipeline for trait: {trait}", flush=True)
             logger.info("Analyzing trait: %s (module=%s, crd=%s)", trait, actual_module, crd_mode)
             try:
+                # Resolve selection intensity from authoritative lookup table
+                selection_pct = request.selection_intensity or 0.20
+                intensity = SELECTION_INTENSITY_TABLE.get(
+                    selection_pct, DEFAULT_SELECTION_INTENSITY
+                )
+
                 balance_warnings = check_balance(
                     df=df,
                     genotype_col=request.genotype_column,
@@ -959,7 +975,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                     trait_name=trait,
                     random_environment=request.random_environment,
                     crd_mode=crd_mode,
-                    selection_intensity=request.selection_intensity,
+                    selection_intensity=intensity["i"],
                 )
 
                 # R returns status="ERROR" when computation fails
@@ -984,6 +1000,10 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                     raise RuntimeError(f"R ERROR: {r_msg}")
 
                 r_result = result_dict.get("result") or {}
+                
+                # Attach selection intensity label for reporting
+                if "result" in result_dict and "genetic_parameters" in result_dict["result"]:
+                    result_dict["result"]["genetic_parameters"]["selection_intensity_label"] = intensity["label"]
                 
                 # Enforce strict module isolation — ANOVA never exposes genetic parameters
                 if actual_module == "anova":

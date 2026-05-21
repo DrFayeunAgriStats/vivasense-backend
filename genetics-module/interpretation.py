@@ -95,7 +95,9 @@ class InterpretationEngine:
                 f"The estimated broad-sense heritability (H\\u00b2 = {h2:.3f}) indicates HIGH genetic control "
                 f"of '{trait_name}'. The genetic advance as percent of mean (GAM = {gam:.2f}%) is HIGH, "
                 "suggesting substantial expected response to direct selection. "
-                "Direct phenotypic selection may be effective under the conditions evaluated in this study."
+                "High H² (broad-sense, entry-mean) supports reliable phenotypic selection. "
+                "Additive vs non-additive gene action cannot be determined from broad-sense H² alone. "
+                "Narrow-sense h² from mating designs is required."
             )
         elif h2_class == "high" and gam_class == "Medium":
             interpretation = (
