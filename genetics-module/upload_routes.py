@@ -182,12 +182,19 @@ async def upload_dataset(request: UploadDatasetRequest):
     # Numeric-coded treatment columns manually toggled in the mapping UI.
     numeric_factor_columns = [c for c in request.numeric_factor_columns if c and c.strip()]
 
-    # Enforce design presence
+
+    # Enforce design presence and strict validation
     design = request.design_type
-    if not design:
+    if not design or not isinstance(design, str) or not design.strip():
         raise HTTPException(
             status_code=400,
             detail="Experimental design type is missing. Please select a design before analysis."
+        )
+    design = design.lower().strip()
+    if design not in {"crd", "rcbd", "split_plot_rcbd", "factorial"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown design type: {design}. Must be one of: crd, rcbd, split_plot_rcbd, factorial."
         )
 
     # Validate column mapping selections for the chosen design type.

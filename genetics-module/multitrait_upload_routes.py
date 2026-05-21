@@ -280,7 +280,8 @@ def read_file(content: bytes, file_type: str) -> tuple[pd.DataFrame, dict[str, s
     if empty_cols:
         raise ValueError("Your dataset contains empty column headers.")
 
-    df, column_name_mapping = sanitise_column_names(df)
+    from column_utils import clean_and_sanitise_column_names
+    df, column_name_mapping = clean_and_sanitise_column_names(df)
     logger.info("Column name mapping: %s", column_name_mapping)
     return df, column_name_mapping
 

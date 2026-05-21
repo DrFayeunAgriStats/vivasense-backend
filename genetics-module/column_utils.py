@@ -21,7 +21,11 @@ def clean_and_sanitise_column_names(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dic
     # Check for empty headers
     empty_cols = [col for col in df.columns if str(col).strip() == ""]
     if empty_cols:
-        raise ValueError("Your dataset contains empty column headers. Please check your file and re-upload.")
+        raise ValueError(
+            "Your dataset contains empty column headers. "
+            "Please open your file and ensure all columns have a valid name before uploading. "
+            f"Problem columns: {empty_cols}"
+        )
 
     # Sanitise for R
     mapping: Dict[str, str] = {}

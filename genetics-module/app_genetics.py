@@ -218,19 +218,19 @@ async def vivasense_mode_gate(request: Request, call_next):
             )
     return await call_next(request)
 
+
+# --- CORS middleware must be added BEFORE any routers or other middleware ---
+ALLOWED_ORIGINS = [
+    "https://www.fieldtoinsightacademy.com.ng",
+    "http://localhost:5173",
+    "http://localhost:3000",
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://www.fieldtoinsightacademy.com.ng",
-        "https://fia-institute-portal.vercel.app",
-        "http://localhost:8080",
-        "http://localhost:5173",
-        "http://localhost:3000",
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Content-Disposition", "Content-Length", "Content-Type"],
 )
 
 
