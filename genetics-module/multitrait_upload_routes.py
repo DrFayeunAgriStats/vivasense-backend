@@ -38,7 +38,7 @@ SELECTION_INTENSITY_TABLE = {
 DEFAULT_SELECTION_INTENSITY = {
     "pct": 0.20, "i": 1.400, "label": "Top 20% (i = 1.400)"
 }
-from utils.column_utils import sanitise_column_names
+from column_utils import sanitise_column_names
 import dataset_cache
 from multitrait_upload_schemas import (
     DatasetSummary,
