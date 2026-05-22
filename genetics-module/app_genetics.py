@@ -222,6 +222,9 @@ async def vivasense_mode_gate(request: Request, call_next):
 # --- CORS middleware must be added BEFORE any routers or other middleware ---
 ALLOWED_ORIGINS = [
     "https://www.fieldtoinsightacademy.com.ng",
+    "https://fieldtoinsightacademy.com.ng",
+    "https://www.vivasensestat.com",
+    "https://vivasensestat.com",
     "http://localhost:5173",
     "http://localhost:3000",
 ]
