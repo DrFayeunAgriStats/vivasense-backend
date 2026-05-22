@@ -86,22 +86,22 @@ def _precision_label_from_cv(cv: Optional[float]) -> Optional[str]:
     if cv_val is None:
         return None
     if cv_val < 10:
-        return "high"
+        return "good"
     if cv_val < 20:
-        return "acceptable"
-    return "caution"
+        return "moderate"
+    return "low"
 
 
 def _map_precision_level(precision_level: Optional[str], cv: Optional[float]) -> Optional[str]:
-    if precision_level in {"high", "acceptable", "caution"}:
+    if precision_level in {"good", "moderate", "low"}:
         return precision_level
-    if precision_level == "good":
-        return "high"
-    if precision_level == "moderate":
-        return "acceptable"
-    if precision_level == "low":
-        return "caution"
-    return _precision_label_from_cv(cv)
+    if precision_level == "high" or precision_level == "good":
+        return "good"
+    if precision_level == "acceptable" or precision_level == "moderate":
+        return "moderate"
+    if precision_level == "caution" or precision_level == "low":
+        return "low"
+    return classify_precision_level(cv)
 
 
 def _cv_tier_narrative(cv: Optional[float], domain: str = "general") -> Optional[str]:
@@ -819,7 +819,7 @@ def generate_anova_interpretation(
                 "major limitation, as treatment effects differ across environments and "
                 "broad generalisation of results requires caution."
             )
-    if cv_interpretation_flag == "cv_available" and precision_level == "caution":
+    if cv_interpretation_flag == "cv_available" and precision_level == "low":
         risks.append(
             "The caution-level experimental precision introduces uncertainty in the results "
             "and suggests potential issues with experimental control or replication."
@@ -866,7 +866,7 @@ def generate_anova_interpretation(
                 "Further evaluation across additional environments and management conditions "
                 "may help validate treatment consistency."
             )
-    if cv_interpretation_flag == "cv_available" and precision_level == "caution":
+    if cv_interpretation_flag == "cv_available" and precision_level == "low":
         recs.append(
             "Improve experimental design by increasing replication or enhancing "
             "environmental control to reduce variability."

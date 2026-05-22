@@ -429,15 +429,15 @@ async def analysis_genetic_parameters(request: ModuleRequest):
             # Build interpretation text (now returns ANOVA flags too)
             interp_text, breeding_text, env_sig, gxe_sig, f_env, p_env, f_gxe, p_gxe = _build_gp_text(trait, res)
 
-                analysis_ctx = AnalysisContext(
-                    is_single_environment=True,
-                    environment_count=1,
-                    design_type=design_type
-                )
+            analysis_ctx = AnalysisContext(
+                is_single_environment=True,
+                environment_count=1,
+                design_type=design_type
+            )
 
-                # Attach selection intensity label for reporting
-                if gp:
-                    gp["selection_intensity_label"] = intensity["label"]
+            # Attach selection intensity label for reporting
+            if gp:
+                gp["selection_intensity_label"] = intensity["label"]
 
             result_obj = GeneticParametersTraitResult(
                 trait=trait,
