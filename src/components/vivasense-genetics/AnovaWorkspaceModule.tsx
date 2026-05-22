@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   UploadDatasetContext,
   UploadAnalysisResponse,
@@ -39,6 +39,30 @@ export function AnovaWorkspaceModule({ datasetContext }: AnovaWorkspaceModulePro
   const [results, setResults] = useState<UploadAnalysisResponse | null>(null);
   const [designDetection, setDesignDetection] = useState<DesignDetectionResult | null>(null);
   const [showRecommendation, setShowRecommendation] = useState(false);
+
+  // Track previous design to clear stale design-specific fields on change
+  const prevDesignRef = useRef<AnovaDesign>(design);
+  useEffect(() => {
+    const prev = prevDesignRef.current;
+    prevDesignRef.current = design;
+    if (prev === design) return;
+    // Leaving split_plot_rcbd: clear main/sub plot fields
+    if (prev === "split_plot_rcbd") {
+      setMainPlot("");
+      setSubPlot("");
+    }
+    // Leaving factorial: clear factor A/B fields
+    if (prev === "factorial") {
+      setFactorA("");
+      setFactorB("");
+    }
+    // Entering split_plot_rcbd: clear treatment column (not applicable)
+    if (design === "split_plot_rcbd") {
+      setTreatmentColumn("");
+    }
+    setResults(null);
+    setError(null);
+  }, [design]);
 
   // Domain from dataset context
   const domain: DomainKey = datasetContext?.research_domain ?? "general";

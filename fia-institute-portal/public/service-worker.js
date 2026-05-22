@@ -69,7 +69,9 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          if (response && response.status === 200) {
+          // Opaque responses (cross-origin no-cors) must never be cached — they always
+          // report status 0 and a bad cached opaque response permanently breaks the app.
+          if (response && response.status === 200 && response.type !== 'opaque') {
               const responseToCache = response.clone();
               caches.open(CACHE_NAME).then((c) => c.put(request, responseToCache));
           }
@@ -84,7 +86,7 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     fetch(request)
       .then((response) => {
-        if (response && response.status === 200) {
+        if (response && response.status === 200 && response.type !== 'opaque') {
             const responseToCache = response.clone();
             caches.open(CACHE_NAME).then((c) => c.put(request, responseToCache));
         }

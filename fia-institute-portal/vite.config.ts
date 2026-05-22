@@ -19,4 +19,15 @@ export default defineConfig(({ mode }) => ({
   optimizeDeps: {
     include: ["react", "react-dom", "react/jsx-runtime", "react/jsx-dev-runtime"],
   },
+  build: {
+    sourcemap: false,
+    rollupOptions: {
+      output: {
+        // Stable chunk names for long-term caching
+        manualChunks: {
+          vendor: ["react", "react-dom"],
+        },
+      },
+    },
+  },
 }));

@@ -118,6 +118,19 @@ class UploadAnalysisRequest(BaseModel):
     mode: str = Field(..., pattern="^(single|multi)$")
     random_environment: bool = False
     selection_intensity: float = 0.20
+    design_type: Optional[str] = Field(
+        default=None,
+        description="Experimental design: 'crd' | 'rcbd' | 'factorial' | 'split_plot_rcbd'. "
+                    "Defaults to mode ('single'/'multi') when absent for backwards compatibility.",
+    )
+    main_plot_column: Optional[str] = Field(
+        default=None,
+        description="Main-plot factor column for split-plot RCBD designs.",
+    )
+    sub_plot_column: Optional[str] = Field(
+        default=None,
+        description="Subplot factor column for split-plot RCBD designs.",
+    )
     module: Optional[str] = Field(
         default=None,
         description="Analysis module: 'anova' | 'genetic_parameters' | 'correlation' | 'heatmap'. "

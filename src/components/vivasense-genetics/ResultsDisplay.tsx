@@ -55,10 +55,6 @@ const VARIANCE_SYMBOL_MAP: Record<string, { symbol: string; label: string }> = {
   gam: { symbol: "GAM%", label: "Genetic advance as % of mean" },
 };
 
-function isAgronomyDomain(domain?: DomainKey): boolean {
-  return String(domain ?? "").toLowerCase() === "agronomy";
-}
-
 function fmtP(p: number | null): { text: string; stars: string } {
   if (p === null) return { text: "—", stars: "" };
   if (p < 0.001) return { text: p.toExponential(2), stars: "***" };
@@ -67,7 +63,7 @@ function fmtP(p: number | null): { text: string; stars: string } {
   return { text: p.toFixed(4), stars: "ns" };
 }
 
-function buildReportPreview(results: UploadAnalysisResponse, isAgronomy: boolean): {
+function buildReportPreview(results: UploadAnalysisResponse): {
   sections: PreviewSection[];
   warnings: string[];
   notes: string[];
@@ -110,28 +106,20 @@ function buildReportPreview(results: UploadAnalysisResponse, isAgronomy: boolean
   // Per-trait summary — defensive property access
   if (successRows.length > 0) {
     sections.push({
-      title: isAgronomy ? "Trait Summary" : "Trait Summary (Genetic Parameters)",
+      title: "Trait Summary (Genetic Parameters)",
       rows: successRows.map((r: SummaryTableRow) => ({
         label: String(r?.trait ?? "Unknown"),
         value: [
           r?.grand_mean != null ? `Mean: ${(r.grand_mean as number).toFixed(2)}` : null,
-          ...(!isAgronomy
-            ? [
-                r?.h2 != null ? `H²: ${(r.h2 as number).toFixed(3)}` : null,
-                r?.gam_class ? `(GAM class: ${r.gam_class})` : null,
-                r?.gcv != null ? `GCV: ${(r.gcv as number).toFixed(1)}%` : null,
-                r?.gam_percent != null ? `GAM: ${(r.gam_percent as number).toFixed(1)}%` : null,
-              ]
-            : []),
+          r?.h2 != null ? `H²: ${(r.h2 as number).toFixed(3)}` : null,
+          r?.gam_class ? `(GAM class: ${r.gam_class})` : null,
+          r?.gcv != null ? `GCV: ${(r.gcv as number).toFixed(1)}%` : null,
+          r?.gam_percent != null ? `GAM: ${(r.gam_percent as number).toFixed(1)}%` : null,
         ]
           .filter(Boolean)
           .join("  ·  "),
       })),
-      ...(isAgronomy
-        ? {}
-        : {
-            note: "H² = broad-sense heritability; GCV = genotypic coefficient of variation; GAM = genetic advance as % of mean",
-          }),
+      note: "H² = broad-sense heritability; GCV = genotypic coefficient of variation; GAM = genetic advance as % of mean",
     });
   }
 
@@ -156,15 +144,10 @@ function buildReportPreview(results: UploadAnalysisResponse, isAgronomy: boolean
     warnings.push(`Failed traits (excluded from report): ${failedTraits.join(", ")}`);
   }
 
-  const notes = isAgronomy
-    ? [
-        "The Word report includes full ANOVA tables, mean separation (Tukey HSD), and interpretation for each trait.",
-        "Figures and significance stars follow standard agricultural biometrics conventions.",
-      ]
-    : [
-        "The Word report includes full ANOVA tables, mean separation (Tukey HSD), variance components, and interpretation for each trait.",
-        "Figures and significance stars follow standard agricultural biometrics conventions.",
-      ];
+  const notes = [
+    "The Word report includes full ANOVA tables, mean separation (Tukey HSD), variance components, and interpretation for each trait.",
+    "Figures and significance stars follow standard agricultural biometrics conventions.",
+  ];
 
   logDebug("ResultsDisplay:preview", {
     n_sections: sections.length,
@@ -177,7 +160,6 @@ function buildReportPreview(results: UploadAnalysisResponse, isAgronomy: boolean
 
 export function ResultsDisplay({ results, onReset, domain }: ResultsDisplayProps) {
   const domainTerms = getDomainTerms(domain);
-  const isAgronomy = isAgronomyDomain(domain);
   const { summary_table, dataset_summary, failed_traits } = results;
   const successCount = summary_table.filter((r: SummaryTableRow) => r.status === "success").length;
   const anovaTypeWarning =
@@ -216,7 +198,6 @@ export function ResultsDisplay({ results, onReset, domain }: ResultsDisplayProps
     setDownloading(true);
     setDownloadError(null);
     try {
-      console.log("[DEBUG] domain at export:", domain);
       await exportWordReport(results, "vivasense_genetics_report.docx", domain);
     } catch (err) {
       if (err instanceof ProFeatureError) {
@@ -277,19 +258,17 @@ export function ResultsDisplay({ results, onReset, domain }: ResultsDisplayProps
       </div>
 
       {/* Workflow info banner */}
-      {!isAgronomy && (
-        <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-xs text-blue-700 leading-relaxed">
-          <span className="font-semibold">How this works: </span>
-          VivaSense Genetics uses ANOVA internally to partition phenotypic variance into genetic,
-          environmental, and error components. Heritability (H²) and genetic advance (GAM) are
-          derived from those variance components. Mean separation (Tukey HSD) identifies which
-          genotypes perform significantly differently — expand any trait row below to see the full
-          statistical output.
-          <p className="mt-1 text-[11px] text-blue-700">
-            {selectionIntensityDisclosure(detectedSelectionIntensity)}
-          </p>
-        </div>
-      )}
+      <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-xs text-blue-700 leading-relaxed">
+        <span className="font-semibold">How this works: </span>
+        VivaSense Genetics uses ANOVA internally to partition phenotypic variance into genetic,
+        environmental, and error components. Heritability (H²) and genetic advance (GAM) are
+        derived from those variance components. Mean separation (Tukey HSD) identifies which
+        genotypes perform significantly differently — expand any trait row below to see the full
+        statistical output.
+        <p className="mt-1 text-[11px] text-blue-700">
+          {selectionIntensityDisclosure(detectedSelectionIntensity)}
+        </p>
+      </div>
 
       {/* Download error */}
       {downloadError && (
@@ -319,7 +298,7 @@ export function ResultsDisplay({ results, onReset, domain }: ResultsDisplayProps
 
       {/* ── Word Export Preview Modal ──────────────────────────────────────── */}
       {showPreview && (() => {
-        const { sections, warnings, notes } = buildReportPreview(results, isAgronomy);
+        const { sections, warnings, notes } = buildReportPreview(results);
         return (
           <WordExportPreviewModal
             moduleName="ANOVA & Genetic Parameters"
@@ -344,15 +323,11 @@ export function ResultsDisplay({ results, onReset, domain }: ResultsDisplayProps
               <tr>
                 <Th>Trait</Th>
                 <Th>Mean</Th>
-                {!isAgronomy && (
-                  <>
-                    <Th>{domainTerms.h2_label}</Th>
-                    <Th>{domainTerms.gcv_label}</Th>
-                    <Th>{domainTerms.pcv_label}</Th>
-                    <Th>{domainTerms.gam_label}</Th>
-                    <Th>Class</Th>
-                  </>
-                )}
+                <Th>{domainTerms.h2_label}</Th>
+                <Th>{domainTerms.gcv_label}</Th>
+                <Th>{domainTerms.pcv_label}</Th>
+                <Th>{domainTerms.gam_label}</Th>
+                <Th>Class</Th>
                 <Th>Details</Th>
               </tr>
             </thead>
@@ -365,7 +340,6 @@ export function ResultsDisplay({ results, onReset, domain }: ResultsDisplayProps
                   isFirst={i === 0}
                   traitResult={results.trait_results[row.trait]}
                   domainTerms={domainTerms}
-                  isAgronomy={isAgronomy}
                 />
               ))}
             </tbody>
@@ -373,23 +347,21 @@ export function ResultsDisplay({ results, onReset, domain }: ResultsDisplayProps
         </div>
 
         {/* Legend */}
-        {!isAgronomy && (
-          <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-500">
-            <span className="font-medium text-gray-600">{domainTerms.h2_label} class:</span>
-            <span className="flex items-center gap-1">
-              <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" /> High ≥ 0.60
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="inline-block h-2.5 w-2.5 rounded-full bg-yellow-400" /> Moderate 0.30–0.59
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="inline-block h-2.5 w-2.5 rounded-full bg-red-400" /> Low &lt; 0.30
-            </span>
-            <span className="w-full text-[11px] text-gray-500">
-              Broad-sense heritability (H²): the proportion of total phenotypic variance attributable to genotypic differences. Estimated as σ²g / σ²p using ANOVA variance components.
-            </span>
-          </div>
-        )}
+        <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-500">
+          <span className="font-medium text-gray-600">{domainTerms.h2_label} class:</span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" /> High ≥ 0.60
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block h-2.5 w-2.5 rounded-full bg-yellow-400" /> Moderate 0.30–0.59
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block h-2.5 w-2.5 rounded-full bg-red-400" /> Low &lt; 0.30
+          </span>
+          <span className="w-full text-[11px] text-gray-500">
+            Broad-sense heritability (H²): the proportion of total phenotypic variance attributable to genotypic differences. Estimated as σ²g / σ²p using ANOVA variance components.
+          </span>
+        </div>
       </div>
 
       <ProFeatureModal
@@ -411,14 +383,12 @@ function SummaryRow({
   isFirst,
   traitResult,
   domainTerms,
-  isAgronomy,
 }: {
   row: SummaryTableRow;
   isEven: boolean;
   isFirst: boolean;
   traitResult: TraitResult | undefined;
   domainTerms: ReturnType<typeof getDomainTerms>;
-  isAgronomy: boolean;
 }) {
   const [expanded, setExpanded] = useState(isFirst);
   const bg = isEven ? "bg-white" : "bg-gray-50/50";
@@ -437,7 +407,7 @@ function SummaryRow({
     return (
       <tr className={bg}>
         <td className="px-4 py-3 font-medium text-gray-700">{row.trait}</td>
-        <td colSpan={isAgronomy ? 2 : 7} className="px-4 py-3">
+        <td colSpan={7} className="px-4 py-3">
           <p className="text-xs font-semibold text-red-600 mb-0.5">Failed</p>
           <p className="font-mono text-xs text-red-500 break-all whitespace-pre-wrap">{errorMsg}</p>
         </td>
@@ -457,19 +427,15 @@ function SummaryRow({
           )}
         </td>
         <Td>{row.grand_mean != null ? row.grand_mean.toFixed(2) : "—"}</Td>
-        {!isAgronomy && (
-          <>
-            <Td>
-              <HeritabilityCell h2={row.h2} />
-            </Td>
-            <Td>{row.gcv != null ? row.gcv.toFixed(1) : "—"}</Td>
-            <Td>{row.pcv != null ? row.pcv.toFixed(1) : "—"}</Td>
-            <Td>{row.gam_percent != null ? row.gam_percent.toFixed(1) : "—"}</Td>
-            <td className="px-4 py-3">
-              <ClassBadge cls={row.gam_class} />
-            </td>
-          </>
-        )}
+        <Td>
+          <HeritabilityCell h2={row.h2} />
+        </Td>
+        <Td>{row.gcv != null ? row.gcv.toFixed(1) : "—"}</Td>
+        <Td>{row.pcv != null ? row.pcv.toFixed(1) : "—"}</Td>
+        <Td>{row.gam_percent != null ? row.gam_percent.toFixed(1) : "—"}</Td>
+        <td className="px-4 py-3">
+          <ClassBadge cls={row.gam_class} />
+        </td>
         <td className="px-4 py-3">
           {hasDetails && (
             <button
@@ -484,13 +450,8 @@ function SummaryRow({
       </tr>
       {expanded && traitResult && (
         <tr className={bg}>
-          <td colSpan={isAgronomy ? 3 : 8} className="px-6 pb-5 pt-1">
-            <TraitDetails
-              traitResult={traitResult}
-              traitName={row.trait}
-              domainTerms={domainTerms}
-              isAgronomy={isAgronomy}
-            />
+          <td colSpan={8} className="px-6 pb-5 pt-1">
+            <TraitDetails traitResult={traitResult} traitName={row.trait} domainTerms={domainTerms} />
           </td>
         </tr>
       )}
@@ -506,12 +467,10 @@ function TraitDetails({
   traitResult,
   traitName,
   domainTerms,
-  isAgronomy,
 }: {
   traitResult: TraitResult;
   traitName: string;
   domainTerms: ReturnType<typeof getDomainTerms>;
-  isAgronomy: boolean;
 }) {
   const [showAnovaDetails, setShowAnovaDetails] = useState(true);
   const [showAcademic, setShowAcademic] = useState(false);
@@ -572,7 +531,7 @@ function TraitDetails({
       </div>
 
       {/* ── SECTION: Genetic Parameters ────────────────────────────────────── */}
-      {!isAgronomy && result?.variance_components && (
+      {result?.variance_components && (
         <div className="space-y-2">
           <SubSectionLabel>{domainTerms.variance_module}</SubSectionLabel>
           <div className="grid gap-2 sm:grid-cols-3">
@@ -606,7 +565,7 @@ function TraitDetails({
         <div>
           <SubSectionLabel>Interpretation</SubSectionLabel>
           <div className="rounded-lg bg-emerald-50 border border-emerald-100 p-3">
-            {!isAgronomy && <p className="mb-2 text-xs font-medium text-emerald-800">{intensityDisclosure}</p>}
+            <p className="mb-2 text-xs font-medium text-emerald-800">{intensityDisclosure}</p>
             {ar.interpretation
               .split(/\n\s*\n/)
               .map((para: string) => para.trim())
@@ -679,8 +638,6 @@ function AnovaTableSection({ at }: { at: AnovaTable }) {
           </thead>
           <tbody>
             {at.source.map((src: string, i: number) => {
-              // Omit the (Intercept) row — not a treatment effect, never shown to users.
-              if (src === "(Intercept)" || src.toLowerCase() === "intercept") return null;
               const { text: pText, stars } = fmtP(at.p_value[i]);
               const isError = src === "Residuals";
               return (
@@ -747,7 +704,7 @@ function MeanSeparationSection({ ms, domainTerms }: { ms: MeanSeparation; domain
                   <td className={`px-3 py-1.5 font-medium ${isTop ? "text-emerald-800" : "text-gray-700"}`}>
                     {geno}
                   </td>
-                  <td className="px-3 py-1.5 text-gray-700">{ms.mean[i].toFixed(2)}</td>
+                  <td className="px-3 py-1.5 text-gray-700">{ms.mean[i] != null ? ms.mean[i].toFixed(2) : "—"}</td>
                   <td className="px-3 py-1.5 text-gray-600">
                     {ms.se[i] != null ? ms.se[i]!.toFixed(2) : "—"}
                   </td>

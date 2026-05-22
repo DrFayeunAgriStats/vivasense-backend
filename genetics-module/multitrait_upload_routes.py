@@ -38,7 +38,6 @@ SELECTION_INTENSITY_TABLE = {
 DEFAULT_SELECTION_INTENSITY = {
     "pct": 0.20, "i": 1.400, "label": "Top 20% (i = 1.400)"
 }
-from column_utils import sanitise_column_names
 import dataset_cache
 from multitrait_upload_schemas import (
     DatasetSummary,
@@ -50,7 +49,7 @@ from multitrait_upload_schemas import (
     UploadAnalysisResponse,
     UploadPreviewResponse,
 )
-from genetics_schemas import GeneticsResponse
+from genetics_schemas import AnalysisContext, GeneticsResponse
 import result_cache
 from interpretation import InterpretationEngine
 from genetics_interpretation import build_breeding_synthesis
@@ -943,7 +942,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
     MAX_CONCURRENT_R_PROCESSES = 4
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_R_PROCESSES)
 
-    crd_mode = rep_column is None and request.mode == "single"
+    crd_mode = rep_column is None and request.mode == "single" and request.design_type not in ("split_plot_rcbd", "factorial")
 
     async def analyze_single_trait(trait: str):
         async with semaphore:
@@ -963,6 +962,9 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                     trait_col=trait,
                     env_col=env_col_for_mode,
                     factor_col=factor_col,
+                    design_type=request.design_type,
+                    main_plot_col=request.main_plot_column,
+                    sub_plot_col=request.sub_plot_column,
                 )
                 if balance_warnings:
                     for w in balance_warnings:
@@ -975,6 +977,9 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                     trait_col=trait,
                     env_col=env_col_for_mode,
                     factor_col=factor_col,
+                    design_type=request.design_type,
+                    main_plot_col=request.main_plot_column,
+                    sub_plot_col=request.sub_plot_column,
                 )
 
                 # Execute blocking R subprocess concurrently via ThreadPool
@@ -1032,6 +1037,14 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                     trait, list(r_result.keys())
                 )
 
+                # Attach analysis_context so the frontend can read is_single_environment,
+                # environment_count, and design_type without relying on the new pipeline.
+                result_dict["analysis_context"] = {
+                    "is_single_environment": request.mode == "single",
+                    "environment_count": n_environments if n_environments is not None else 1,
+                    "design_type": request.design_type or request.mode,
+                }
+
                 # Validate the dict against the real GeneticsResponse schema.
                 validated = GeneticsResponse(**result_dict)
 
@@ -1077,8 +1090,8 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
         rep_column,
         request.environment_column,
         factor_col,
-        getattr(request, "main_plot_column", None),
-        getattr(request, "sub_plot_column", None),
+        request.main_plot_column,
+        request.sub_plot_column,
         *numeric_factor_columns,
     ]:
         if col and col not in categorical_columns:
@@ -1094,10 +1107,10 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
         "factor_column":      factor_col,
         "numeric_factor_columns": numeric_factor_columns,
         "categorical_columns": categorical_columns,
-        "main_plot_column":   getattr(request, "main_plot_column", None),
-        "sub_plot_column":    getattr(request, "sub_plot_column", None),
+        "main_plot_column":   request.main_plot_column,
+        "sub_plot_column":    request.sub_plot_column,
         "mode":               request.mode,
-        "design_type":        request.mode,
+        "design_type":        request.design_type or request.mode,
         "random_environment": request.random_environment,
         "selection_intensity": request.selection_intensity,
     })
