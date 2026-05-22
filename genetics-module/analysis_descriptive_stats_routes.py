@@ -38,7 +38,7 @@ async def analyze_descriptive_stats(request: ModuleRequest):
         )
     
     try:
-        df = read_file(base64.b64decode(ctx["base64_content"]), ctx["file_type"])
+        df, _ = read_file(base64.b64decode(ctx["base64_content"]), ctx["file_type"])
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Could not read dataset: {exc}")
 

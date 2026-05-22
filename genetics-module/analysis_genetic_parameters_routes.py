@@ -264,7 +264,7 @@ async def analysis_genetic_parameters(request: ModuleRequest):
 
     try:
         file_bytes = base64.b64decode(ctx["base64_content"])
-        df = read_file(file_bytes, ctx["file_type"])
+        df, _ = read_file(file_bytes, ctx["file_type"])
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Could not read dataset: {exc}") from exc
 

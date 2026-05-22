@@ -112,7 +112,7 @@ def _process_trait_association_data(
 
     # Decode and read file
     file_bytes = base64.b64decode(ctx["base64_content"])
-    df = read_file(file_bytes, ctx["file_type"])
+    df, _ = read_file(file_bytes, ctx["file_type"])
 
     # Validate trait columns exist
     missing = [c for c in request.trait_columns if c not in df.columns]

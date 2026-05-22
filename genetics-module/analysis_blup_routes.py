@@ -276,7 +276,7 @@ async def analysis_blup(request: BLUPRequest) -> BLUPResponse:
 
     try:
         raw_bytes = __import__("base64").b64decode(ctx["base64_content"])
-        df = read_file(raw_bytes, ctx["file_type"])
+        df, _ = read_file(raw_bytes, ctx["file_type"])
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Cannot read dataset: {exc}") from exc
 
