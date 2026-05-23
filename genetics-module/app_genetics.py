@@ -497,7 +497,9 @@ data <- as.data.frame(data_list)
 
 # Convert to proper types
 data$trait_value <- as.numeric(data$trait_value)
-data$genotype <- as.character(data$genotype)
+if ("genotype" %in% colnames(data)) {{
+  data$genotype <- as.character(data$genotype)
+}}
 data$rep <- as.character(data$rep)
 if ("{mode}" == "multi") {{
   data$environment <- as.character(data$environment)
