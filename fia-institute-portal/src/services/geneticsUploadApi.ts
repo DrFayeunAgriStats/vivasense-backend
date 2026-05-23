@@ -47,9 +47,9 @@ export interface UploadPreviewResponse {
 export interface UploadAnalysisRequest {
   base64_content: string;
   file_type: "csv" | "xlsx" | "xls";
-  genotype_column: string;
-  rep_column: string;
-  environment_column: string | null;
+  genotype_column?: string | null;
+  rep_column?: string | null;
+  environment_column?: string | null;
   numeric_factor_columns?: string[];
   trait_columns: string[];
   mode: "single" | "multi";
