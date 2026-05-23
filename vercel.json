@@ -1,4 +1,8 @@
 {
+  "buildCommand": "cd fia-institute-portal && npm install && npm run build",
+  "outputDirectory": "fia-institute-portal/dist",
+  "installCommand": "cd fia-institute-portal && npm install",
+  "framework": "vite",
   "redirects": [
     {
       "source": "/vivasense/workspace/:path*",
