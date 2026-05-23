@@ -155,7 +155,7 @@ def _collect_doc_text(doc: Document) -> str:
 # NUMBER FORMATTING
 # ============================================================================
 
-def _fmt(value, decimals: int = 3) -> str:
+def _fmt(value, decimals: int = 3, thousands: bool = False) -> str:
     """Format a numeric value for report display.
     Returns em-dash for None/NaN values."""
     if value is None:
@@ -166,7 +166,8 @@ def _fmt(value, decimals: int = 3) -> str:
             math.isinf(value)
         ):
             return "—"
-        return f"{value:.{decimals}f}"
+        fmt_spec = f"{',' if thousands else ''}.{decimals}f"
+        return format(value, fmt_spec)
     except (TypeError, ValueError):
         return str(value)
 
