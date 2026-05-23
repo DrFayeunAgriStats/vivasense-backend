@@ -54,7 +54,7 @@ tmp_*.csv
 tmp_*.txt
 tmp_*.json
 
-src/
+/src/
 
 add_issues_to_project.ps1
 create_vivasense_github_board.ps1

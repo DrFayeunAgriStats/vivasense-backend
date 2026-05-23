@@ -1,0 +1,231 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700&family=Montserrat:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Academic Forest Green Palette */
+    --background: 45 25% 97%;
+    --foreground: 150 25% 15%;
+
+    --card: 45 20% 99%;
+    --card-foreground: 150 25% 15%;
+
+    --popover: 45 20% 99%;
+    --popover-foreground: 150 25% 15%;
+
+    /* Deep Forest Green - Primary brand */
+    --primary: 152 45% 22%;
+    --primary-foreground: 45 25% 97%;
+
+    /* Warm Sand - Secondary */
+    --secondary: 38 35% 92%;
+    --secondary-foreground: 150 25% 20%;
+
+    /* Muted sage */
+    --muted: 145 15% 90%;
+    --muted-foreground: 150 15% 40%;
+
+    /* Gold accent for CTAs and highlights */
+    --accent: 42 85% 55%;
+    --accent-foreground: 150 25% 12%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 145 20% 85%;
+    --input: 145 20% 85%;
+    --ring: 152 45% 22%;
+
+    --radius: 0.5rem;
+
+    /* Custom tokens */
+    --gold: 42 85% 55%;
+    --gold-light: 42 75% 70%;
+    --forest: 152 45% 22%;
+    --forest-light: 152 35% 35%;
+    --sage: 145 25% 75%;
+    --cream: 45 25% 97%;
+    --earth: 25 30% 35%;
+
+    /* Gradients */
+    --gradient-hero: linear-gradient(135deg, hsl(152 45% 22%) 0%, hsl(152 35% 30%) 50%, hsl(145 30% 25%) 100%);
+    --gradient-gold: linear-gradient(135deg, hsl(42 85% 55%) 0%, hsl(38 80% 50%) 100%);
+    --gradient-subtle: linear-gradient(180deg, hsl(45 25% 97%) 0%, hsl(45 20% 94%) 100%);
+
+    /* Shadows */
+    --shadow-sm: 0 2px 8px -2px hsl(150 25% 15% / 0.08);
+    --shadow-md: 0 8px 24px -8px hsl(150 25% 15% / 0.12);
+    --shadow-lg: 0 16px 48px -12px hsl(150 25% 15% / 0.15);
+    --shadow-gold: 0 8px 24px -8px hsl(42 85% 55% / 0.3);
+
+    /* Sidebar */
+    --sidebar-background: 45 20% 99%;
+    --sidebar-foreground: 150 25% 20%;
+    --sidebar-primary: 152 45% 22%;
+    --sidebar-primary-foreground: 45 25% 97%;
+    --sidebar-accent: 145 25% 90%;
+    --sidebar-accent-foreground: 150 25% 20%;
+    --sidebar-border: 145 20% 88%;
+    --sidebar-ring: 152 45% 22%;
+  }
+
+  .dark {
+    --background: 150 25% 8%;
+    --foreground: 45 20% 95%;
+
+    --card: 150 25% 10%;
+    --card-foreground: 45 20% 95%;
+
+    --popover: 150 25% 10%;
+    --popover-foreground: 45 20% 95%;
+
+    --primary: 145 40% 50%;
+    --primary-foreground: 150 25% 8%;
+
+    --secondary: 150 20% 15%;
+    --secondary-foreground: 45 20% 95%;
+
+    --muted: 150 20% 18%;
+    --muted-foreground: 145 15% 60%;
+
+    --accent: 42 80% 55%;
+    --accent-foreground: 150 25% 8%;
+
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 150 20% 20%;
+    --input: 150 20% 20%;
+    --ring: 145 40% 50%;
+
+    --sidebar-background: 150 25% 10%;
+    --sidebar-foreground: 45 20% 95%;
+    --sidebar-primary: 145 40% 50%;
+    --sidebar-primary-foreground: 150 25% 8%;
+    --sidebar-accent: 150 20% 15%;
+    --sidebar-accent-foreground: 45 20% 95%;
+    --sidebar-border: 150 20% 18%;
+    --sidebar-ring: 145 40% 50%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-serif;
+  }
+}
+
+@layer components {
+  .container-wide {
+    @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
+  }
+
+  .section-padding {
+    @apply py-16 md:py-24;
+  }
+
+  .text-gradient {
+    @apply bg-clip-text text-transparent;
+    background-image: var(--gradient-gold);
+  }
+
+  .card-elevated {
+    @apply bg-card rounded-xl shadow-md border border-border/50 transition-all duration-300 hover:shadow-lg;
+    box-shadow: var(--shadow-md);
+  }
+
+  .card-elevated:hover {
+    box-shadow: var(--shadow-lg);
+  }
+}
+
+@layer utilities {
+  .animate-fade-in {
+    animation: fadeIn 0.6s ease-out forwards;
+  }
+
+  .animate-fade-in-up {
+    animation: fadeInUp 0.6s ease-out forwards;
+  }
+
+  .animate-slide-in-left {
+    animation: slideInLeft 0.6s ease-out forwards;
+  }
+
+  .animate-slide-in-right {
+    animation: slideInRight 0.6s ease-out forwards;
+  }
+
+  .animation-delay-100 {
+    animation-delay: 100ms;
+  }
+
+  .animation-delay-200 {
+    animation-delay: 200ms;
+  }
+
+  .animation-delay-300 {
+    animation-delay: 300ms;
+  }
+
+  .animation-delay-400 {
+    animation-delay: 400ms;
+  }
+
+  .animation-delay-500 {
+    animation-delay: 500ms;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
