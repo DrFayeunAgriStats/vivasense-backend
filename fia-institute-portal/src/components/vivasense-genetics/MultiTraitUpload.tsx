@@ -238,6 +238,7 @@ export function MultiTraitUpload({ onDatasetReady, onFileStatus }: MultiTraitUpl
     selectionIntensity: number;
     numericFactorOverrides: string[];
     research_domain: "plant_breeding" | "agronomy" | "general";
+    design_type?: string;
   }) => {
     if (!file) return;
     setResearchDomain(mapping.research_domain);
@@ -264,7 +265,7 @@ export function MultiTraitUpload({ onDatasetReady, onFileStatus }: MultiTraitUpl
             mapping.mode === "multi" ? mapping.environmentColumn || null : null,
           numeric_factor_columns: mapping.numericFactorOverrides ?? [],
           mode: mapping.mode,
-          design_type: "rcbd",
+          design_type: (mapping.design_type || "rcbd") as "crd" | "rcbd" | "factorial" | "split_plot_rcbd",
           random_environment: mapping.randomEnvironment,
           selection_intensity: mapping.selectionIntensity,
         });

@@ -1,8 +1,8 @@
-import { inferSelectionPercent, selectionIntensityDisclosure, DEFAULT_SELECTION_INTENSITY, SELECTION_INTENSITY_OPTIONS } from "./selectionIntensity";
 import React, { useState } from "react";
 import { UploadPreviewResponse } from "@/services/geneticsUploadApi";
 import { VsSpinner } from "./VsSpinner";
 import {
+  inferSelectionPercent,
   DEFAULT_SELECTION_INTENSITY,
   SELECTION_INTENSITY_OPTIONS,
   selectionIntensityDisclosure,
