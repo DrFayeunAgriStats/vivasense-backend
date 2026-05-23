@@ -81,7 +81,7 @@ class UploadDatasetRequest(BaseModel):
     )
     design_type: str = Field(
         default="single",
-        pattern="^(single|multi|split_plot_rcbd)$",
+        pattern="^(single|multi|crd|rcbd|factorial|split_plot_rcbd)$",
         description="Experimental design type for the dataset.",
     )
     mode: str = Field(default="single", pattern="^(single|multi)$")
