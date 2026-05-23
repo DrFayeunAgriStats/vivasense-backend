@@ -270,12 +270,15 @@ async def compute_correlation(request: CorrelationRequest):
 
     # Validate all named columns exist in the file
     required_cols = (
-        [request.genotype_column, request.rep_column]
+        [c for c in [request.genotype_column, request.rep_column] if c is not None and str(c).strip() != ""]
         + request.trait_columns
         + ([request.environment_column] if request.environment_column else [])
     )
+    logger.info("correlation: validating required columns: %s", required_cols)
+    logger.info("correlation: available columns in dataframe: %s", list(df.columns))
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
+        logger.error("correlation: missing columns: %s", missing)
         raise HTTPException(
             status_code=400,
             detail=f"Columns not found in file: {missing}",

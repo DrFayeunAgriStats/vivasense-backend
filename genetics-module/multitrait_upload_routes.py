@@ -887,27 +887,35 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
     if not rep_column or rep_column.strip() == "":
         rep_column = None
 
-    # Validate that all named columns actually exist (rep_column is optional)
-    required_cols = [request.genotype_column]
+    # Validate that all named columns actually exist (genotype and rep are optional for some designs)
+    required_cols = [c for c in [request.genotype_column] if c is not None and str(c).strip() != ""]
     if rep_column:
         required_cols.append(rep_column)
     required_cols += request.trait_columns
     if request.environment_column:
         required_cols.append(request.environment_column)
+    logger.info("analyze-upload: validating required columns: %s", required_cols)
+    logger.info("analyze-upload: available columns in dataframe: %s", list(df.columns))
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
+        logger.error("analyze-upload: missing columns: %s", missing)
         raise HTTPException(
             status_code=400,
             detail=f"Columns not found in file: {missing}",
         )
 
     # Dataset-level summary (whole file, not per-trait)
-    n_genotypes = int(df[request.genotype_column].nunique())
+    if request.genotype_column:
+        n_genotypes = int(df[request.genotype_column].nunique())
+    else:
+        n_genotypes = None
     if rep_column:
         n_reps = int(df[rep_column].nunique())
-    else:
+    elif request.genotype_column:
         # CRD: infer max observations per genotype as effective n_reps
         n_reps = int(df.groupby(request.genotype_column).size().max())
+    else:
+        n_reps = len(df)
     n_environments = (
         int(df[request.environment_column].nunique())
         if request.environment_column

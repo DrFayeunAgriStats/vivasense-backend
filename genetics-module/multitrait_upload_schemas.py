@@ -183,7 +183,7 @@ class SummaryTableRow(BaseModel):
 
 class DatasetSummary(BaseModel):
     """Overall dataset statistics (computed from the uploaded file, not per-trait)."""
-    n_genotypes: int
+    n_genotypes: Optional[int] = None
     n_reps: int
     n_environments: Optional[int] = None
     n_traits: int
