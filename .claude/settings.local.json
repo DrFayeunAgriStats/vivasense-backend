@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(git -C c:/Users/ADMIN/vivasense-backend commit -m ' *)",
+      "Bash(git -C \"c:/Users/ADMIN/vivasense-backend\" push origin main)"
     ]
   }
 }
