@@ -894,6 +894,10 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
     required_cols += request.trait_columns
     if request.environment_column:
         required_cols.append(request.environment_column)
+    if request.design_type == "factorial":
+        for col in [request.factor_a_column, request.factor_b_column]:
+            if col and col.strip():
+                required_cols.append(col)
     logger.info("analyze-upload: validating required columns: %s", required_cols)
     logger.info("analyze-upload: available columns in dataframe: %s", list(df.columns))
     missing = [c for c in required_cols if c not in df.columns]
@@ -905,15 +909,19 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
         )
 
     # Dataset-level summary (whole file, not per-trait)
-    if request.genotype_column:
-        n_genotypes = int(df[request.genotype_column].nunique())
+    # For factorial designs factor_a acts as the primary grouping column when genotype is absent.
+    _geno_for_summary = request.genotype_column or (
+        request.factor_a_column if request.design_type == "factorial" else None
+    )
+    if _geno_for_summary:
+        n_genotypes = int(df[_geno_for_summary].nunique())
     else:
         n_genotypes = None
     if rep_column:
         n_reps = int(df[rep_column].nunique())
-    elif request.genotype_column:
+    elif _geno_for_summary:
         # CRD: infer max observations per genotype as effective n_reps
-        n_reps = int(df.groupby(request.genotype_column).size().max())
+        n_reps = int(df.groupby(_geno_for_summary).size().max())
     else:
         n_reps = len(df)
     n_environments = (
@@ -945,6 +953,16 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
         # Numeric-coded treatment levels toggled as factors in UI.
         factor_col = numeric_factor_columns[0]
 
+    # Factorial designs: factor_a_column → R "genotype" role, factor_b_column → R "factor" role.
+    # This lets the existing R model (trait ~ rep + genotype * factor) handle pure two-factor
+    # factorials where no separate genotype column exists.
+    effective_genotype_col = request.genotype_column
+    if request.design_type == "factorial" and request.mode == "single":
+        if not effective_genotype_col and request.factor_a_column:
+            effective_genotype_col = request.factor_a_column
+        if not factor_col and request.factor_b_column:
+            factor_col = request.factor_b_column
+
     # Bounded concurrency: Limit active R subprocesses to prevent Out-Of-Memory (OOM)
     # errors when processing massive datasets with 50+ traits.
     MAX_CONCURRENT_R_PROCESSES = 4
@@ -965,7 +983,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
 
                 balance_warnings = check_balance(
                     df=df,
-                    genotype_col=request.genotype_column,
+                    genotype_col=effective_genotype_col,
                     rep_col=rep_column,
                     trait_col=trait,
                     env_col=env_col_for_mode,
@@ -980,7 +998,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
 
                 observations = build_observations(
                     df=df,
-                    genotype_col=request.genotype_column,
+                    genotype_col=effective_genotype_col,
                     rep_col=rep_column,
                     trait_col=trait,
                     env_col=env_col_for_mode,

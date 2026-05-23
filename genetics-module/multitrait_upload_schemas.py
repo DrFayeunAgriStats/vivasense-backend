@@ -107,6 +107,20 @@ class UploadAnalysisRequest(BaseModel):
             "When provided without rep_column a factorial CRD model is used."
         ),
     )
+    factor_a_column: Optional[str] = Field(
+        default=None,
+        description="First treatment factor for factorial designs (e.g., Irrigation, Fertilizer level). "
+                    "Mapped to R's 'genotype' role so the existing factorial model applies.",
+    )
+    factor_b_column: Optional[str] = Field(
+        default=None,
+        description="Second treatment factor for factorial designs (e.g., Variety, Rate). "
+                    "Mapped to R's 'factor' role.",
+    )
+    factor_c_column: Optional[str] = Field(
+        default=None,
+        description="Optional third treatment factor for factorial designs (currently ignored in analysis).",
+    )
     numeric_factor_columns: List[str] = Field(
         default_factory=list,
         description=(

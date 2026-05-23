@@ -246,12 +246,13 @@ compute_single_environment <- function(data, trait_name = "Trait",
 
   # For generic split-plot RCBD there is no genotype column in the data.
   # All other designs carry a genotype column.
-  if (!has_splitplot) {
+  has_genotype <- "genotype" %in% colnames(data)
+  if (!has_splitplot && has_genotype) {
     data$genotype <- factor(data$genotype)
   }
   data$rep <- factor(data$rep)
 
-  n_genotypes <- if (!has_splitplot) nlevels(data$genotype) else NA_integer_
+  n_genotypes <- if (!has_splitplot && has_genotype) nlevels(data$genotype) else NA_integer_
 
   # ── Model selection ──────────────────────────────────────────────────────────
   # CRD (no blocking):      trait_value ~ genotype
@@ -270,7 +271,7 @@ compute_single_environment <- function(data, trait_name = "Trait",
   }
 
   # Guard: catch single-level factors before aov() to produce clear errors
-  if (!has_splitplot && n_genotypes < 2) {
+  if (!has_splitplot && has_genotype && !is.na(n_genotypes) && n_genotypes < 2) {
     stop(sprintf(
       "Genotype column must have \u22652 levels for analysis. Got %d level(s). Check your data.",
       n_genotypes
