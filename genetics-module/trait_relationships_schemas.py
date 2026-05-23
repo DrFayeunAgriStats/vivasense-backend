@@ -26,8 +26,8 @@ class CorrelationStats(BaseModel):
 class CorrelationRequest(BaseModel):
     base64_content: str = Field(..., description="Base64-encoded file content")
     file_type: str = Field(..., pattern="^(csv|xlsx|xls)$")
-    genotype_column: str
-    rep_column: str
+    genotype_column: Optional[str] = None
+    rep_column: Optional[str] = None
     environment_column: Optional[str] = None
     trait_columns: List[str] = Field(..., min_length=2, max_length=20)
     mode: str = Field(default="single", pattern="^(single|multi)$")
