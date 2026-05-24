@@ -55,6 +55,7 @@ class MeanSeparation(BaseModel):
     group: List[str]
     test: str = "Tukey HSD"
     alpha: float = 0.05
+    treatment_label: Optional[str] = None  # actual column name for factorial designs
 
 
 class AnalysisContext(BaseModel):

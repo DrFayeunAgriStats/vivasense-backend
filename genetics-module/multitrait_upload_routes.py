@@ -1041,7 +1041,26 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                     raise RuntimeError(f"R ERROR: {r_msg}")
 
                 r_result = result_dict.get("result") or {}
-                
+
+                # Remap generic R labels to actual column names for factorial designs
+                if (request.design_type == "factorial"
+                        and isinstance(r_result, dict)):
+                    at = r_result.get("anova_table")
+                    if at and isinstance(at.get("source"), list):
+                        _lmap = {}
+                        if effective_genotype_col:
+                            _lmap["genotype"] = effective_genotype_col
+                        if factor_col:
+                            _lmap["factor"] = factor_col
+                        if effective_genotype_col and factor_col:
+                            _lmap["genotype:factor"] = (
+                                f"{effective_genotype_col}×{factor_col}"
+                            )
+                        at["source"] = [_lmap.get(s, s) for s in at["source"]]
+                    ms = r_result.get("mean_separation")
+                    if ms and isinstance(ms, dict) and effective_genotype_col:
+                        ms["treatment_label"] = effective_genotype_col
+
                 # Attach selection intensity label for reporting
                 if "result" in result_dict and "genetic_parameters" in result_dict["result"]:
                     result_dict["result"]["genetic_parameters"]["selection_intensity_label"] = intensity["label"]
