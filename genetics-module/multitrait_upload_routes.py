@@ -898,6 +898,10 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
         for col in [request.factor_a_column, request.factor_b_column]:
             if col and col.strip():
                 required_cols.append(col)
+    if request.design_type == "split_plot_rcbd":
+        for col in [request.main_plot_column, request.sub_plot_column]:
+            if col and col.strip():
+                required_cols.append(col)
     logger.info("analyze-upload: validating required columns: %s", required_cols)
     logger.info("analyze-upload: available columns in dataframe: %s", list(df.columns))
     missing = [c for c in required_cols if c not in df.columns]
