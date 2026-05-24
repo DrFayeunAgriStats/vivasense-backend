@@ -388,21 +388,22 @@ compute_single_environment <- function(data, trait_name = "Trait",
       if ("Pr(>F)" %in% names(rep_row)) rep_row[, "Pr(>F)"] <- NA_real_
     }
 
-    # 2. Main-plot treatment rows
-    wp_treat <- wp_table[rownames(wp_table) != "Residuals", , drop = FALSE]
-
-    # 3. Error A (whole-plot error, formerly "whole_plot_error")
-    wp_error <- wp_table[rownames(wp_table) == "Residuals", , drop = FALSE]
-    rownames(wp_error) <- "Error A"
+    # 2. Main-plot treatment rows + Error A
+    # Use last-row fallback: R places Residuals last; some builds use integer rownames.
+    wp_error_mask <- rownames(wp_table) %in% c("Residuals", "Within")
+    if (!any(wp_error_mask)) wp_error_mask[nrow(wp_table)] <- TRUE
+    wp_treat <- wp_table[!wp_error_mask, , drop = FALSE]
+    wp_error  <- wp_table[ wp_error_mask, , drop = FALSE]
+    if (nrow(wp_error) == 1L) rownames(wp_error) <- "Error A"
     wp_error[, "F value"] <- NA_real_
     if ("Pr(>F)" %in% names(wp_error)) wp_error[, "Pr(>F)"] <- NA_real_
 
-    # 4. Subplot treatment and interaction rows
-    sub_treat <- sub_table[rownames(sub_table) != "Residuals", , drop = FALSE]
-
-    # 5. Error B (subplot error)
-    sub_error <- sub_table[rownames(sub_table) == "Residuals", , drop = FALSE]
-    rownames(sub_error) <- "Error B"
+    # 4. Subplot treatment and interaction rows + Error B
+    sub_error_mask <- rownames(sub_table) %in% c("Residuals", "Within")
+    if (!any(sub_error_mask)) sub_error_mask[nrow(sub_table)] <- TRUE
+    sub_treat <- sub_table[!sub_error_mask, , drop = FALSE]
+    sub_error  <- sub_table[ sub_error_mask, , drop = FALSE]
+    if (nrow(sub_error) == 1L) rownames(sub_error) <- "Error B"
     sub_error[, "F value"] <- NA_real_
     if ("Pr(>F)" %in% names(sub_error)) sub_error[, "Pr(>F)"] <- NA_real_
 
