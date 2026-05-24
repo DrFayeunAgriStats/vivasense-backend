@@ -1181,6 +1181,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
         failed_traits=failed_traits,
         anova_type_warning=anova_type_warning,
         dataset_token=dataset_token,
+        module=actual_module,
         breeding_summary=build_breeding_synthesis(
             _build_breeding_input(summary_table, trait_results, mode=request.mode),
             analysis_type="multi_environment" if request.mode == "multi" else "single_environment",

@@ -630,15 +630,35 @@ def _status_label(raw_status: Any) -> str:
 def _add_summary_table(doc: Document, data: UploadAnalysisResponse, domain: Optional[str] = None) -> None:
     is_anova = getattr(data, "module", "") == "anova"
     is_agronomy = not is_plant_breeding_domain(domain)
-    
-    if is_anova or is_agronomy:
+
+    if is_anova:
+        headers = ["Trait", "Mean", "CV %", "Status"]
+    elif is_agronomy:
         headers = ["Trait", "Mean", "Status"]
     else:
         headers = ["Trait", "Mean", "H²", "GCV %", "PCV %", "GAM %", "Class", "Status"]
 
-    rows_data = [
-        (
-            [
+    rows_data = []
+    for row in data.summary_table:
+        if is_anova:
+            tr = (data.trait_results or {}).get(row.trait)
+            cv_pct = None
+            if tr and tr.analysis_result and tr.analysis_result.result:
+                cv_pct = _resolve_cv_percent(tr.analysis_result.result)
+            rows_data.append([
+                row.trait,
+                _fmt(row.grand_mean),
+                _fmt_cv(cv_pct) if cv_pct is not None else "—",
+                _status_label(row.status),
+            ])
+        elif is_agronomy:
+            rows_data.append([
+                row.trait,
+                _fmt(row.grand_mean),
+                _status_label(row.status),
+            ])
+        else:
+            rows_data.append([
                 row.trait,
                 _fmt(row.grand_mean),
                 _fmt(row.h2, 3),
@@ -655,17 +675,14 @@ def _add_summary_table(doc: Document, data: UploadAnalysisResponse, domain: Opti
                     or "—"
                 ),
                 _status_label(row.status),
-            ]
-            if not is_anova and not is_agronomy
-            else [
-                row.trait,
-                _fmt(row.grand_mean),
-                _status_label(row.status),
-            ]
-        )
-        for row in data.summary_table
-    ]
-    numeric_cols = {1} if (is_anova or is_agronomy) else {1, 2, 3, 4, 5}
+            ])
+
+    if is_anova:
+        numeric_cols = {1, 2}
+    elif is_agronomy:
+        numeric_cols = {1}
+    else:
+        numeric_cols = {1, 2, 3, 4, 5}
     _add_stat_table(doc, headers, rows_data, numeric_cols=numeric_cols)
 
 

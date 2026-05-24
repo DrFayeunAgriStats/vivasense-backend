@@ -244,3 +244,8 @@ class UploadAnalysisResponse(BaseModel):
         default="plant_breeding",
         description="Analysis domain controlling domain-specific UI and export wording.",
     )
+    module: Optional[str] = Field(
+        default=None,
+        description="Analysis module: 'anova' | 'genetic_parameters' | 'correlation'. "
+                    "Controls which sections appear in the Word export.",
+    )
