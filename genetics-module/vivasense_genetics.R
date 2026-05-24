@@ -121,14 +121,15 @@ sanitize_anova_f_values <- function(anova_table) {
 #' @return list(genotype, mean, se, group, test, alpha) or NULL on failure
 #'
 compute_mean_separation <- function(model, trait_name = "Trait",
-                                    df_error = NULL, ms_error = NULL) {
+                                    df_error = NULL, ms_error = NULL,
+                                    trt = "genotype") {
   tukey <- tryCatch({
     if (!is.null(df_error) && !is.null(ms_error)) {
-      HSD.test(model, "genotype",
+      HSD.test(model, trt,
                DFerror = df_error, MSerror = ms_error,
                group = TRUE, console = FALSE)
     } else {
-      HSD.test(model, "genotype", group = TRUE, console = FALSE)
+      HSD.test(model, trt, group = TRUE, console = FALSE)
     }
   }, error = function(e) {
     message(sprintf("[WARN] Tukey HSD failed for %s: %s — trying LSD.test fallback", trait_name, conditionMessage(e)))
@@ -139,11 +140,11 @@ compute_mean_separation <- function(model, trait_name = "Trait",
   if (is.null(tukey)) {
     tukey <- tryCatch({
       if (!is.null(df_error) && !is.null(ms_error)) {
-        LSD.test(model, "genotype",
+        LSD.test(model, trt,
                  DFerror = df_error, MSerror = ms_error,
                  group = TRUE, console = FALSE)
       } else {
-        LSD.test(model, "genotype", group = TRUE, console = FALSE)
+        LSD.test(model, trt, group = TRUE, console = FALSE)
       }
     }, error = function(e) {
       message(sprintf("[WARN] LSD.test fallback also failed for %s: %s", trait_name, conditionMessage(e)))
@@ -628,10 +629,50 @@ compute_single_environment <- function(data, trait_name = "Trait",
 
     df_err   <- df_error_B
     mean_sep <- sub_plot_mean_sep
+    mean_sep_b <- NULL
+    factorial_interaction_means <- NULL
   } else {
     df_err   <- anova_table["Residuals", "Df"]
     mean_sep <- compute_mean_separation(model, trait_name,
-                                        df_error = df_err, ms_error = ms_error)
+                                        df_error = df_err, ms_error = ms_error,
+                                        trt = "genotype")
+    mean_sep_b <- if (has_factor) {
+      compute_mean_separation(model, trait_name,
+                              df_error = df_err, ms_error = ms_error,
+                              trt = "factor")
+    } else NULL
+    factorial_interaction_means <- if (has_factor && has_genotype) {
+      tryCatch({
+        int_sep  <- HSD.test(model, c("genotype", "factor"),
+                             DFerror = as.integer(df_err), MSerror = ms_error,
+                             group = TRUE, console = FALSE)
+        rn       <- rownames(int_sep$groups)
+        mean_col <- setdiff(names(int_sep$groups), "groups")[1]
+        list(
+          genotype = sub(":.*",      "", rn),
+          factor   = sub("^[^:]*:", "", rn),
+          mean     = as.numeric(int_sep$groups[[mean_col]]),
+          se       = rep(NA_real_, length(rn)),
+          group    = as.character(int_sep$groups$groups),
+          test     = "Tukey HSD",
+          alpha    = 0.05
+        )
+      }, error = function(e) {
+        message(sprintf("[WARN] Interaction HSD failed for %s (%s) — using cell means",
+                        trait_name, conditionMessage(e)))
+        cell <- aggregate(trait_value ~ genotype + factor, data = data, FUN = mean)
+        cell <- cell[order(-cell$trait_value), ]
+        list(
+          genotype = as.character(cell$genotype),
+          factor   = as.character(cell$factor),
+          mean     = cell$trait_value,
+          se       = rep(NA_real_, nrow(cell)),
+          group    = rep("—", nrow(cell)),
+          test     = "Cell Means",
+          alpha    = 0.05
+        )
+      })
+    } else NULL
   }
 
   design_label <- if (has_splitplot) {
@@ -654,6 +695,8 @@ compute_single_environment <- function(data, trait_name = "Trait",
     flags                      = flags_out,
     anova_table                = as.data.frame(anova_table),
     mean_separation            = mean_sep,
+    mean_separation_b          = mean_sep_b,
+    interaction_separation     = factorial_interaction_means,
     main_plot_mean_separation  = if (has_splitplot) main_plot_mean_sep else NULL,
     interaction_means          = if (has_splitplot) interaction_means else NULL,
     ms_genotype                = ms_genotype,

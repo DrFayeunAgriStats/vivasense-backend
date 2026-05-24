@@ -44,7 +44,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from genetics_schemas import AnovaTable, MeanSeparation, GeneticsResult, GeneticsResponse
+from genetics_schemas import AnovaTable, MeanSeparation, InteractionMeans, GeneticsResult, GeneticsResponse
 from multitrait_upload_schemas import UploadAnalysisResponse, SummaryTableRow, TraitResult
 from trait_relationships_schemas import CorrelationResponse
 import result_cache
@@ -1110,11 +1110,17 @@ def _add_mean_separation_section(
     trait_name: str,
     ms: MeanSeparation,
     domain: str = "plant_breeding",
+    factor_name: Optional[str] = None,
 ) -> None:
-    _add_heading(doc, f"Mean Separation — {ms.test} (α = {ms.alpha})", level=2)
+    heading = (
+        f"Mean Separation — Main Effect of {factor_name} — {ms.test} (α = {ms.alpha})"
+        if factor_name
+        else f"Mean Separation — {ms.test} (α = {ms.alpha})"
+    )
+    _add_heading(doc, heading, level=2)
 
     is_agronomy = not is_plant_breeding_domain(domain)
-    entry_label = "Treatment" if is_agronomy else "Genotype"
+    entry_label = factor_name if factor_name else ("Treatment" if is_agronomy else "Genotype")
     headers = ["Rank", entry_label, "Mean", "SE", "Group"]
     rows_data = []
     for i, geno in enumerate(ms.genotype):
@@ -1170,6 +1176,42 @@ def _add_mean_separation_section(
             cap.runs[0].font.size = Pt(9)
     else:
         _add_body(doc, "(Chart unavailable for this trait.)", italic=True)
+
+
+def _add_interaction_separation_section(
+    doc: Document,
+    trait_name: str,
+    int_sep: InteractionMeans,
+    domain: str = "plant_breeding",
+) -> None:
+    a_label = int_sep.genotype_label or "Factor A"
+    b_label = int_sep.factor_label or "Factor B"
+    _add_heading(
+        doc,
+        f"Mean Separation — {a_label} × {b_label} Interaction — {int_sep.test} (α = {int_sep.alpha})",
+        level=2,
+    )
+    headers = ["Rank", a_label, b_label, "Mean", "SE", "Group"]
+    rows_data = []
+    for i, (geno, fac) in enumerate(zip(int_sep.genotype, int_sep.factor)):
+        se_val = int_sep.se[i] if i < len(int_sep.se) else None
+        rows_data.append([
+            str(i + 1),
+            geno,
+            fac,
+            _fmt(int_sep.mean[i]),
+            _fmt(se_val),
+            int_sep.group[i] if i < len(int_sep.group) else "—",
+        ])
+    _add_stat_table(doc, headers, rows_data, numeric_cols={0, 3, 4})
+    doc.add_paragraph()
+    note = (
+        f"Cell means sorted by mean descending. "
+        f"Cells sharing the same letter are not significantly different at α = {int_sep.alpha} ({int_sep.test})."
+        if int_sep.test != "Cell Means"
+        else "Interaction HSD could not be computed — cell means displayed without grouping letters."
+    )
+    _add_body(doc, note, italic=True)
 
 
 # ============================================================================
@@ -1722,7 +1764,10 @@ def _add_trait_section(
     doc.add_paragraph()
 
     if result.mean_separation:
-        _add_mean_separation_section(doc, trait_name, result.mean_separation)
+        _add_mean_separation_section(
+            doc, trait_name, result.mean_separation,
+            factor_name=result.mean_separation.treatment_label,
+        )
     else:
         _add_heading(doc, "Mean Separation", level=2)
         _add_body(
@@ -1731,6 +1776,15 @@ def _add_trait_section(
             "insufficient degrees of freedom or singular model.",
             italic=True,
         )
+    if result.mean_separation_b:
+        doc.add_paragraph()
+        _add_mean_separation_section(
+            doc, trait_name, result.mean_separation_b,
+            factor_name=result.mean_separation_b.treatment_label,
+        )
+    if result.interaction_separation:
+        doc.add_paragraph()
+        _add_interaction_separation_section(doc, trait_name, result.interaction_separation)
     doc.add_paragraph()
 
     _add_genetic_parameters_section(doc, result, domain=domain)
@@ -1962,7 +2016,10 @@ def export_traits_to_word(
 
             # ── 4. Mean Separation (table + bar chart) ────────────────────────
             if result.mean_separation:
-                _add_mean_separation_section(doc, trait, result.mean_separation, domain=domain)
+                _add_mean_separation_section(
+                    doc, trait, result.mean_separation, domain=domain,
+                    factor_name=result.mean_separation.treatment_label,
+                )
             else:
                 _add_heading(doc, "Mean Separation", level=2)
                 _add_body(
@@ -1971,6 +2028,15 @@ def export_traits_to_word(
                     "freedom or singular model.",
                     italic=True,
                 )
+            if result.mean_separation_b:
+                doc.add_paragraph()
+                _add_mean_separation_section(
+                    doc, trait, result.mean_separation_b, domain=domain,
+                    factor_name=result.mean_separation_b.treatment_label,
+                )
+            if result.interaction_separation:
+                doc.add_paragraph()
+                _add_interaction_separation_section(doc, trait, result.interaction_separation, domain=domain)
             doc.add_paragraph()
 
             # ── 5. Assumption Tests (optional) ────────────────────────────────

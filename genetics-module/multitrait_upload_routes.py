@@ -1064,6 +1064,15 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                     ms = r_result.get("mean_separation")
                     if ms and isinstance(ms, dict) and effective_genotype_col:
                         ms["treatment_label"] = effective_genotype_col
+                    ms_b = r_result.get("mean_separation_b")
+                    if ms_b and isinstance(ms_b, dict) and factor_col:
+                        ms_b["treatment_label"] = factor_col
+                    int_sep = r_result.get("interaction_separation")
+                    if int_sep and isinstance(int_sep, dict):
+                        if effective_genotype_col:
+                            int_sep["genotype_label"] = effective_genotype_col
+                        if factor_col:
+                            int_sep["factor_label"] = factor_col
 
                 # Attach selection intensity label for reporting
                 if "result" in result_dict and "genetic_parameters" in result_dict["result"]:

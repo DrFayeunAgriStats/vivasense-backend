@@ -58,6 +58,31 @@ class MeanSeparation(BaseModel):
     treatment_label: Optional[str] = None  # actual column name for factorial designs
 
 
+class InteractionMeans(BaseModel):
+    """
+    Tukey HSD (or cell means fallback) for an A×B interaction in factorial designs.
+
+    genotype — Factor A level for each row
+    factor   — Factor B level for each row
+    mean     — cell mean
+    se       — standard error (NA when using cell-means fallback)
+    group    — Tukey grouping letters (or "—" for cell-means fallback)
+    test     — "Tukey HSD" or "Cell Means"
+    alpha    — significance level
+    genotype_label — actual Factor A column name (e.g. "Variety")
+    factor_label   — actual Factor B column name (e.g. "Fertilizer")
+    """
+    genotype: List[str]
+    factor: List[str]
+    mean: List[float]
+    se: List[Optional[float]]
+    group: List[str]
+    test: str = "Tukey HSD"
+    alpha: float = 0.05
+    genotype_label: Optional[str] = None
+    factor_label: Optional[str] = None
+
+
 class AnalysisContext(BaseModel):
     """Contextual metadata for the analysis run."""
     is_single_environment: bool = True
@@ -77,6 +102,8 @@ class GeneticsResult(BaseModel):
     genetic_parameters: Dict[str, Any]
     anova_table: Optional[AnovaTable] = None
     mean_separation: Optional[MeanSeparation] = None
+    mean_separation_b: Optional[MeanSeparation] = None  # factorial Factor B main effect
+    interaction_separation: Optional[InteractionMeans] = None  # factorial A×B interaction
     main_plot_mean_separation: Optional[MeanSeparation] = None  # split-plot main-plot level
     interaction_means: Optional[Dict[str, Any]] = None  # split-plot A×B cell means for interaction plot
     # Optional fields returned by the R engine — preserved here so the export
@@ -97,7 +124,7 @@ class GeneticsResult(BaseModel):
             return {}
         return v
 
-    @field_validator("mean_separation", "main_plot_mean_separation", mode="before")
+    @field_validator("mean_separation", "mean_separation_b", "main_plot_mean_separation", mode="before")
     @classmethod
     def coerce_mean_separation(cls, v: Any) -> Any:
         """
@@ -110,6 +137,18 @@ class GeneticsResult(BaseModel):
             return None
         if isinstance(v, dict):
             required = {"genotype", "mean", "se", "group"}
+            if not required.issubset(v.keys()):
+                return None
+        return v
+
+    @field_validator("interaction_separation", mode="before")
+    @classmethod
+    def coerce_interaction_separation(cls, v: Any) -> Any:
+        """Coerce partial/null interaction_separation dicts to None."""
+        if v is None:
+            return None
+        if isinstance(v, dict):
+            required = {"genotype", "factor", "mean", "se", "group"}
             if not required.issubset(v.keys()):
                 return None
         return v
