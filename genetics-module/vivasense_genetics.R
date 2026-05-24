@@ -339,22 +339,36 @@ compute_single_environment <- function(data, trait_name = "Trait",
     sp_summ <- summary(model)
     strata_names <- names(sp_summ)
 
-    # Identify strata by their row content:
-    #   wp_table        — stratum containing "main_plot" (whole-plot treatment stratum)
-    #   sub_table       — stratum containing "sub_plot"  (subplot stratum)
-    #   rep_stratum_tbl — stratum with only "Residuals"  (block/replication stratum)
+    # Identify strata by name (primary) — deterministic for Error(rep/main_plot):
+    #   "Error: rep:main_plot" → wp_table  (whole-plot treatment stratum)
+    #   "Error: Within"        → sub_table (subplot stratum)
+    #   other (only "Error: rep") → rep_stratum_tbl (block/replication stratum)
     wp_table <- NULL
     sub_table <- NULL
     rep_stratum_tbl <- NULL
     for (nm in strata_names) {
-      tbl <- sp_summ[[nm]][[1]]
-      rn  <- rownames(tbl)
-      if ("main_plot" %in% rn) {
+      # Guard: sp_summ[[nm]][[1]] may return a non-data-frame on some R builds
+      tbl <- tryCatch(sp_summ[[nm]][[1]], error = function(e) {
+        message(sprintf("[WARN] stratum '%s' access failed: %s", nm, conditionMessage(e)))
+        NULL
+      })
+      if (is.null(tbl)) next
+      rn <- rownames(tbl)
+      message(sprintf("[DEBUG] split-plot stratum '%s': rows = %s",
+                      nm, paste(rn, collapse = ", ")))
+
+      # Primary: name-based detection — deterministic for Error(rep/main_plot)
+      if (grepl("main_plot", nm, fixed = TRUE)) {
+        # "Error: rep:main_plot" → whole-plot treatment stratum
         wp_table <- tbl
-      } else if ("sub_plot" %in% rn) {
+      } else if (grepl("Within", nm, fixed = TRUE)) {
+        # "Error: Within" → subplot stratum
         sub_table <- tbl
-      } else if (length(rn) == 1L && "Residuals" %in% rn) {
-        rep_stratum_tbl <- tbl
+      } else {
+        # Fallback: rep-only stratum ("Error: rep") — block variation, Residuals only
+        if (!is.null(rn) && length(rn) == 1L && "Residuals" %in% rn) {
+          rep_stratum_tbl <- tbl
+        }
       }
     }
     if (is.null(wp_table) || is.null(sub_table)) {
