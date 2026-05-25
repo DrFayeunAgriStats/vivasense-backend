@@ -1799,6 +1799,12 @@ def _add_trait_section(
             doc, trait_name, result.mean_separation_b,
             factor_name=result.mean_separation_b.treatment_label,
         )
+    if getattr(result, "main_plot_mean_separation", None):
+        doc.add_paragraph()
+        _add_mean_separation_section(
+            doc, trait_name, result.main_plot_mean_separation,
+            factor_name=getattr(result.main_plot_mean_separation, "treatment_label", None) or "Main-Plot Factor",
+        )
     if result.interaction_separation:
         doc.add_paragraph()
         _add_interaction_separation_section(doc, trait_name, result.interaction_separation)
@@ -2050,6 +2056,12 @@ def export_traits_to_word(
                 _add_mean_separation_section(
                     doc, trait, result.mean_separation_b, domain=domain,
                     factor_name=result.mean_separation_b.treatment_label,
+                )
+            if getattr(result, "main_plot_mean_separation", None):
+                doc.add_paragraph()
+                _add_mean_separation_section(
+                    doc, trait, result.main_plot_mean_separation, domain=domain,
+                    factor_name=getattr(result.main_plot_mean_separation, "treatment_label", None) or "Main-Plot Factor",
                 )
             if result.interaction_separation:
                 doc.add_paragraph()
