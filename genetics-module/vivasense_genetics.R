@@ -622,6 +622,8 @@ compute_single_environment <- function(data, trait_name = "Trait",
     })
     message(sprintf("[SPLITPLOT] Main-plot LSD result is.null: %s", is.null(mp_sep_raw)))
     main_plot_mean_sep <- format_lsd_result(mp_sep_raw)
+    if (!is.null(main_plot_mean_sep))
+      main_plot_mean_sep$treatment_label <- "main_plot"
     message(sprintf("[SPLITPLOT] Formatted main_plot_mean_sep is.null: %s", is.null(main_plot_mean_sep)))
 
     # Sub-plot mean separation (Error B: df = r*a*(b-1), MS = MSEB)
@@ -646,6 +648,7 @@ compute_single_environment <- function(data, trait_name = "Trait",
     })
     message(sprintf("[SPLITPLOT] Sub-plot LSD result is.null: %s", is.null(sub_sep_raw)))
     sub_plot_mean_sep <- format_lsd_result(sub_sep_raw)
+    if (!is.null(sub_plot_mean_sep)) sub_plot_mean_sep$treatment_label <- "sub_plot"
     message(sprintf("[SPLITPLOT] Formatted mean_sep is.null: %s", is.null(sub_plot_mean_sep)))
 
     # Interaction means (A×B cell means for interaction plot)

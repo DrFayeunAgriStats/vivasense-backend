@@ -1047,6 +1047,15 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                 r_result = result_dict.get("result") or {}
 
                 # Remap generic R labels to actual column names for factorial designs
+                if (request.design_type == "split_plot_rcbd"
+                        and isinstance(r_result, dict)):
+                    mp_sep = r_result.get("main_plot_mean_separation")
+                    if mp_sep and isinstance(mp_sep, dict) and request.main_plot_column:
+                        mp_sep["treatment_label"] = request.main_plot_column
+                    sp_ms = r_result.get("mean_separation")
+                    if sp_ms and isinstance(sp_ms, dict) and request.sub_plot_column:
+                        sp_ms["treatment_label"] = request.sub_plot_column
+
                 if (request.design_type == "factorial"
                         and isinstance(r_result, dict)):
                     at = r_result.get("anova_table")
