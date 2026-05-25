@@ -605,37 +605,48 @@ compute_single_environment <- function(data, trait_name = "Trait",
     }
 
     # Main-plot mean separation (Error A: df = (r-1)(a-1), MS = MSEA)
-    # Aggregate to rep×main_plot level then fit a simple RCBD — the residual of that
-    # model is exactly Error A, so LSD.test uses the correct error term automatically
-    # without needing explicit DFerror/MSerror (which the aov path would respect here).
+    message(sprintf("[SPLITPLOT] Starting mean separation for %s", trait_name))
+    message("[SPLITPLOT] Aggregating main-plot data...")
     mp_sep_raw <- tryCatch({
-      mp_agg       <- aggregate(trait_value ~ rep + main_plot, data = data, FUN = mean, na.rm = TRUE)
+      mp_agg <- aggregate(trait_value ~ rep + main_plot, data = data, FUN = mean, na.rm = TRUE)
+      message(sprintf("[SPLITPLOT] Main-plot agg: %d rows", nrow(mp_agg)))
+      message(sprintf("[SPLITPLOT] Main-plot agg head: %s", paste(capture.output(head(mp_agg, 3)), collapse = "; ")))
+      message("[SPLITPLOT] Fitting main-plot model...")
       mp_agg_model <- aov(trait_value ~ rep + main_plot, data = mp_agg)
+      message(sprintf("[SPLITPLOT] Main-plot model df.residual: %d", df.residual(mp_agg_model)))
+      message("[SPLITPLOT] Running main-plot LSD.test...")
       LSD.test(mp_agg_model, "main_plot", group = TRUE, console = FALSE)
     }, error = function(e) {
-      message(sprintf("[WARN] Main-plot LSD failed for %s: %s", trait_name, conditionMessage(e)))
+      message(sprintf("[ERROR] Main-plot LSD failed for %s: %s", trait_name, conditionMessage(e)))
       NULL
     })
+    message(sprintf("[SPLITPLOT] Main-plot LSD result is.null: %s", is.null(mp_sep_raw)))
     main_plot_mean_sep <- format_lsd_result(mp_sep_raw)
+    message(sprintf("[SPLITPLOT] Formatted main_plot_mean_sep is.null: %s", is.null(main_plot_mean_sep)))
 
     # Sub-plot mean separation (Error B: df = r*a*(b-1), MS = MSEB)
-    # Aggregate to main_plot×sub_plot cell means, then use data-frame mode so that
+    # Aggregate to main_plot×sub_plot cell means then use data-frame mode so that
     # DFerror/MSerror are NOT overridden (the aov-object path always overrides them).
-    # Aggregation eliminates raw-obs NAs that caused sd() crashes in tapply.
+    message("[SPLITPLOT] Aggregating sub-plot data...")
     sub_sep_raw <- tryCatch({
       sp_agg <- aggregate(trait_value ~ main_plot + sub_plot, data = data, FUN = mean, na.rm = TRUE)
-      sp_df  <- data.frame(
+      message(sprintf("[SPLITPLOT] Sub-plot agg: %d rows", nrow(sp_agg)))
+      sp_df <- data.frame(
         trait_value = sp_agg$trait_value,
         sub_plot    = as.character(sp_agg$sub_plot)
       )
+      message(sprintf("[SPLITPLOT] Running sub-plot LSD.test with df_error_B=%d, ms_error_B=%f",
+                      df_error_B, ms_error_B))
       LSD.test(sp_df, "sub_plot",
                DFerror = df_error_B, MSerror = ms_error_B,
                group = TRUE, console = FALSE)
     }, error = function(e) {
-      message(sprintf("[WARN] Sub-plot LSD failed for %s: %s", trait_name, conditionMessage(e)))
+      message(sprintf("[ERROR] Sub-plot LSD failed for %s: %s", trait_name, conditionMessage(e)))
       NULL
     })
+    message(sprintf("[SPLITPLOT] Sub-plot LSD result is.null: %s", is.null(sub_sep_raw)))
     sub_plot_mean_sep <- format_lsd_result(sub_sep_raw)
+    message(sprintf("[SPLITPLOT] Formatted mean_sep is.null: %s", is.null(sub_plot_mean_sep)))
 
     # Interaction means (A×B cell means for interaction plot)
     interaction_means <- tryCatch({
