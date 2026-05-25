@@ -605,16 +605,13 @@ compute_single_environment <- function(data, trait_name = "Trait",
     }
 
     # Main-plot mean separation (Error A: df = (r-1)(a-1), MS = MSEA)
-    # Data-frame mode: LSD.test computes means via tapply and honours the explicit
-    # DFerror/MSerror — avoids the aov-model path that silently overrides our error terms.
+    # Aggregate to rep×main_plot level then fit a simple RCBD — the residual of that
+    # model is exactly Error A, so LSD.test uses the correct error term automatically
+    # without needing explicit DFerror/MSerror (which the aov path would respect here).
     mp_sep_raw <- tryCatch({
-      mp_df <- data.frame(
-        trait_value = data$trait_value,
-        main_plot   = as.character(data$main_plot)
-      )
-      LSD.test(mp_df, "main_plot",
-               DFerror = df_error_A, MSerror = ms_error_A,
-               group = TRUE, console = FALSE)
+      mp_agg       <- aggregate(trait_value ~ rep + main_plot, data = data, FUN = mean, na.rm = TRUE)
+      mp_agg_model <- aov(trait_value ~ rep + main_plot, data = mp_agg)
+      LSD.test(mp_agg_model, "main_plot", group = TRUE, console = FALSE)
     }, error = function(e) {
       message(sprintf("[WARN] Main-plot LSD failed for %s: %s", trait_name, conditionMessage(e)))
       NULL
@@ -622,12 +619,14 @@ compute_single_environment <- function(data, trait_name = "Trait",
     main_plot_mean_sep <- format_lsd_result(mp_sep_raw)
 
     # Sub-plot mean separation (Error B: df = r*a*(b-1), MS = MSEB)
-    # Data-frame mode: bypasses aovlist incompatibility — LSD.test cannot coerce
-    # aovlist/anova1 objects, and the aov-model path overrides DFerror/MSerror.
+    # Aggregate to main_plot×sub_plot cell means, then use data-frame mode so that
+    # DFerror/MSerror are NOT overridden (the aov-object path always overrides them).
+    # Aggregation eliminates raw-obs NAs that caused sd() crashes in tapply.
     sub_sep_raw <- tryCatch({
-      sp_df <- data.frame(
-        trait_value = data$trait_value,
-        sub_plot    = as.character(data$sub_plot)
+      sp_agg <- aggregate(trait_value ~ main_plot + sub_plot, data = data, FUN = mean, na.rm = TRUE)
+      sp_df  <- data.frame(
+        trait_value = sp_agg$trait_value,
+        sub_plot    = as.character(sp_agg$sub_plot)
       )
       LSD.test(sp_df, "sub_plot",
                DFerror = df_error_B, MSerror = ms_error_B,
@@ -1100,43 +1099,48 @@ validate_variance_components <- function(result) {
     )
   }
   
-  # Check heritability validity
-  if (!isTRUE(result$heritability$h2_is_valid)) {
-    warnings_list$h2_not_computed <- list(
-      message = "Heritability could not be computed. Phenotypic variance is zero or invalid."
-    )
-    is_valid <- FALSE
-  }
-  
-  # Check heritability range
-  h2 <- result$heritability$h2_broad_sense
-  if (!is.na(h2)) {
-    if (h2 < 0.1) {
-      warnings_list$low_heritability <- list(
-        value = h2,
-        message = "Heritability is very low (<0.10), indicating weak genetic control under present conditions. Environmental variation or G×E effects dominate.",
-        implication = "Selection response will be minimal. Environmental management may be more effective than selection."
+  # Check heritability validity (skip for designs where h2 is not applicable, e.g. split-plot)
+  h2_not_applicable <- isTRUE(result$heritability$not_applicable)
+  if (!h2_not_applicable) {
+    if (!isTRUE(result$heritability$h2_is_valid)) {
+      warnings_list$h2_not_computed <- list(
+        message = "Heritability could not be computed. Phenotypic variance is zero or invalid."
       )
-    } else if (h2 < 0.3) {
-      warnings_list$moderate_low_heritability <- list(
-        value = h2,
-        message = "Heritability is low to moderate (0.10–0.30), indicating that environmental factors have substantial influence."
-      )
+      is_valid <- FALSE
+    }
+
+    # Check heritability range
+    h2 <- result$heritability$h2_broad_sense
+    if (length(h2) == 1L && !is.na(h2)) {
+      if (h2 < 0.1) {
+        warnings_list$low_heritability <- list(
+          value = h2,
+          message = "Heritability is very low (<0.10), indicating weak genetic control under present conditions. Environmental variation or G×E effects dominate.",
+          implication = "Selection response will be minimal. Environmental management may be more effective than selection."
+        )
+      } else if (h2 < 0.3) {
+        warnings_list$moderate_low_heritability <- list(
+          value = h2,
+          message = "Heritability is low to moderate (0.10–0.30), indicating that environmental factors have substantial influence."
+        )
+      }
     }
   }
-  
+
   # Check genetic parameters validity
   gp <- result$genetic_parameters
-  
+  gp_not_applicable <- isTRUE(gp$not_applicable)
+
   if (!isTRUE(flags$mean_valid)) {
     warnings_list$missing_mean_for_cv <- list(
       message = "Grand mean is zero or missing. GCV, PCV, and GAM could not be computed."
     )
   }
-  
-  if (!is.na(gp$GCV) && !is.na(gp$PCV)) {
+
+  if (!gp_not_applicable && length(gp$GCV) == 1L && length(gp$PCV) == 1L &&
+      !is.na(gp$GCV) && !is.na(gp$PCV)) {
     gcv_pcv_ratio <- gp$GCV / gp$PCV
-    
+
     # Detect weak genetic signal from GCV/PCV ratio
     if (gcv_pcv_ratio < 0.1) {
       warnings_list$weak_genetic_signal_from_cv <- list(
