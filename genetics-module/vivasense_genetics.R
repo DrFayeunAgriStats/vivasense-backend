@@ -605,11 +605,14 @@ compute_single_environment <- function(data, trait_name = "Trait",
     }
 
     # Main-plot mean separation (Error A: df = (r-1)(a-1), MS = MSEA)
-    # Average sub_plot values within each rep × main_plot cell, then fit simple RCBD
+    # Data-frame mode: LSD.test computes means via tapply and honours the explicit
+    # DFerror/MSerror — avoids the aov-model path that silently overrides our error terms.
     mp_sep_raw <- tryCatch({
-      mp_agg <- aggregate(trait_value ~ rep + main_plot, data = data, FUN = mean)
-      mp_mod  <- aov(trait_value ~ main_plot + rep, data = mp_agg)
-      LSD.test(mp_mod, "main_plot",
+      mp_df <- data.frame(
+        trait_value = data$trait_value,
+        main_plot   = as.character(data$main_plot)
+      )
+      LSD.test(mp_df, "main_plot",
                DFerror = df_error_A, MSerror = ms_error_A,
                group = TRUE, console = FALSE)
     }, error = function(e) {
@@ -619,24 +622,20 @@ compute_single_environment <- function(data, trait_name = "Trait",
     main_plot_mean_sep <- format_lsd_result(mp_sep_raw)
 
     # Sub-plot mean separation (Error B: df = r*a*(b-1), MS = MSEB)
-    sub_sep_raw <- tryCatch(
-      LSD.test(model, "sub_plot",
+    # Data-frame mode: bypasses aovlist incompatibility — LSD.test cannot coerce
+    # aovlist/anova1 objects, and the aov-model path overrides DFerror/MSerror.
+    sub_sep_raw <- tryCatch({
+      sp_df <- data.frame(
+        trait_value = data$trait_value,
+        sub_plot    = as.character(data$sub_plot)
+      )
+      LSD.test(sp_df, "sub_plot",
                DFerror = df_error_B, MSerror = ms_error_B,
-               group = TRUE, console = FALSE),
-      error = function(e) {
-        message(sprintf("[WARN] Sub-plot LSD on model failed for %s: %s — trying aggregated data", trait_name, conditionMessage(e)))
-        tryCatch({
-          sub_agg <- aggregate(trait_value ~ rep + main_plot + sub_plot, data = data, FUN = mean)
-          sub_mod  <- aov(trait_value ~ sub_plot + main_plot + rep, data = sub_agg)
-          LSD.test(sub_mod, "sub_plot",
-                   DFerror = df_error_B, MSerror = ms_error_B,
-                   group = TRUE, console = FALSE)
-        }, error = function(e2) {
-          message(sprintf("[WARN] Sub-plot aggregated LSD also failed for %s: %s", trait_name, conditionMessage(e2)))
-          NULL
-        })
-      }
-    )
+               group = TRUE, console = FALSE)
+    }, error = function(e) {
+      message(sprintf("[WARN] Sub-plot LSD failed for %s: %s", trait_name, conditionMessage(e)))
+      NULL
+    })
     sub_plot_mean_sep <- format_lsd_result(sub_sep_raw)
 
     # Interaction means (A×B cell means for interaction plot)
