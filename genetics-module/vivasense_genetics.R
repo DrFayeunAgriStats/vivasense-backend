@@ -380,12 +380,14 @@ compute_single_environment <- function(data, trait_name = "Trait",
 
     # ── Build ANOVA table: Replication | Main plot (A) | Error A | Sub plot (B) | A×B | Error B
     # 1. Replication row (from the rep-only stratum's Residuals)
+    # Use last-row fallback consistent with wp/sub: rep stratum table has only Df/Sum Sq/Mean Sq
+    # (no F value or Pr(>F) columns in some R builds), so always add both NA columns to match.
     rep_row <- NULL
     if (!is.null(rep_stratum_tbl)) {
-      rep_row <- rep_stratum_tbl["Residuals", , drop = FALSE]
+      rep_row <- rep_stratum_tbl[nrow(rep_stratum_tbl), , drop = FALSE]
       rownames(rep_row) <- "Replication"
       rep_row[, "F value"] <- NA_real_
-      if ("Pr(>F)" %in% names(rep_row)) rep_row[, "Pr(>F)"] <- NA_real_
+      rep_row[, "Pr(>F)"]  <- NA_real_  # always add — rep stratum table omits this column
     }
 
     # 2. Main-plot treatment rows + Error A
@@ -407,12 +409,29 @@ compute_single_environment <- function(data, trait_name = "Trait",
     sub_error[, "F value"] <- NA_real_
     if ("Pr(>F)" %in% names(sub_error)) sub_error[, "Pr(>F)"] <- NA_real_
 
-    # 6. Assemble full table
-    anova_table <- if (!is.null(rep_row)) {
-      rbind(rep_row, wp_treat, wp_error, sub_treat, sub_error)
-    } else {
-      rbind(wp_treat, wp_error, sub_treat, sub_error)
+    # 6. Assemble full table — normalise all sub-tables to the same 5-column schema
+    # before rbind so column-count mismatches don't produce row.names errors.
+    .norm_cols <- function(tbl) {
+      if (!"F value" %in% names(tbl)) tbl[, "F value"] <- NA_real_
+      if (!"Pr(>F)"  %in% names(tbl)) tbl[, "Pr(>F)"]  <- NA_real_
+      tbl[, c("Df", "Sum Sq", "Mean Sq", "F value", "Pr(>F)"), drop = FALSE]
     }
+    wp_treat  <- .norm_cols(wp_treat)
+    wp_error  <- .norm_cols(wp_error)
+    sub_treat <- .norm_cols(sub_treat)
+    sub_error <- .norm_cols(sub_error)
+
+    anova_table <- tryCatch({
+      if (!is.null(rep_row)) {
+        rep_row <- .norm_cols(rep_row)
+        rbind(rep_row, wp_treat, wp_error, sub_treat, sub_error)
+      } else {
+        rbind(wp_treat, wp_error, sub_treat, sub_error)
+      }
+    }, error = function(e) {
+      message(sprintf("[WARN] split-plot ANOVA table rbind failed (%s) — excluding rep row", conditionMessage(e)))
+      rbind(wp_treat, wp_error, sub_treat, sub_error)
+    })
 
     ms_genotype <- NA_real_
     ms_error_A  <- as.numeric(wp_error[1L, "Mean Sq"])
