@@ -498,6 +498,7 @@ def _generate_mean_separation_chart(
     ses: List[Optional[float]],
     groups: List[str],
     domain: str = "plant_breeding",
+    factor_name: Optional[str] = None,
 ) -> bytes:
     logger.info("Chart generation started for trait: '%s'. Received %d means, %d groups.", trait_name, len(means), len(groups))
     try:
@@ -544,7 +545,8 @@ def _generate_mean_separation_chart(
             fontsize=9,
         )
         ax.set_ylabel(trait_name, fontsize=11)
-        ax.set_xlabel("Treatment" if not is_plant_breeding_domain(domain) else "Genotype", fontsize=11)
+        _xlabel = factor_name if factor_name else ("Treatment" if not is_plant_breeding_domain(domain) else "Genotype")
+        ax.set_xlabel(_xlabel, fontsize=11)
         ax.set_title(f"Mean Separation — {trait_name}", fontsize=12, fontweight="bold")
         ax.yaxis.grid(True, color="#cccccc", alpha=0.5, linewidth=0.7, zorder=0)
         ax.set_axisbelow(True)
@@ -952,17 +954,31 @@ def _add_executive_summary(
             fields.append(("CV (%)", "Unavailable"))
     elif is_anova and not is_agronomy:
         # ANOVA module + plant_breeding: show CV% (no H²/GAM for ANOVA module)
-        # Use _resolve_cv_percent so ANOVA-MSE fallback applies when ds.cv_percent is absent
-        cv = _resolve_cv_percent(result)
-        if cv is not None:
-            fields.append(("CV (%)", _fmt_cv(cv)))
+        # For split-plot, show CV-A (whole-plot) and CV-B (subplot) separately.
+        vc = result.variance_components if isinstance(result.variance_components, dict) else {}
+        cv_a_val = _clean_cv_percent(float(vc["cv_A"])) if vc.get("cv_A") is not None else None
+        cv_b_val = _clean_cv_percent(float(vc["cv_B"])) if vc.get("cv_B") is not None else None
+        if cv_a_val is not None and cv_b_val is not None:
+            fields.append(("CV-A (Main-plot, %)", _fmt_cv(cv_a_val)))
+            fields.append(("CV-B (Sub-plot, %)", _fmt_cv(cv_b_val)))
         else:
-            fields.append(("CV (%)", "Unavailable"))
+            cv = _resolve_cv_percent(result)
+            if cv is not None:
+                fields.append(("CV (%)", _fmt_cv(cv)))
+            else:
+                fields.append(("CV (%)", "Unavailable"))
     elif is_agronomy:
         # Show CV% and treatment significance for agronomy executive summary
-        cv = _resolve_cv_percent(result)
-        if cv is not None:
-            fields.append(("CV (%)", _fmt_cv(cv)))
+        vc = result.variance_components if isinstance(result.variance_components, dict) else {}
+        cv_a_val = _clean_cv_percent(float(vc["cv_A"])) if vc.get("cv_A") is not None else None
+        cv_b_val = _clean_cv_percent(float(vc["cv_B"])) if vc.get("cv_B") is not None else None
+        if cv_a_val is not None and cv_b_val is not None:
+            fields.append(("CV-A (Main-plot, %)", _fmt_cv(cv_a_val)))
+            fields.append(("CV-B (Sub-plot, %)", _fmt_cv(cv_b_val)))
+        else:
+            cv = _resolve_cv_percent(result)
+            if cv is not None:
+                fields.append(("CV (%)", _fmt_cv(cv)))
         at = result.anova_table
         if at and hasattr(at, "source") and "genotype" in at.source:
             idx = at.source.index("genotype")
@@ -993,11 +1009,10 @@ def _add_descriptive_stats(doc: Document, result: GeneticsResult, domain: str = 
 
     _entry_label = "No. Treatments" if not is_plant_breeding_domain(domain) else "No. Genotypes"
     # Use only real, directly-available fields — do not fabricate derived stats
-    rows: List[tuple] = [
-        ("Grand Mean", _fmt(result.grand_mean)),
-        (_entry_label, str(result.n_genotypes)),
-        ("No. Replications", str(result.n_reps)),
-    ]
+    rows: List[tuple] = [("Grand Mean", _fmt(result.grand_mean))]
+    if result.n_genotypes is not None:
+        rows.append((_entry_label, str(result.n_genotypes)))
+    rows.append(("No. Replications", str(result.n_reps)))
     if result.n_environments:
         rows.append(("No. Environments", str(result.n_environments)))
 
@@ -1154,12 +1169,8 @@ def _add_mean_separation_section(
 
     top_letter = ms.group[0] if ms.group else "a"
     top_genos = [ms.genotype[i] for i, g in enumerate(ms.group) if g == top_letter]
-    top_label = "treatment(s)" if is_agronomy else "genotype(s)"
-    _top_phrase = (
-        f"Treatment(s) with the highest observed mean in group '{top_letter}': "
-        if is_agronomy
-        else f"Genotype(s) with the highest observed mean in group '{top_letter}': "
-    )
+    _entry_word = factor_name.capitalize() if factor_name else ("Treatment(s)" if is_agronomy else "Genotype(s)")
+    _top_phrase = f"{_entry_word} with the highest observed mean in group '{top_letter}': "
     _add_body(
         doc,
         "Means followed by the same letter are not significantly different "
@@ -1176,6 +1187,7 @@ def _add_mean_separation_section(
         ses=ms.se,
         groups=ms.group,
         domain=domain,
+        factor_name=factor_name,
     )
     if chart_bytes:
         doc.add_paragraph()
@@ -1369,6 +1381,9 @@ def _add_interpretation_section(
                 is_genotype_effect_significant,
                 is_environment_effect_significant,
                 is_gxe_effect_significant,
+                is_main_plot_significant,
+                is_subplot_significant,
+                is_interaction_significant,
             )
             ds = result.descriptive_stats or {}
             cv_pct = _resolve_cv_percent(result)
@@ -1380,6 +1395,23 @@ def _add_interpretation_section(
                 "range":          ds.get("range") if isinstance(ds, dict) else None,
                 "standard_error": ds.get("standard_error") if isinstance(ds, dict) else None,
             }
+
+            # Detect split-plot and extract all required kwargs from result
+            _is_split_plot = result.main_plot_mean_separation is not None
+            _design_type = "split_plot_rcbd" if _is_split_plot else None
+            if _is_split_plot:
+                mp_sig  = is_main_plot_significant(result.anova_table)
+                sp_sig  = is_subplot_significant(result.anova_table)
+                int_sig = is_interaction_significant(result.anova_table)
+                vc = result.variance_components if isinstance(result.variance_components, dict) else {}
+                cv_a = _clean_cv_percent(float(vc["cv_A"])) if vc.get("cv_A") is not None else None
+                cv_b = _clean_cv_percent(float(vc["cv_B"])) if vc.get("cv_B") is not None else None
+                if cv_b is not None:
+                    summary["cv_percent"] = cv_b
+            else:
+                mp_sig = sp_sig = int_sig = None
+                cv_a = cv_b = None
+
             gxe_sig = is_gxe_effect_significant(result.anova_table)
             interpretation = generate_anova_interpretation(
                 trait=trait_name,
@@ -1396,6 +1428,13 @@ def _add_interpretation_section(
                 n_environments=result.n_environments,
                 n_reps=result.n_reps,
                 domain=domain or "plant_breeding",
+                design_type=_design_type,
+                main_plot_significant=mp_sig,
+                subplot_significant=sp_sig,
+                interaction_significant=int_sig,
+                cv_a=cv_a,
+                cv_b=cv_b,
+                main_plot_mean_separation=result.main_plot_mean_separation if _is_split_plot else None,
             )
             if is_plant_breeding_domain(domain or "plant_breeding"):
                 interpretation = interpretation.replace(
@@ -2038,12 +2077,13 @@ def export_traits_to_word(
             doc.add_paragraph()
 
             # ── 4. Mean Separation (table + bar chart) ────────────────────────
+            _is_split_plot = getattr(result, "main_plot_mean_separation", None) is not None
             if result.mean_separation:
                 _add_mean_separation_section(
                     doc, trait, result.mean_separation, domain=domain,
                     factor_name=result.mean_separation.treatment_label,
                 )
-            else:
+            elif not _is_split_plot:
                 _add_heading(doc, "Mean Separation", level=2)
                 _add_body(
                     doc,
@@ -2164,9 +2204,10 @@ def _build_document(data: DownloadReportRequest) -> Document:
     mode_label = "Multi-environment" if ds.mode == "multi" else "Single-environment"
     env_part = f"  ·  {ds.n_environments} environments" if ds.n_environments else ""
     _unit = "treatments" if _is_agronomy else "genotypes"
+    _entry_part = f"  ·  {ds.n_genotypes} {_unit}" if ds.n_genotypes is not None else ""
 
     sub = doc.add_paragraph(
-        f"{mode_label}  ·  {ds.n_genotypes} {_unit}  ·  "
+        f"{mode_label}{_entry_part}  ·  "
         f"{ds.n_reps} replications{env_part}  ·  {ds.n_traits} traits"
     )
     sub.alignment = WD_ALIGN_PARAGRAPH.CENTER

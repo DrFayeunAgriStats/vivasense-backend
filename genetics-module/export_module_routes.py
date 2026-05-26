@@ -527,7 +527,7 @@ async def export_anova_word(data: AnovaExportRequest):
             rows = []
             if tr.grand_mean is not None:
                 rows.append(("Grand Mean", _fmt(tr.grand_mean)))
-            if tr.n_genotypes:
+            if tr.n_genotypes and tr.design_type != "split_plot_rcbd":
                 rows.append(("No. Genotypes", str(tr.n_genotypes)))
             if tr.n_reps:
                 rows.append(("No. Replications", str(tr.n_reps)))
@@ -552,10 +552,16 @@ async def export_anova_word(data: AnovaExportRequest):
                         rows.append(("Maximum", _fmt(ds.max)))
                     if ds.range is not None:
                         rows.append(("Range", _fmt(ds.range)))
-                    if ds.cv_percent is not None:
+                    if ds.cv_percent is not None and tr.design_type != "split_plot_rcbd":
                         rows.append(("Coefficient of Variation (%)", _fmt(ds.cv_percent, 2)))
                     if ds.variance is not None:
                         rows.append(("Variance", _fmt(ds.variance)))
+            # For split-plot, replace single CV with dual CV-A / CV-B
+            if tr.design_type == "split_plot_rcbd":
+                if tr.cv_a is not None:
+                    rows.append(("CV-A — Main-plot (%)", _fmt(tr.cv_a, 2)))
+                if tr.cv_b is not None:
+                    rows.append(("CV-B — Sub-plot (%)", _fmt(tr.cv_b, 2)))
             if rows:
                 _add_stat_table(doc, ["Parameter", "Value"], rows, numeric_cols={1})
             doc.add_paragraph()
@@ -570,10 +576,18 @@ async def export_anova_word(data: AnovaExportRequest):
                 doc.add_paragraph()
 
             # ── 4. Mean Separation (table + embedded chart) ────────────────────
-            # Skip entirely for split-plot RCBD — mean separation over a single
-            # factor is not meaningful when effects are estimated in two strata.
             if tr.design_type == "split_plot_rcbd":
-                pass  # section omitted — not applicable for this design
+                # For split-plot, sub-plot and main-plot sections are shown separately.
+                # Generic "not available" is suppressed — it would be contradictory.
+                if tr.mean_separation:
+                    _add_mean_separation_section(doc, trait, tr.mean_separation)
+                    doc.add_paragraph()
+                if tr.main_plot_mean_separation:
+                    _add_mean_separation_section(
+                        doc, trait, tr.main_plot_mean_separation,
+                        factor_name=getattr(tr.main_plot_mean_separation, "treatment_label", None) or "Main-Plot Factor",
+                    )
+                    doc.add_paragraph()
             elif tr.mean_separation:
                 _add_mean_separation_section(doc, trait, tr.mean_separation)
                 doc.add_paragraph()
