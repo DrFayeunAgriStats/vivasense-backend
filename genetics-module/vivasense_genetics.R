@@ -691,22 +691,32 @@ compute_single_environment <- function(data, trait_name = "Trait",
       main_plot_mean_sep$treatment_label <- "main_plot"
     message(sprintf("[SPLITPLOT] Formatted main_plot_mean_sep is.null: %s", is.null(main_plot_mean_sep)))
 
-    # Sub-plot mean separation (Error B: df = r*a*(b-1), MS = MSEB)
-    # Aggregate to main_plot×sub_plot cell means then use data-frame mode so that
-    # DFerror/MSerror are NOT overridden (the aov-object path always overrides them).
-    message("[SPLITPLOT] Aggregating sub-plot data...")
+    # Sub-plot mean separation (Error B)
+    # Mirror the main-plot path: fit a simple aov() on the FULL raw data and call
+    # LSD.test in model mode with Error B injected.  Data-frame mode was fragile
+    # because its $groups structure differs subtly from model mode, and aggregating
+    # to cell means used r̄ = n_main instead of the correct r̄ = n_reps × n_main.
+    # With all r*a observations per sub_plot level, LSD.test uses r̄ = r*a, giving
+    # SE = sqrt(MS_ErrorB / (r*a)) — the correct formula for sub-plot marginal means.
     sub_sep_raw <- tryCatch({
-      sp_agg <- aggregate(trait_value ~ main_plot + sub_plot, data = data, FUN = mean, na.rm = TRUE)
-      message(sprintf("[SPLITPLOT] Sub-plot agg: %d rows", nrow(sp_agg)))
-      sp_df <- data.frame(
-        trait_value = sp_agg$trait_value,
-        sub_plot    = as.character(sp_agg$sub_plot)
-      )
-      message(sprintf("[SPLITPLOT] Running sub-plot LSD.test with df_error_B=%d, ms_error_B=%f",
-                      df_error_B, ms_error_B))
-      LSD.test(sp_df, "sub_plot",
-               DFerror = df_error_B, MSerror = ms_error_B,
-               group = TRUE, console = FALSE)
+      if (is.na(df_error_B) || is.na(ms_error_B) || ms_error_B <= 0) {
+        message(sprintf("[WARN] Error B invalid (df=%s ms=%s) — skipping sub-plot LSD",
+                        df_error_B, ms_error_B))
+        NULL
+      } else {
+        sp_all <- data.frame(
+          trait_value = as.numeric(data$trait_value),
+          sub_plot    = as.character(data$sub_plot),
+          rep         = as.character(data$rep)
+        )
+        sp_all <- sp_all[!is.na(sp_all$trait_value), , drop = FALSE]
+        sp_sub_model <- aov(trait_value ~ sub_plot + rep, data = sp_all)
+        message(sprintf("[SPLITPLOT] Sub-plot LSD.test (model mode): df_B=%d ms_B=%f n=%d",
+                        df_error_B, ms_error_B, nrow(sp_all)))
+        LSD.test(sp_sub_model, "sub_plot",
+                 DFerror = df_error_B, MSerror = ms_error_B,
+                 group = TRUE, console = FALSE)
+      }
     }, error = function(e) {
       message(sprintf("[ERROR] Sub-plot LSD failed for %s: %s", trait_name, conditionMessage(e)))
       NULL
