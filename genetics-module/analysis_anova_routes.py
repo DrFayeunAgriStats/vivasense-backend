@@ -894,7 +894,9 @@ def _is_term_significant(anova_table, term: str) -> Optional[bool]:
     if not anova_table or not hasattr(anova_table, "source") or not hasattr(anova_table, "p_value"):
         return None
     try:
-        idx = anova_table.source.index(term)
+        # Strip whitespace from source labels — R rownames can have trailing spaces
+        stripped_sources = [str(s).strip() for s in anova_table.source]
+        idx = stripped_sources.index(term.strip())
         p_val = anova_table.p_value[idx]
         if p_val is None:
             return None

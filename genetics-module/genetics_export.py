@@ -1605,28 +1605,31 @@ def _add_writing_support_guide(doc: Document, data: DownloadReportRequest) -> No
         result = tr.analysis_result.result
         at = result.anova_table
 
-        n_genotypes = result.n_genotypes or data.dataset_summary.n_genotypes
-        n_env = result.n_environments or data.dataset_summary.n_environments
-        n_rep = result.n_reps or data.dataset_summary.n_reps
+        _is_split_plot = result.main_plot_mean_separation is not None
 
-        f_g, p_g, _ = _extract_source_stats(at, "genotype")
-        eta_g = _eta_squared_for_source(at, "genotype")
-        sig_word = "significant" if (p_g is not None and p_g < 0.05) else "not significant"
+        if not _is_split_plot:
+            n_genotypes = result.n_genotypes or data.dataset_summary.n_genotypes
+            n_env = result.n_environments or data.dataset_summary.n_environments
+            n_rep = result.n_reps or data.dataset_summary.n_reps
 
-        env_phrase = (
-            f"across {n_genotypes} {_entry} and {n_env} environments"
-            if n_env
-            else f"across {n_genotypes} {_entry} and {n_rep} replications"
-        )
+            f_g, p_g, _ = _extract_source_stats(at, "genotype")
+            eta_g = _eta_squared_for_source(at, "genotype")
+            sig_word = "significant" if (p_g is not None and p_g < 0.05) else "not significant"
 
-        starter_anova = (
-            f"An analysis of variance for {row.trait} evaluated {env_phrase} showed that "
-            f"the {_effect} was {sig_word} "
-            f"(F = {_fmt(f_g, 3)}, {_p_for_sentence(p_g)}, η² = {_fmt(eta_g, 2, thousands=False)})."
-        )
-        _add_body(doc, starter_anova)
+            env_phrase = (
+                f"across {n_genotypes} {_entry} and {n_env} environments"
+                if n_env
+                else f"across {n_genotypes} {_entry} and {n_rep} replications"
+            )
 
-        if not _guide_agronomy:
+            starter_anova = (
+                f"An analysis of variance for {row.trait} evaluated {env_phrase} showed that "
+                f"the {_effect} was {sig_word} "
+                f"(F = {_fmt(f_g, 3)}, {_p_for_sentence(p_g)}, η² = {_fmt(eta_g, 2, thousands=False)})."
+            )
+            _add_body(doc, starter_anova)
+
+        if not _guide_agronomy and not _is_split_plot:
             h2 = row.h2
             gam_pct = row.gam_percent
             starter_genetic = (

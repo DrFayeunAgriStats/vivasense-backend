@@ -580,7 +580,10 @@ async def export_anova_word(data: AnovaExportRequest):
                 # For split-plot, sub-plot and main-plot sections are shown separately.
                 # Generic "not available" is suppressed — it would be contradictory.
                 if tr.mean_separation:
-                    _add_mean_separation_section(doc, trait, tr.mean_separation)
+                    _add_mean_separation_section(
+                        doc, trait, tr.mean_separation,
+                        factor_name=getattr(tr.mean_separation, "treatment_label", None) or "Sub-Plot Factor",
+                    )
                     doc.add_paragraph()
                 if tr.main_plot_mean_separation:
                     _add_mean_separation_section(
