@@ -440,6 +440,29 @@ compute_single_environment <- function(data, trait_name = "Trait",
     df_error_B  <- as.integer(sub_error[1L, "Df"])
     ms_error    <- ms_error_B   # subplot error is canonical for backward-compat CV
     n_main      <- nlevels(data$main_plot)
+
+    # Stamp correct F-values directly using known strata error terms.
+    # sanitize_anova_f_values uses row-name detection which can pick the wrong
+    # residual in edge cases; here we use the already-computed ms/df values so
+    # the denominator is unambiguous regardless of assembled row names.
+    #   wp_treat rows (whole-plot stratum)  → tested against Error A
+    #   sub_treat rows (sub-plot + A×B)     → tested against Error B
+    for (rn_sp in rownames(wp_treat)) {
+      ms_eff <- suppressWarnings(as.numeric(anova_table[rn_sp, "Mean Sq"]))
+      df_eff <- suppressWarnings(as.integer(anova_table[rn_sp, "Df"]))
+      fv     <- safe_f_ratio(ms_eff, ms_error_A)
+      anova_table[rn_sp, "F value"] <- fv
+      anova_table[rn_sp, "Pr(>F)"]  <- if (is.na(fv) || is.na(df_eff) || is.na(df_error_A)) NA_real_ else
+        pf(fv, df_eff, df_error_A, lower.tail = FALSE)
+    }
+    for (rn_sp in rownames(sub_treat)) {
+      ms_eff <- suppressWarnings(as.numeric(anova_table[rn_sp, "Mean Sq"]))
+      df_eff <- suppressWarnings(as.integer(anova_table[rn_sp, "Df"]))
+      fv     <- safe_f_ratio(ms_eff, ms_error_B)
+      anova_table[rn_sp, "F value"] <- fv
+      anova_table[rn_sp, "Pr(>F)"]  <- if (is.na(fv) || is.na(df_eff) || is.na(df_error_B)) NA_real_ else
+        pf(fv, df_eff, df_error_B, lower.tail = FALSE)
+    }
     # cv_A / cv_B computed in the variance_components block below (grand_mean available there)
 
   } else {
