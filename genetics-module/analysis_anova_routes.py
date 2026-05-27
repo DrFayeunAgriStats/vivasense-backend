@@ -149,6 +149,13 @@ def compute_cv_from_anova(
     return None
 
 
+def _fmt_factor_label(raw: Optional[str], fallback: str) -> str:
+    """Format a column name (e.g. 'main_plot', 'sub_plot', 'irrigation') for prose."""
+    if not raw:
+        return fallback
+    return raw.replace("_", " ").title()
+
+
 def _generate_split_plot_interpretation(
     trait: str,
     summary: Dict[str, Optional[float]],
@@ -162,6 +169,8 @@ def _generate_split_plot_interpretation(
     cv_b: Optional[float] = None,
     mean_separation: Optional[Any] = None,
     main_plot_mean_separation: Optional[Any] = None,
+    mp_label: Optional[str] = None,
+    sp_label: Optional[str] = None,
 ) -> str:
     """
     Scientifically rigorous split-plot RCBD interpretation.
@@ -170,21 +179,25 @@ def _generate_split_plot_interpretation(
     significant, it is reported first and main effects are flagged as
     conditional rather than unconditional. Uses dual CV (CV_A for whole-plot
     precision, CV_B for subplot precision) when both are available.
-    
-    Uses domain-neutral terminology (main-plot factor / subplot factor) suitable
-    for agronomy, horticulture, and breeding applications.
+
+    mp_label / sp_label: actual factor names (e.g. "Irrigation", "Variety").
+    Falls back to generic "main-plot factor" / "subplot factor" if not provided.
     """
+    # Resolve actual factor labels for scientific specificity
+    MP = _fmt_factor_label(mp_label, "main-plot factor")
+    SP = _fmt_factor_label(sp_label, "subplot factor")
+
     sections: List[tuple] = []
 
     # ── 1. Overview ────────────────────────────────────────────────────────────
     overview = [
-        "This analysis used a split-plot randomised complete block design (RCBD), "
-        "which applies two levels of restricted randomisation: "
-        "main-plot factor levels are assigned to whole plots within each block, "
-        "and subplot factor levels are independently assigned within each whole plot. "
-        "This design structure creates two error terms: Error A (whole-plot error) "
-        "for testing the main-plot factor, and Error B (subplot error) for testing "
-        "the subplot factor and the A×B interaction."
+        f"This analysis used a split-plot randomised complete block design (RCBD), "
+        f"with {MP} assigned to main plots (whole plots) and {SP} assigned to subplots "
+        f"within each whole plot. "
+        "Two levels of restricted randomisation were applied. "
+        "This design structure creates two error terms: Error A (whole-plot error, Rep × main plot) "
+        f"for testing {MP}, and Error B (subplot error) for testing "
+        f"{SP} and the {MP} × {SP} interaction."
     ]
     if n_reps:
         overview.append(f"The experiment comprised {n_reps} complete block(s).")
@@ -198,11 +211,11 @@ def _generate_split_plot_interpretation(
     # ── 2. Statistical Model ────────────────────────────────────────────────────
     model_desc = [
         f"The split-plot ANOVA model for {trait} partitions variability into: "
-        "Replication (block effect), main-plot factor (A), whole-plot error (Rep×A), "
-        "subplot factor (B), A×B interaction, and subplot error (Residual). "
-        "The main-plot factor is tested against Rep×A (Error A), while the subplot "
-        "factor and A×B interaction are tested against the residual error (Error B). "
-        "This two-tier error structure reflects the nested randomization of the design."
+        f"Replication (block effect), {MP} (A), whole-plot error (Rep × {MP}), "
+        f"{SP} (B), {MP} × {SP} interaction, and subplot error (Residual). "
+        f"{MP} is tested against Rep × {MP} (Error A), while "
+        f"{SP} and the {MP} × {SP} interaction are tested against the residual error (Error B). "
+        "This two-tier error structure reflects the nested randomisation of the design."
     ]
     sections.append(("Statistical Model", " ".join(model_desc)))
 
@@ -265,98 +278,93 @@ def _generate_split_plot_interpretation(
     # as conditional. When interaction is non-significant, report main effects first.
     if interaction_significant is True:
         int_text = (
-            f"A statistically significant A×B interaction was detected for {trait} (p < 0.05), "
-            "indicating that the effect of the subplot factor depends on the main-plot factor level, "
-            "and vice versa. When the interaction is significant, interpretation of marginal (main) "
-            "effects in isolation is insufficient and can be misleading. Treatment-combination cell "
-            "means (each unique A×B combination) should be the primary basis for conclusions. "
-            "An interaction plot displaying mean response across all A×B combinations is strongly "
-            "recommended to visualize the nature of the interaction."
+            f"A statistically significant {MP} × {SP} interaction was detected for {trait} (p < 0.05), "
+            f"indicating that the effect of {SP} depends on the level of {MP}, and vice versa. "
+            "When the interaction is significant, interpretation of marginal (main) effects in isolation "
+            "is insufficient and can be misleading. Treatment-combination cell means "
+            f"(each unique {MP} × {SP} combination) should be the primary basis for biological "
+            "and agronomic conclusions. Inspect the interaction plot and cell mean table to characterise "
+            "the nature of the interaction."
         )
-        sections.append(("A×B Interaction Effect (Primary)", int_text))
+        sections.append((f"{MP} × {SP} Interaction Effect (Primary)", int_text))
 
         if main_plot_significant is True:
             mp_text = (
-                f"The main-plot factor showed a significant marginal effect on {trait} (p < 0.05). "
-                "However, because the A×B interaction is also significant, this main effect should "
-                "be interpreted as an average across subplot levels and may not represent the true "
-                "response pattern at any specific subplot level. Main-plot factor means are conditional "
-                "on the subplot factor."
+                f"{MP} showed a significant marginal effect on {trait} (p < 0.05). "
+                f"However, because the {MP} × {SP} interaction is also significant, this effect should "
+                f"be interpreted as an average across {SP} levels and may not represent the true "
+                f"response pattern at any specific {SP} level. {MP} marginal means are conditional "
+                f"on the {SP} level."
             )
         elif main_plot_significant is False:
             mp_text = (
-                f"The main-plot factor did not show a significant marginal effect on {trait} (p ≥ 0.05). "
-                "However, the significant A×B interaction indicates that differential responses to the "
-                "main-plot factor exist when examined at specific subplot levels, even though the overall "
+                f"{MP} did not show a significant marginal effect on {trait} (p ≥ 0.05). "
+                f"However, the significant {MP} × {SP} interaction indicates that differential responses "
+                f"to {MP} exist when examined at specific {SP} levels, even though the overall "
                 "average effect is not significant."
             )
         else:
-            mp_text = "The significance of the main-plot factor effect could not be determined."
-        sections.append(("Main-Plot Factor Effect (Conditional)", mp_text))
+            mp_text = f"The significance of the {MP} effect could not be determined."
+        sections.append((f"{MP} Effect (Conditional on Interaction)", mp_text))
 
         if subplot_significant is True:
             sub_text = (
-                f"The subplot factor showed a significant marginal effect on {trait} (p < 0.05). "
-                "As with the main-plot effect, this should be interpreted as an average across "
-                "main-plot levels and is conditional on the significant interaction. The true "
-                "subplot effect varies depending on which main-plot level is examined."
+                f"{SP} showed a significant marginal effect on {trait} (p < 0.05). "
+                f"As with the {MP} effect, this should be interpreted as an average across "
+                f"{MP} levels and is conditional on the significant interaction. The true "
+                f"{SP} effect varies depending on which {MP} level is examined."
             )
         elif subplot_significant is False:
             sub_text = (
-                f"The subplot factor did not show a significant marginal effect on {trait} (p ≥ 0.05). "
-                "Despite this, the significant A×B interaction confirms that subplot responses are "
-                "not uniform across all main-plot levels — specific combinations of main-plot and "
-                "subplot factors produce differential effects."
+                f"{SP} did not show a significant marginal effect on {trait} (p ≥ 0.05). "
+                f"Despite this, the significant {MP} × {SP} interaction confirms that {SP} responses "
+                f"are not uniform across all {MP} levels — specific {MP} × {SP} combinations "
+                "produce differential effects."
             )
         else:
-            sub_text = "The significance of the subplot factor effect could not be determined."
-        sections.append(("Subplot Factor Effect (Conditional)", sub_text))
+            sub_text = f"The significance of the {SP} effect could not be determined."
+        sections.append((f"{SP} Effect (Conditional on Interaction)", sub_text))
 
     else:
         # No significant interaction — additive effects; main effects interpretable independently
         if interaction_significant is False:
             sections.append((
-                "A×B Interaction Effect",
-                f"No statistically significant A×B interaction was detected for {trait} (p ≥ 0.05), "
-                "indicating that the factors have additive effects. The main-plot and subplot factors "
-                "can be interpreted independently — the effect of one factor does not depend on the "
-                "level of the other factor. In this case, marginal means for each factor provide "
-                "adequate summaries of treatment effects."
+                f"{MP} × {SP} Interaction Effect",
+                f"No statistically significant {MP} × {SP} interaction was detected for {trait} (p ≥ 0.05), "
+                f"indicating that {MP} and {SP} have additive effects. Each factor can be interpreted "
+                "independently — the effect of one factor does not depend on the level of the other. "
+                "Marginal means for each factor provide adequate summaries of the treatment effects."
             ))
 
         if main_plot_significant is True:
             mp_text = (
-                f"The main-plot factor had a statistically significant effect on {trait} (p < 0.05), "
-                "indicating that different levels of the main-plot factor produced meaningfully "
-                "different responses. Given the absence of a significant interaction, this effect "
-                "is consistent across all subplot levels."
+                f"{MP} had a statistically significant effect on {trait} (p < 0.05), "
+                f"indicating that different levels of {MP} produced meaningfully different responses. "
+                f"Given the absence of a significant interaction, this effect is consistent across all {SP} levels."
             )
         elif main_plot_significant is False:
             mp_text = (
-                f"The main-plot factor did not have a statistically significant effect on {trait} "
-                "(p ≥ 0.05), suggesting that the main-plot treatment levels produced similar "
-                "responses on average."
+                f"{MP} did not have a statistically significant effect on {trait} "
+                f"(p ≥ 0.05), suggesting that the evaluated levels of {MP} produced similar responses on average."
             )
         else:
-            mp_text = f"The significance of the main-plot factor effect on {trait} could not be determined."
-        sections.append(("Main-Plot Factor Effect", mp_text))
+            mp_text = f"The significance of the {MP} effect on {trait} could not be determined."
+        sections.append((f"{MP} Effect", mp_text))
 
         if subplot_significant is True:
             sub_text = (
-                f"The subplot factor had a statistically significant effect on {trait} (p < 0.05), "
-                "indicating that different levels of the subplot factor produced meaningfully "
-                "different responses. Given the absence of a significant interaction, this effect "
-                "is consistent across all main-plot levels."
+                f"{SP} had a statistically significant effect on {trait} (p < 0.05), "
+                f"indicating that different levels of {SP} produced meaningfully different responses. "
+                f"Given the absence of a significant interaction, this effect is consistent across all {MP} levels."
             )
         elif subplot_significant is False:
             sub_text = (
-                f"The subplot factor did not have a statistically significant effect on {trait} "
-                "(p ≥ 0.05), suggesting that the subplot treatment levels produced similar "
-                "responses on average."
+                f"{SP} did not have a statistically significant effect on {trait} "
+                f"(p ≥ 0.05), suggesting that the evaluated levels of {SP} produced similar responses on average."
             )
         else:
-            sub_text = f"The significance of the subplot factor effect on {trait} could not be determined."
-        sections.append(("Subplot Factor Effect", sub_text))
+            sub_text = f"The significance of the {SP} effect on {trait} could not be determined."
+        sections.append((f"{SP} Effect", sub_text))
 
     # ── 7. Mean Separation Summary ─────────────────────────────────────────────
     sep_parts = []
@@ -370,12 +378,12 @@ def _generate_split_plot_interpretation(
             top_mp_mean = main_plot_mean_separation.mean[0]
             top_mp_grp  = main_plot_mean_separation.group[0] if main_plot_mean_separation.group else "—"
             sep_parts.append(
-                f"Main-plot mean separation (Fisher LSD, α = 0.05, tested against Error A): "
+                f"{MP} mean separation (Fisher LSD, α = 0.05, tested against Error A): "
                 f"'{top_mp}' had the highest mean {trait} ({top_mp_mean:.2f}, group '{top_mp_grp}'). "
-                "These marginal means average across all subplot levels."
+                f"These marginal means average across all {SP} levels."
             )
         except (IndexError, TypeError):
-            sep_parts.append("Main-plot mean separation was performed but could not be summarised.")
+            sep_parts.append(f"{MP} mean separation was performed but could not be summarised.")
 
     if (
         mean_separation is not None
@@ -387,18 +395,18 @@ def _generate_split_plot_interpretation(
             top_sub_mean = mean_separation.mean[0]
             top_sub_grp  = mean_separation.group[0] if mean_separation.group else "—"
             sep_parts.append(
-                f"Subplot mean separation (Fisher LSD, α = 0.05, tested against Error B): "
+                f"{SP} mean separation (Fisher LSD, α = 0.05, tested against Error B): "
                 f"'{top_sub}' had the highest mean {trait} ({top_sub_mean:.2f}, group '{top_sub_grp}'). "
-                "These marginal means average across all main-plot levels."
+                f"These marginal means average across all {MP} levels."
             )
         except (IndexError, TypeError):
-            sep_parts.append("Subplot mean separation was performed but could not be summarised.")
+            sep_parts.append(f"{SP} mean separation was performed but could not be summarised.")
 
     if interaction_significant is True:
         sep_parts.append(
-            "When the A×B interaction is significant, cell means (each unique main-plot × subplot "
+            f"When the {MP} × {SP} interaction is significant, cell means (each unique {MP} × {SP} "
             "combination) are more informative than marginal means. Consult the interaction plot "
-            "and cell mean table to identify the optimal treatment combinations."
+            "and cell mean table to identify the optimal treatment combinations for this trait."
         )
 
     if not sep_parts:
@@ -418,10 +426,10 @@ def _generate_split_plot_interpretation(
         )
     if interaction_significant is True:
         risks.append(
-            "The significant A×B interaction complicates interpretation of marginal factor means. "
+            f"The significant {MP} × {SP} interaction complicates interpretation of marginal factor means. "
             "Conclusions based solely on main effects can be misleading when the interaction is present. "
-            "Treatment-combination cell means and interaction plots must be the primary basis for "
-            "recommendations and applied decisions."
+            f"Treatment-combination cell means (all {MP} × {SP} combinations) and the interaction plot "
+            "must be the primary basis for applied conclusions and management recommendations."
         )
     if not risks:
         risks.append(
@@ -435,11 +443,10 @@ def _generate_split_plot_interpretation(
     recs = []
     if interaction_significant is True:
         recs.append(
-            "Examine treatment-combination cell means rather than marginal factor means — "
-            "main effects alone are insufficient when the A×B interaction is significant. "
-            "Generate an interaction plot to visualize how the response to one factor changes "
-            "across levels of the other factor. Identify which specific A×B combinations "
-            "optimize the trait of interest."
+            f"Examine {MP} × {SP} treatment-combination cell means rather than marginal factor means — "
+            "main effects alone are insufficient when the interaction is significant. "
+            "Interpret the interaction plot alongside treatment-combination cell means to identify "
+            f"which specific {MP} × {SP} combinations produce the strongest response for {trait}."
         )
     recs.append(
         "Use Error A (whole-plot error) for pairwise comparisons among main-plot factor levels "
@@ -487,17 +494,20 @@ def generate_anova_interpretation(
     cv_b: Optional[float] = None,
     main_plot_mean_separation: Optional[Any] = None,
     domain: str = "general",
+    mp_label: Optional[str] = None,
+    sp_label: Optional[str] = None,
 ) -> str:
     """
     Generate context-aware ANOVA interpretation following VivaSense standards.
 
     For design_type="split_plot_rcbd" dispatches to a domain-neutral split-plot
-    interpretation using role-based language (main-plot factor / subplot factor).
+    interpretation using actual factor names when mp_label/sp_label are supplied,
+    falling back to role-based language (main-plot factor / subplot factor).
     All other designs use the genetics-aware interpretation path.
 
     environment_mode="single"
         Sections: Overview, Descriptive Interpretation, Genotype Effect,
-                  Mean Performance and Ranking, Breeding Interpretation,
+                  Mean Performance and Ranking, Experimental Interpretation,
                   Risk and Limitations, Recommendation.
         Environment Effect and G×E Interaction sections are omitted.
         No environment-stability or broad-adaptation claims.
@@ -520,6 +530,8 @@ def generate_anova_interpretation(
             cv_b=cv_b,
             mean_separation=mean_separation,
             main_plot_mean_separation=main_plot_mean_separation,
+            mp_label=mp_label,
+            sp_label=sp_label,
         )
 
     is_multi = environment_mode == "multi"
@@ -1175,6 +1187,10 @@ async def analysis_anova(request: ModuleRequest, http_request: Request):
                 cv_a = None
                 cv_b = None
 
+            # Extract actual factor labels for named interpretation (split-plot only)
+            _mp_lbl = getattr(res.main_plot_mean_separation, "treatment_label", None) if is_sp else None
+            _sp_lbl = getattr(res.mean_separation, "treatment_label", None) if is_sp else None
+
             # Generate ANOVA interpretation — design-type-aware
             anova_interpretation = generate_anova_interpretation(
                 trait=trait,
@@ -1199,6 +1215,8 @@ async def analysis_anova(request: ModuleRequest, http_request: Request):
                 cv_b=cv_b,
                 main_plot_mean_separation=res.main_plot_mean_separation if is_sp else None,
                 domain=analysis_domain,
+                mp_label=_mp_lbl,
+                sp_label=_sp_lbl,
             )
             logger.info(
                 "ANOVA interpretation generated for trait '%s': %d characters",

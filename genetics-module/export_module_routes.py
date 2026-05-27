@@ -39,6 +39,7 @@ from genetics_export import (
     _add_assumption_tests_section,
     _add_body,
     _add_correlation_section,
+    _add_design_statement,
     _add_footer,
     _add_heading,
     _add_interaction_means_section,
@@ -568,7 +569,17 @@ async def export_anova_word(data: AnovaExportRequest):
                 _add_stat_table(doc, ["Parameter", "Value"], rows, numeric_cols={1})
             doc.add_paragraph()
 
-            # ── 2. ANOVA Table ─────────────────────────────────────────────────
+            # ── 2. ANOVA Design Statement + Table ──────────────────────────────
+            _mp_lbl_ds = getattr(tr.main_plot_mean_separation, "treatment_label", None) if tr.main_plot_mean_separation else None
+            _sp_lbl_ds = getattr(tr.mean_separation, "treatment_label", None) if tr.mean_separation else None
+            _add_design_statement(
+                doc,
+                design_type=tr.design_type,
+                n_reps=tr.n_reps,
+                trait_name=trait,
+                mp_label=_mp_lbl_ds,
+                sp_label=_sp_lbl_ds,
+            )
             _add_anova_section(doc, tr.anova_table)
             doc.add_paragraph()
 
@@ -603,6 +614,7 @@ async def export_anova_word(data: AnovaExportRequest):
                         doc, tr.interaction_means,
                         mp_label=_mp_lbl, sp_label=_sp_lbl,
                         trait_name=trait, is_significant=bool(_int_sig),
+                        sp_mean_separation=tr.mean_separation,
                     )
                     doc.add_paragraph()
                     _add_interaction_plot_to_doc(doc, tr.interaction_means, trait, _mp_lbl, _sp_lbl)
@@ -743,11 +755,11 @@ async def export_genetic_parameters_word(data: GeneticParametersExportRequest):
             # ── 1–4. Variance components, heritability, GCV/PCV, GA/GAM ───────
             _add_gp_tables(doc, tr)
 
-            # ── 5. Breeding Implication ────────────────────────────────────────
+            # ── 5. Research Implications ───────────────────────────────────────
             h2  = (tr.heritability or {}).get("h2_broad_sense")
             gam = tr.gam
 
-            _add_heading(doc, "Breeding Implication", level=2)
+            _add_heading(doc, "Research Implications", level=2)
             # Prefer the R-engine implication if present and clean
             r_implication = _clean_interpretation(tr.breeding_implication, trait)
             if r_implication:

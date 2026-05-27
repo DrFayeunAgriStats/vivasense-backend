@@ -1029,6 +1029,59 @@ def _add_descriptive_stats(doc: Document, result: GeneticsResult, domain: str = 
 
 
 # ============================================================================
+# SECTION: DESIGN DECLARATION (per trait, before ANOVA)
+# ============================================================================
+
+_DESIGN_LABELS: Dict[str, str] = {
+    "split_plot_rcbd":  "Split-Plot Randomised Complete Block Design (RCBD)",
+    "factorial_rcbd":   "Factorial Randomised Complete Block Design (RCBD)",
+    "factorial_crd":    "Factorial Completely Randomised Design (CRD)",
+    "rcbd":             "Randomised Complete Block Design (RCBD)",
+    "crd":              "Completely Randomised Design (CRD)",
+}
+
+
+def _add_design_statement(
+    doc: Document,
+    design_type: Optional[str],
+    n_reps: Optional[int],
+    trait_name: str,
+    mp_label: Optional[str] = None,
+    sp_label: Optional[str] = None,
+) -> None:
+    """Render a one-sentence experimental design declaration before the ANOVA table."""
+    label = _DESIGN_LABELS.get(design_type or "", "")
+    if not label:
+        return
+
+    if design_type == "split_plot_rcbd" and mp_label and sp_label:
+        from analysis_anova_routes import _fmt_factor_label
+        _mp = _fmt_factor_label(mp_label, "the main-plot factor")
+        _sp = _fmt_factor_label(sp_label, "the subplot factor")
+        stmt = (
+            f"{label} analysis was performed for {trait_name} with {_mp} assigned to main plots "
+            f"and {_sp} assigned to subplots within {n_reps or '—'} replication(s)."
+        )
+    elif design_type in {"factorial_rcbd", "factorial_crd"}:
+        stmt = (
+            f"{label} analysis was performed for {trait_name} "
+            f"with {n_reps or '—'} replication(s)."
+        )
+    else:
+        stmt = (
+            f"{label} analysis was performed for {trait_name} "
+            f"with {n_reps or '—'} replication(s)."
+        )
+
+    p = doc.add_paragraph(stmt)
+    p.paragraph_format.space_before = Pt(2)
+    p.paragraph_format.space_after = Pt(6)
+    for run in p.runs:
+        run.font.size = Pt(11)
+        run.italic = True
+
+
+# ============================================================================
 # SECTION: ANOVA (per trait)
 # ============================================================================
 
@@ -1271,6 +1324,7 @@ def _add_interaction_means_section(
     sp_label: str = "Sub-Plot Factor",
     trait_name: str = "",
     is_significant: bool = True,
+    sp_mean_separation: Optional[Any] = None,
 ) -> None:
     """Render A×B treatment-combination means table for split-plot designs."""
     _add_heading(doc, f"Treatment-Combination Means — {mp_label} × {sp_label}", level=2)
@@ -1279,8 +1333,8 @@ def _add_interaction_means_section(
         _add_body(
             doc,
             f"Because the {mp_label} × {sp_label} interaction was statistically significant, "
-            "treatment-combination means provide the primary basis for biological interpretation. "
-            "Marginal means (main effects) should be interpreted with caution.",
+            "treatment-combination means provide the primary basis for biological and agronomic "
+            "interpretation. Marginal means (main effects) should be interpreted with caution.",
         )
         doc.add_paragraph()
 
@@ -1300,13 +1354,27 @@ def _add_interaction_means_section(
     ]
     _add_stat_table(doc, headers, rows_data, numeric_cols={2})
     doc.add_paragraph()
-    _add_body(
-        doc,
+
+    # Uncertainty context — derive SE from sub-plot mean separation (Error B denominator)
+    note_parts = [
         "Cell means are observed averages for each treatment combination. "
         "Cells in the same row share the same main-plot level; differences within a row "
-        "reflect the subplot factor effect at that main-plot level.",
-        italic=True,
-    )
+        f"reflect the {sp_label} effect at that {mp_label} level."
+    ]
+    if sp_mean_separation is not None:
+        try:
+            se_vals = [s for s in (sp_mean_separation.se or []) if s is not None]
+            if se_vals:
+                mean_se = sum(se_vals) / len(se_vals)
+                note_parts.append(
+                    f"Indicative standard error (SE) from {sp_label} mean separation "
+                    f"(Error B): {_fmt(mean_se, 3)}. "
+                    f"Use the {sp_label} LSD ({sp_mean_separation.test}, α = {sp_mean_separation.alpha}) "
+                    "for pairwise comparisons among subplot levels within each main-plot level."
+                )
+        except (AttributeError, TypeError, ZeroDivisionError):
+            pass
+    _add_body(doc, " ".join(note_parts), italic=True)
 
 
 def _generate_interaction_line_plot(
@@ -1568,6 +1636,9 @@ def _add_interpretation_section(
                 cv_a = cv_b = None
 
             gxe_sig = is_gxe_effect_significant(result.anova_table)
+            # Extract actual factor labels for named interpretation
+            _mp_label = getattr(result.main_plot_mean_separation, "treatment_label", None) if _is_split_plot else None
+            _sp_label = getattr(result.mean_separation, "treatment_label", None) if _is_split_plot else None
             interpretation = generate_anova_interpretation(
                 trait=trait_name,
                 summary=summary,
@@ -1590,6 +1661,8 @@ def _add_interpretation_section(
                 cv_a=cv_a,
                 cv_b=cv_b,
                 main_plot_mean_separation=result.main_plot_mean_separation if _is_split_plot else None,
+                mp_label=_mp_label,
+                sp_label=_sp_label,
             )
             if is_plant_breeding_domain(domain or "plant_breeding"):
                 interpretation = interpretation.replace(
@@ -1726,7 +1799,7 @@ def _add_interpretation_section(
             logger.info("Using breeding implication from analysis_result: %d characters", len(breeding_text))
 
     if breeding_text:
-        _add_heading(doc, "Breeding Implication", level=3)
+        _add_heading(doc, "Research Implications", level=3)
         _add_body(doc, breeding_text)
         doc.add_paragraph()
 
@@ -1761,6 +1834,48 @@ def _add_writing_support_guide(doc: Document, data: DownloadReportRequest) -> No
         at = result.anova_table
 
         _is_split_plot = result.main_plot_mean_separation is not None
+
+        if _is_split_plot:
+            from analysis_anova_routes import (
+                _fmt_factor_label,
+                is_main_plot_significant,
+                is_subplot_significant,
+                is_interaction_significant,
+            )
+            _mp_raw = getattr(result.main_plot_mean_separation, "treatment_label", None)
+            _sp_raw = getattr(result.mean_separation, "treatment_label", None) if result.mean_separation else None
+            _MP = _fmt_factor_label(_mp_raw, "main-plot factor")
+            _SP = _fmt_factor_label(_sp_raw, "subplot factor")
+            _mp_sig  = is_main_plot_significant(at)
+            _sp_sig  = is_subplot_significant(at)
+            _int_sig = is_interaction_significant(at)
+            _n_rep   = result.n_reps or data.dataset_summary.n_reps
+
+            # Design + interaction sentence
+            _int_word = "statistically significant" if _int_sig else "not significant"
+            _add_body(
+                doc,
+                f"A split-plot RCBD analysis for {row.trait} was conducted with {_MP} assigned to "
+                f"main plots and {_SP} assigned to subplots within {_n_rep} replication(s). "
+                f"The {_MP} × {_SP} interaction was {_int_word}.",
+            )
+            # Main effects sentences
+            if _int_sig:
+                _add_body(
+                    doc,
+                    f"Because the interaction was significant, interpret {_MP} and {_SP} effects "
+                    f"at each specific level of the other factor — do not rely solely on marginal means. "
+                    f"Treatment-combination cell means and the interaction plot are the primary reference.",
+                )
+            else:
+                _mp_word = "significant" if _mp_sig else "not significant"
+                _sp_word = "significant" if _sp_sig else "not significant"
+                _add_body(
+                    doc,
+                    f"The effect of {_MP} on {row.trait} was {_mp_word}; "
+                    f"the effect of {_SP} was {_sp_word}. "
+                    f"In the absence of a significant interaction, each factor can be interpreted independently.",
+                )
 
         if not _is_split_plot:
             n_genotypes = result.n_genotypes or data.dataset_summary.n_genotypes
@@ -1827,8 +1942,16 @@ def _add_writing_support_guide(doc: Document, data: DownloadReportRequest) -> No
         if result.mean_separation and result.mean_separation.genotype:
             top_genotype = result.mean_separation.genotype[0]
             top_group = result.mean_separation.group[0] if result.mean_separation.group else "a"
-            top_noun = "treatment" if _guide_agronomy else "genotype"
-            if _guide_agronomy:
+            if _is_split_plot:
+                from analysis_anova_routes import _fmt_factor_label as _ffl
+                _sp_label_ms = _ffl(getattr(result.mean_separation, "treatment_label", None), "subplot factor")
+                _mp_label_ms = _ffl(getattr(result.main_plot_mean_separation, "treatment_label", None) if result.main_plot_mean_separation else None, "main-plot factor")
+                starter_means = (
+                    f"Mean separation for {_sp_label_ms} ({result.mean_separation.test}, α = {result.mean_separation.alpha}, "
+                    f"Error B denominator) placed '{top_genotype}' in the highest mean group ({top_group}). "
+                    f"These are marginal means averaged across all {_mp_label_ms} levels."
+                )
+            elif _guide_agronomy:
                 starter_means = (
                     f"Mean separation ({result.mean_separation.test}) placed {top_genotype} in the "
                     f"highest observed mean group ({top_group}), suggesting it warrants further evaluation "
@@ -1970,6 +2093,21 @@ def _add_trait_section(
     _add_descriptive_stats(doc, result)
     doc.add_paragraph()
 
+    # Determine split-plot status and factor labels for this trait
+    _is_split_plot_ts = getattr(result, "main_plot_mean_separation", None) is not None
+    _mp_label_ts = getattr(result.main_plot_mean_separation, "treatment_label", None) if _is_split_plot_ts else None
+    _sp_label_ts = getattr(result.mean_separation, "treatment_label", None) if result.mean_separation else None
+    _design_type_ts = "split_plot_rcbd" if _is_split_plot_ts else None
+
+    _add_design_statement(
+        doc,
+        design_type=_design_type_ts,
+        n_reps=result.n_reps,
+        trait_name=trait_name,
+        mp_label=_mp_label_ts,
+        sp_label=_sp_label_ts,
+    )
+
     if result.anova_table:
         _add_anova_section(doc, result.anova_table)
     else:
@@ -1986,7 +2124,7 @@ def _add_trait_section(
         _add_heading(doc, "Mean Separation", level=2)
         _add_body(
             doc,
-            "Mean separation (Tukey HSD) not available — "
+            "Mean separation (LSD) not available — "
             "insufficient degrees of freedom or singular model.",
             italic=True,
         )
@@ -2277,6 +2415,7 @@ def export_traits_to_word(
                     doc, _int_means,
                     mp_label=_mp_lbl, sp_label=_sp_lbl,
                     trait_name=trait, is_significant=bool(_int_sig),
+                    sp_mean_separation=result.mean_separation,
                 )
                 doc.add_paragraph()
                 _add_interaction_plot_to_doc(doc, _int_means, trait, _mp_lbl, _sp_lbl)
