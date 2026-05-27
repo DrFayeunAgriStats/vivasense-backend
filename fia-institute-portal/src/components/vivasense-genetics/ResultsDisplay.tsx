@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   AnovaTable,
   MeanSeparation,
+  InteractionMeansData,
   UploadAnalysisResponse,
   SummaryTableRow,
   TraitResult,
@@ -13,7 +14,6 @@ import { WordExportPreviewModal } from "@/components/export/WordExportPreviewMod
 import { buildScientificInterpretationSections, downloadCsv } from "@/components/vivasense/advanced/shared";
 import { safeArray, logDebug, safeNumber } from "@/utils/normalizeModuleData";
 import type { PreviewSection } from "@/utils/normalizeModuleData";
-import { buildAnovaPreview, buildGeneticParametersPreview } from "@/utils/previewBuilders";
 import {
   getVivaSenseMode,
   ProFeatureError,
@@ -25,6 +25,17 @@ import {
   DEFAULT_SELECTION_INTENSITY,
   selectionIntensityDisclosure,
 } from "./selectionIntensity";
+import { SplitPlotResults } from "./SplitPlotResults";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from "recharts";
 
 interface ResultsDisplayProps {
   results: UploadAnalysisResponse;
@@ -715,6 +726,14 @@ function TraitDetails({
   );
   const interpretationSections = buildScientificInterpretationSections(ar?.interpretation ?? "");
 
+  const isSplitPlot = result?.design === "split_plot_rcbd";
+  const interactionMeans = result?.interaction_means ?? null;
+  const assumptionTests = (result?.assumption_tests ?? null) as Record<string, { statistic: number; p_value: number; conclusion: string }> | null;
+
+  const intSig = isSplitPlot ? isInteractionSignificant(result?.anova_table) : false;
+  const mpLabel = (result?.main_plot_mean_separation as MeanSeparation | null | undefined)?.treatment_label ?? "Main-Plot Factor";
+  const spLabel = (result?.mean_separation as MeanSeparation | null | undefined)?.treatment_label ?? "Sub-Plot Factor";
+
   return (
     <div className="mt-3 space-y-5 text-sm">
       {/* Data warnings */}
@@ -729,11 +748,19 @@ function TraitDetails({
         </div>
       )}
 
+      {/* Interaction significance banner — shown first when significant */}
+      {isSplitPlot && intSig && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <span className="font-semibold">Significant A×B interaction detected.</span>{" "}
+          Main effects should be interpreted with caution — inspect the interaction means table and line plot below to understand the nature of the interaction.
+        </div>
+      )}
+
       {/* ── SECTION: Statistical Analysis ──────────────────────────────────── */}
       <div className="space-y-3">
         <SubSectionLabel>Statistical Analysis</SubSectionLabel>
 
-        {/* ANOVA Table — shown expanded by default */}
+        {/* ANOVA Table */}
         {result?.anova_table ? (
           <div>
             <button
@@ -745,21 +772,70 @@ function TraitDetails({
               {showAnovaDetails ? "Hide" : "Show"} ANOVA table
               <span className="text-gray-400">(statistical details)</span>
             </button>
-            {showAnovaDetails && <AnovaTableSection at={result.anova_table} />}
+            {showAnovaDetails && (
+              isSplitPlot
+                ? <SplitPlotResults
+                    anovaTable={result.anova_table}
+                    cvMainPlot={(result as unknown as Record<string, number>).cv_main_plot_pct}
+                    cvSubPlot={(result as unknown as Record<string, number>).cv_sub_plot_pct}
+                  />
+                : <AnovaTableSection at={result.anova_table} />
+            )}
           </div>
         ) : (
           <p className="text-xs text-gray-400 italic">ANOVA table not available for this trait.</p>
         )}
 
-        {/* Mean Separation — primary output */}
+        {/* Sub-plot / primary mean separation */}
         {result?.mean_separation ? (
-          <MeanSeparationSection ms={result.mean_separation} domainTerms={domainTerms} />
+          <div>
+            {isSplitPlot && (
+              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                Sub-Plot Factor — Mean Separation ({spLabel})
+              </p>
+            )}
+            <MeanSeparationSection
+              ms={result.mean_separation}
+              domainTerms={domainTerms}
+              factorLabel={isSplitPlot ? spLabel : undefined}
+            />
+          </div>
         ) : (
           <p className="text-xs text-gray-400 italic">
-            Mean separation (Tukey HSD) not available — insufficient degrees of freedom or singular model.
+            Mean separation (LSD) not available — insufficient degrees of freedom or singular model.
           </p>
         )}
+
+        {/* Main-plot mean separation (split-plot only) */}
+        {isSplitPlot && result?.main_plot_mean_separation && (
+          <div>
+            <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">
+              Main-Plot Factor — Mean Separation ({mpLabel})
+            </p>
+            <MeanSeparationSection
+              ms={result.main_plot_mean_separation}
+              domainTerms={domainTerms}
+              factorLabel={mpLabel}
+            />
+          </div>
+        )}
       </div>
+
+      {/* Interaction means + line plot (split-plot only) */}
+      {isSplitPlot && interactionMeans && (
+        <div className="space-y-3">
+          <SubSectionLabel>
+            A×B Interaction Means{intSig ? " — Significant" : ""}
+          </SubSectionLabel>
+          <InteractionMeansTable data={interactionMeans} mpLabel={mpLabel} spLabel={spLabel} traitName={traitName} />
+          <InteractionLinePlot data={interactionMeans} mpLabel={mpLabel} spLabel={spLabel} traitName={traitName} />
+        </div>
+      )}
+
+      {/* Assumption diagnostics */}
+      {assumptionTests && Object.keys(assumptionTests).length > 0 && (
+        <AssumptionTestsPanel tests={assumptionTests} />
+      )}
 
       {/* ── SECTION: Genetic Parameters ────────────────────────────────────── */}
       {result?.variance_components && (
@@ -856,6 +932,175 @@ function TraitDetails({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Interaction significance helper
+// ─────────────────────────────────────────────────────────────────────────────
+
+function isInteractionSignificant(at: AnovaTable | undefined): boolean {
+  if (!at) return false;
+  const idx = at.source.findIndex((s) => /:|×/i.test(s) && !/error|residual/i.test(s));
+  if (idx < 0) return false;
+  const p = at.p_value[idx];
+  return p !== null && p !== undefined && p < 0.05;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Interaction means table (A×B cell means, wide-format display)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const LINE_COLORS = ["#059669", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
+
+function InteractionMeansTable({
+  data,
+  mpLabel,
+  spLabel,
+  traitName,
+}: {
+  data: InteractionMeansData;
+  mpLabel: string;
+  spLabel: string;
+  traitName: string;
+}) {
+  const cm = data.cell_means;
+  if (!cm || cm.main_plot.length === 0) return null;
+
+  const mpLevels = [...new Set(cm.main_plot)];
+  const spLevels = [...new Set(cm.sub_plot)];
+
+  const cellValue = (mp: string, sp: string): string => {
+    const idx = cm.main_plot.findIndex((m, i) => m === mp && cm.sub_plot[i] === sp);
+    return idx >= 0 ? cm.trait_value[idx].toFixed(2) : "—";
+  };
+
+  return (
+    <div className="overflow-x-auto rounded-lg border border-gray-200">
+      <table className="min-w-full text-xs">
+        <thead className="bg-gray-50 border-b border-gray-200">
+          <tr>
+            <th className="px-3 py-2 text-left font-semibold text-gray-500">{mpLabel} \ {spLabel}</th>
+            {spLevels.map((sp) => (
+              <th key={sp} className="px-3 py-2 text-left font-semibold text-gray-500">{sp}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {mpLevels.map((mp, i) => (
+            <tr key={mp} className={i % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
+              <td className="px-3 py-1.5 font-medium text-gray-700">{mp}</td>
+              {spLevels.map((sp) => (
+                <td key={sp} className="px-3 py-1.5 text-gray-600">{cellValue(mp, sp)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="px-3 py-1.5 text-[10px] text-gray-400">Mean {traitName} per A×B combination.</p>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Interaction line plot (recharts, one line per main-plot level)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function InteractionLinePlot({
+  data,
+  mpLabel,
+  spLabel,
+  traitName,
+}: {
+  data: InteractionMeansData;
+  mpLabel: string;
+  spLabel: string;
+  traitName: string;
+}) {
+  const cm = data.cell_means;
+  if (!cm || cm.main_plot.length === 0) return null;
+
+  const mpLevels = [...new Set(cm.main_plot)];
+  const spLevels = [...new Set(cm.sub_plot)];
+
+  // Convert long format → recharts [{sub_plot: "S1", "Main A": 12.3, ...}]
+  const chartData = spLevels.map((sp) => {
+    const row: Record<string, string | number> = { sub_plot: sp };
+    mpLevels.forEach((mp) => {
+      const idx = cm.main_plot.findIndex((m, i) => m === mp && cm.sub_plot[i] === sp);
+      row[mp] = idx >= 0 ? cm.trait_value[idx] : 0;
+    });
+    return row;
+  });
+
+  return (
+    <div>
+      <p className="text-[11px] text-gray-500 mb-1">
+        Interaction plot — non-parallel lines indicate a significant A×B interaction.
+      </p>
+      <ResponsiveContainer width="100%" height={280}>
+        <LineChart data={chartData} margin={{ top: 8, right: 24, left: 0, bottom: 8 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+          <XAxis dataKey="sub_plot" tick={{ fontSize: 11, fill: "#6b7280" }} label={{ value: spLabel, position: "insideBottom", offset: -2, fontSize: 11 }} />
+          <YAxis tick={{ fontSize: 11, fill: "#6b7280" }} label={{ value: traitName, angle: -90, position: "insideLeft", offset: 8, fontSize: 11 }} />
+          <Tooltip contentStyle={{ fontSize: 12 }} />
+          <Legend wrapperStyle={{ fontSize: 11 }} />
+          {mpLevels.map((mp, i) => (
+            <Line
+              key={mp}
+              type="monotone"
+              dataKey={mp}
+              stroke={LINE_COLORS[i % LINE_COLORS.length]}
+              strokeWidth={2}
+              dot={{ r: 4 }}
+              activeDot={{ r: 6 }}
+            />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Assumption diagnostics panel (Shapiro-Wilk + Bartlett)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function AssumptionTestsPanel({
+  tests,
+}: {
+  tests: Record<string, { statistic: number; p_value: number; conclusion: string }>;
+}) {
+  const sw = tests.shapiro_wilk;
+  const bt = tests.bartlett;
+  if (!sw && !bt) return null;
+
+  const card = (
+    label: string,
+    t: { statistic: number; p_value: number; conclusion: string },
+    statSymbol: string
+  ) => {
+    const ok = t.p_value >= 0.05;
+    return (
+      <div
+        key={label}
+        className={`rounded-lg border px-3 py-2 text-xs ${ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}
+      >
+        <p className="font-semibold">{label}</p>
+        <p className="mt-0.5">{t.conclusion}</p>
+        <p className="mt-0.5 text-[10px] opacity-70">
+          {statSymbol} = {t.statistic.toFixed(4)} · p = {t.p_value.toFixed(4)}
+        </p>
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-2">
+      <SubSectionLabel>Assumption Diagnostics</SubSectionLabel>
+      {sw && card("Shapiro-Wilk — Residual Normality", sw, "W")}
+      {bt && card("Bartlett — Homogeneity of Variance", bt, "K²")}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ANOVA Table section (shown only when expanded)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -915,9 +1160,18 @@ function AnovaTableSection({ at }: { at: AnovaTable }) {
 // Mean Separation section
 // ─────────────────────────────────────────────────────────────────────────────
 
-function MeanSeparationSection({ ms, domainTerms }: { ms: MeanSeparation; domainTerms: ReturnType<typeof getDomainTerms> }) {
+function MeanSeparationSection({
+  ms,
+  domainTerms,
+  factorLabel,
+}: {
+  ms: MeanSeparation;
+  domainTerms: ReturnType<typeof getDomainTerms>;
+  factorLabel?: string;
+}) {
   // Identify the top group letter for selection guidance
   const topGroup = ms.group[0] ?? "a";
+  const columnHeader = factorLabel ?? domainTerms.treatment;
 
   return (
     <div className="space-y-2">
@@ -926,7 +1180,7 @@ function MeanSeparationSection({ ms, domainTerms }: { ms: MeanSeparation; domain
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
               <th className="px-3 py-2 text-left font-semibold text-gray-500">Rank</th>
-              <th className="px-3 py-2 text-left font-semibold text-gray-500">{domainTerms.treatment}</th>
+              <th className="px-3 py-2 text-left font-semibold text-gray-500">{columnHeader}</th>
               <th className="px-3 py-2 text-left font-semibold text-gray-500">Mean</th>
               <th className="px-3 py-2 text-left font-semibold text-gray-500">SE</th>
               <th className="px-3 py-2 text-left font-semibold text-gray-500">Group</th>

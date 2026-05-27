@@ -495,6 +495,48 @@ compute_single_environment <- function(data, trait_name = "Trait",
 
   anova_table <- sanitize_anova_f_values(anova_table)
 
+  # ── Assumption Tests (Shapiro-Wilk normality + Bartlett homogeneity) ────────
+  # Computed for all design types; stored in assumption_tests_out for JSON output.
+  assumption_tests_out <- list()
+  tryCatch({
+    resid_vec <- residuals(model)
+    resid_vec <- resid_vec[is.finite(resid_vec)]
+    if (length(resid_vec) >= 3 && length(resid_vec) <= 5000) {
+      sw <- shapiro.test(resid_vec)
+      assumption_tests_out$shapiro_wilk <- list(
+        statistic = as.numeric(sw$statistic),
+        p_value   = as.numeric(sw$p.value),
+        conclusion = if (sw$p.value >= 0.05)
+          sprintf("Normality assumption not violated (W = %.4f, p = %.4f — p ≥ 0.05)",
+                  as.numeric(sw$statistic), as.numeric(sw$p.value))
+          else
+          sprintf("Normality assumption may be violated (W = %.4f, p = %.4f — p < 0.05)",
+                  as.numeric(sw$statistic), as.numeric(sw$p.value))
+      )
+    }
+  }, error = function(e) {
+    message(sprintf("[WARN] Shapiro-Wilk failed for %s: %s", trait_name, conditionMessage(e)))
+  })
+  tryCatch({
+    grp_col <- if (has_splitplot) data$main_plot else if (has_genotype) data$genotype else NULL
+    if (!is.null(grp_col) && nlevels(as.factor(grp_col)) >= 2) {
+      bt <- bartlett.test(data$trait_value ~ grp_col)
+      assumption_tests_out$bartlett <- list(
+        statistic = as.numeric(bt$statistic),
+        p_value   = as.numeric(bt$p.value),
+        conclusion = if (bt$p.value >= 0.05)
+          "Homogeneity of variance not violated (K² = %.4f, p = %.4f — p ≥ 0.05)" %+%
+            c(as.numeric(bt$statistic), as.numeric(bt$p.value))
+          else
+          "Heterogeneity of variance detected (K² = %.4f, p = %.4f — p < 0.05)" %+%
+            c(as.numeric(bt$statistic), as.numeric(bt$p.value))
+      )
+    }
+  }, error = function(e) {
+    message(sprintf("[WARN] Bartlett test failed for %s: %s", trait_name, conditionMessage(e)))
+  })
+  if (length(assumption_tests_out) == 0) assumption_tests_out <- NULL
+
   # Grand mean — needed for both split-plot and genotype-based paths
   grand_mean    <- mean(data$trait_value, na.rm = TRUE)
   mean_is_valid <- !is.na(grand_mean) && grand_mean != 0
@@ -768,6 +810,7 @@ compute_single_environment <- function(data, trait_name = "Trait",
     interaction_separation     = factorial_interaction_means,
     main_plot_mean_separation  = if (has_splitplot) main_plot_mean_sep else NULL,
     interaction_means          = if (has_splitplot) interaction_means else NULL,
+    assumption_tests           = assumption_tests_out,
     ms_genotype                = ms_genotype,
     ms_error                   = ms_error
   )

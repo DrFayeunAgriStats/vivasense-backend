@@ -1041,12 +1041,20 @@ def _add_anova_section(doc: Document, at: AnovaTable, domain: str = "plant_breed
         **({"genotype": "Treatment", "genotype:environment": "T×E Interaction"} if is_agronomy else {}),
     }
 
-    headers = ["Source", "DF", "SS", "MS", "F-value", "p-value"]
+    # Compute SS-total (exclude intercept and error rows) for η²
+    _error_labels = {"error a", "error b", "residuals", "residual", "within", "error"}
+    ss_total = sum(
+        float(at.ss[i])
+        for i, src in enumerate(at.source)
+        if at.ss[i] is not None
+        and str(src).strip().lower() not in {"(intercept)", "intercept"}
+    )
+
+    headers = ["Source", "DF", "SS", "MS", "F-value", "p-value", "η²"]
     rows_data = []
     genotype_idx = ge_idx = None
 
     for i, src in enumerate(at.source):
-        # Filter out Intercept row from Word report ANOVA table.
         src_label = str(src).strip().lower()
         if src_label in {"(intercept)", "intercept"}:
             continue
@@ -1058,6 +1066,14 @@ def _add_anova_section(doc: Document, at: AnovaTable, domain: str = "plant_breed
         f_val  = at.f_value[i] if i < len(at.f_value) else None
         p_val  = at.p_value[i] if i < len(at.p_value) else None
 
+        # η² only for treatment rows, not error/residual rows
+        is_error_row = src_label in _error_labels
+        if ss_val is not None and ss_total > 0 and not is_error_row:
+            eta2 = float(ss_val) / ss_total
+            eta2_str = f"{eta2:.3f}"
+        else:
+            eta2_str = "—"
+
         rows_data.append([
             label,
             str(int(df_val)) if df_val is not None else "—",
@@ -1065,6 +1081,7 @@ def _add_anova_section(doc: Document, at: AnovaTable, domain: str = "plant_breed
             _fmt(ms_val),
             _fmt(f_val, 3) if f_val is not None else "—",
             _fmt_p(p_val),
+            eta2_str,
         ])
         if src == "genotype":
             genotype_idx = i
@@ -1241,6 +1258,144 @@ def _add_interaction_separation_section(
         else "Interaction HSD could not be computed — cell means displayed without grouping letters."
     )
     _add_body(doc, note, italic=True)
+
+
+# ============================================================================
+# SECTION: INTERACTION MEANS (split-plot A×B cell means table + line plot)
+# ============================================================================
+
+def _add_interaction_means_section(
+    doc: Document,
+    interaction_means_dict: Dict[str, Any],
+    mp_label: str = "Main-Plot Factor",
+    sp_label: str = "Sub-Plot Factor",
+    trait_name: str = "",
+    is_significant: bool = True,
+) -> None:
+    """Render A×B treatment-combination means table for split-plot designs."""
+    _add_heading(doc, f"Treatment-Combination Means — {mp_label} × {sp_label}", level=2)
+
+    if is_significant:
+        _add_body(
+            doc,
+            f"Because the {mp_label} × {sp_label} interaction was statistically significant, "
+            "treatment-combination means provide the primary basis for biological interpretation. "
+            "Marginal means (main effects) should be interpreted with caution.",
+        )
+        doc.add_paragraph()
+
+    cell_means = interaction_means_dict.get("cell_means") or {}
+    mp_vals = cell_means.get("main_plot") or []
+    sp_vals = cell_means.get("sub_plot") or []
+    tv_vals = cell_means.get("trait_value") or []
+
+    if not mp_vals:
+        _add_body(doc, "Interaction cell means not available.", italic=True)
+        return
+
+    headers = [mp_label, sp_label, f"Mean ({trait_name})"]
+    rows_data = [
+        [str(mp), str(sp), _fmt(tv, 3)]
+        for mp, sp, tv in zip(mp_vals, sp_vals, tv_vals)
+    ]
+    _add_stat_table(doc, headers, rows_data, numeric_cols={2})
+    doc.add_paragraph()
+    _add_body(
+        doc,
+        "Cell means are observed averages for each treatment combination. "
+        "Cells in the same row share the same main-plot level; differences within a row "
+        "reflect the subplot factor effect at that main-plot level.",
+        italic=True,
+    )
+
+
+def _generate_interaction_line_plot(
+    trait_name: str,
+    interaction_means_dict: Dict[str, Any],
+    mp_label: str = "Main-Plot Factor",
+    sp_label: str = "Sub-Plot Factor",
+) -> Optional[bytes]:
+    """
+    Generate a publication-quality interaction line plot.
+    Returns PNG bytes, or None on any failure.
+    One line per main-plot level; x-axis = sub-plot levels; y-axis = mean response.
+    """
+    try:
+        cell_means = interaction_means_dict.get("cell_means") or {}
+        mp_vals = cell_means.get("main_plot") or []
+        sp_vals = cell_means.get("sub_plot") or []
+        tv_vals = cell_means.get("trait_value") or []
+        if not mp_vals or not sp_vals or not tv_vals:
+            return None
+
+        # Build per-main-plot level series
+        mp_levels_ordered = list(dict.fromkeys(mp_vals))  # preserve insertion order
+        sp_levels_ordered = list(dict.fromkeys(sp_vals))
+
+        # means[mp_level][sp_level] = float
+        means: Dict[str, Dict[str, float]] = {}
+        for mp, sp, tv in zip(mp_vals, sp_vals, tv_vals):
+            means.setdefault(mp, {})[sp] = float(tv)
+
+        for style in ("seaborn-v0_8", "ggplot", "default"):
+            try:
+                plt.style.use(style)
+                break
+            except OSError:
+                continue
+
+        fig, ax = plt.subplots(figsize=(6, 4))
+        x = list(range(len(sp_levels_ordered)))
+        colours = ["#1D9E75", "#E07B3E", "#4A90D9", "#9B59B6", "#E74C3C", "#2ECC71"]
+
+        for k, mp in enumerate(mp_levels_ordered):
+            y = [means.get(mp, {}).get(sp, float("nan")) for sp in sp_levels_ordered]
+            colour = colours[k % len(colours)]
+            ax.plot(x, y, marker="o", linewidth=2, markersize=6, label=mp, color=colour)
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(sp_levels_ordered, rotation=30 if len(sp_levels_ordered) > 5 else 0, ha="right")
+        ax.set_xlabel(sp_label, fontsize=11)
+        ax.set_ylabel(trait_name, fontsize=11)
+        ax.set_title(f"{mp_label} × {sp_label} Interaction", fontsize=12, fontweight="bold")
+        ax.legend(title=mp_label, fontsize=9, title_fontsize=9, framealpha=0.7)
+        ax.grid(axis="y", linestyle="--", alpha=0.5)
+        ax.spines[["top", "right"]].set_visible(False)
+        fig.tight_layout()
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        buf.seek(0)
+        return buf.read()
+    except Exception as exc:
+        logger.warning("Interaction line plot failed for '%s': %s", trait_name, exc)
+        return None
+
+
+def _add_interaction_plot_to_doc(
+    doc: Document,
+    interaction_means_dict: Dict[str, Any],
+    trait_name: str,
+    mp_label: str,
+    sp_label: str,
+) -> None:
+    """Embed interaction line plot into the Word document."""
+    plot_bytes = _generate_interaction_line_plot(trait_name, interaction_means_dict, mp_label, sp_label)
+    if plot_bytes is None:
+        return
+    _add_heading(doc, f"{mp_label} × {sp_label} Interaction Plot", level=2)
+    buf = io.BytesIO(plot_bytes)
+    para = doc.add_paragraph()
+    para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = para.add_run()
+    run.add_picture(buf, width=Inches(5.5))
+    _add_body(
+        doc,
+        f"Interaction plot for {trait_name}. Lines represent {mp_label} levels; "
+        f"x-axis shows {sp_label} levels. Non-parallel lines indicate a significant interaction.",
+        italic=True,
+    )
 
 
 # ============================================================================
@@ -2109,6 +2264,22 @@ def export_traits_to_word(
             if result.interaction_separation:
                 doc.add_paragraph()
                 _add_interaction_separation_section(doc, trait, result.interaction_separation, domain=domain)
+
+            # ── 4b. Split-plot interaction means table + line plot ─────────────
+            _int_means = getattr(result, "interaction_means", None)
+            if _is_split_plot and _int_means:
+                from analysis_anova_routes import is_interaction_significant
+                _int_sig = is_interaction_significant(result.anova_table)
+                _mp_lbl = getattr(result.main_plot_mean_separation, "treatment_label", None) or "Main-Plot Factor" if getattr(result, "main_plot_mean_separation", None) else "Main-Plot Factor"
+                _sp_lbl = getattr(result.mean_separation, "treatment_label", None) or "Sub-Plot Factor" if result.mean_separation else "Sub-Plot Factor"
+                doc.add_paragraph()
+                _add_interaction_means_section(
+                    doc, _int_means,
+                    mp_label=_mp_lbl, sp_label=_sp_lbl,
+                    trait_name=trait, is_significant=bool(_int_sig),
+                )
+                doc.add_paragraph()
+                _add_interaction_plot_to_doc(doc, _int_means, trait, _mp_lbl, _sp_lbl)
             doc.add_paragraph()
 
             # ── 5. Assumption Tests (optional) ────────────────────────────────

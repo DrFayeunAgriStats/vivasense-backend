@@ -41,6 +41,8 @@ from genetics_export import (
     _add_correlation_section,
     _add_footer,
     _add_heading,
+    _add_interaction_means_section,
+    _add_interaction_plot_to_doc,
     _add_kv,
     _add_mean_separation_section,
     _add_stat_table,
@@ -590,6 +592,20 @@ async def export_anova_word(data: AnovaExportRequest):
                         doc, trait, tr.main_plot_mean_separation,
                         factor_name=getattr(tr.main_plot_mean_separation, "treatment_label", None) or "Main-Plot Factor",
                     )
+                    doc.add_paragraph()
+                # Interaction means table + line plot
+                if tr.interaction_means:
+                    from analysis_anova_routes import is_interaction_significant
+                    _int_sig = is_interaction_significant(tr.anova_table)
+                    _mp_lbl = getattr(tr.main_plot_mean_separation, "treatment_label", None) or "Main-Plot Factor" if tr.main_plot_mean_separation else "Main-Plot Factor"
+                    _sp_lbl = getattr(tr.mean_separation, "treatment_label", None) or "Sub-Plot Factor" if tr.mean_separation else "Sub-Plot Factor"
+                    _add_interaction_means_section(
+                        doc, tr.interaction_means,
+                        mp_label=_mp_lbl, sp_label=_sp_lbl,
+                        trait_name=trait, is_significant=bool(_int_sig),
+                    )
+                    doc.add_paragraph()
+                    _add_interaction_plot_to_doc(doc, tr.interaction_means, trait, _mp_lbl, _sp_lbl)
                     doc.add_paragraph()
             elif tr.mean_separation:
                 _add_mean_separation_section(doc, trait, tr.mean_separation)

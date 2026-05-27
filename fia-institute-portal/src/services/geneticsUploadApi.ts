@@ -105,10 +105,24 @@ export interface MeanSeparation {
   group: string[];
   test: string;
   alpha: number;
+  treatment_label?: string | null;
+}
+
+/** Long-format cell means from split-plot A×B interaction. */
+export interface InteractionMeansData {
+  main_plot_levels?: string[];
+  sub_plot_levels?: string[];
+  cell_means?: {
+    main_plot: string[];
+    sub_plot: string[];
+    trait_value: number[];
+  };
+  means_matrix?: Record<string, (string | number)[]>;
 }
 
 export interface GeneticsResult {
   environment_mode: string;
+  design?: string;
   n_genotypes: number;
   n_reps: number;
   n_environments: number | null;
@@ -128,6 +142,10 @@ export interface GeneticsResult {
   };
   anova_table?: AnovaTable;
   mean_separation?: MeanSeparation;
+  mean_separation_b?: MeanSeparation;
+  main_plot_mean_separation?: MeanSeparation | null;
+  interaction_means?: InteractionMeansData | null;
+  assumption_tests?: Record<string, unknown> | null;
 }
 
 export interface GeneticsResponse {

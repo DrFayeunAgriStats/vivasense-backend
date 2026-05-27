@@ -67,6 +67,10 @@ function fmtP(p: number | null) {
 }
 
 export function SplitPlotResults({ anovaTable, cvMainPlot, cvSubPlot }: Props) {
+  // η² computation: SS_total = sum of all SS (excluding intercept rows)
+  const ssAll = anovaTable.ss as (number | null)[];
+  const ssTotal = ssAll.reduce((sum, v) => (v != null ? sum + v : sum), 0);
+
   // Re-order rows. Each source row may map to one stratum; unmatched go at end.
   const rows = anovaTable.source.map((src, idx) => ({ src, idx }));
   const ordered: Array<{ src: string; idx: number; stratum?: Stratum }> = [];
@@ -103,6 +107,7 @@ export function SplitPlotResults({ anovaTable, cvMainPlot, cvSubPlot }: Props) {
               <th className="px-3 py-2 text-left font-semibold text-gray-500">MS</th>
               <th className="px-3 py-2 text-left font-semibold text-gray-500">F-value</th>
               <th className="px-3 py-2 text-left font-semibold text-gray-500">P-value</th>
+              <th className="px-3 py-2 text-left font-semibold text-gray-500">η²</th>
             </tr>
           </thead>
           <tbody>
@@ -112,6 +117,10 @@ export function SplitPlotResults({ anovaTable, cvMainPlot, cvSubPlot }: Props) {
               const label = stratum?.label ?? src;
               const ms = anovaTable.ms[idx];
               const isErrorA = stratum?.label === "Error A (Rep × Main Plot)";
+              const ss_i = ssAll[idx];
+              const eta2Str = (!isError && ss_i != null && ssTotal > 0)
+                ? (ss_i / ssTotal).toFixed(3)
+                : "—";
               return (
                 <tr key={`${src}-${idx}`} className={isError ? "bg-gray-50/70" : "bg-white"}>
                   <td className="px-3 py-1.5">
@@ -141,6 +150,7 @@ export function SplitPlotResults({ anovaTable, cvMainPlot, cvSubPlot }: Props) {
                     {pText}
                     {stars && <span className="ml-1 font-semibold text-emerald-700">{stars}</span>}
                   </td>
+                  <td className="px-3 py-1.5 text-gray-500">{eta2Str}</td>
                 </tr>
               );
             })}
