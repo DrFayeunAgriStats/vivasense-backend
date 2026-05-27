@@ -589,31 +589,33 @@ async def export_anova_word(data: AnovaExportRequest):
                 doc.add_paragraph()
 
             # ── 4. Mean Separation (table + embedded chart) ────────────────────
+            from analysis_anova_routes import is_interaction_significant
+            _int_sig = bool(is_interaction_significant(tr.anova_table)) if tr.anova_table else False
             if tr.design_type == "split_plot_rcbd":
                 # For split-plot, sub-plot and main-plot sections are shown separately.
                 # Generic "not available" is suppressed — it would be contradictory.
                 if tr.mean_separation:
                     _add_mean_separation_section(
                         doc, trait, tr.mean_separation,
-                        factor_name=getattr(tr.mean_separation, "treatment_label", None) or "Sub-Plot Factor",
+                        factor_name=getattr(tr.mean_separation, "treatment_label", None) or "Subplot Factor",
+                        interaction_significant=_int_sig,
                     )
                     doc.add_paragraph()
                 if tr.main_plot_mean_separation:
                     _add_mean_separation_section(
                         doc, trait, tr.main_plot_mean_separation,
                         factor_name=getattr(tr.main_plot_mean_separation, "treatment_label", None) or "Main-Plot Factor",
+                        interaction_significant=_int_sig,
                     )
                     doc.add_paragraph()
                 # Interaction means table + line plot
                 if tr.interaction_means:
-                    from analysis_anova_routes import is_interaction_significant
-                    _int_sig = is_interaction_significant(tr.anova_table)
                     _mp_lbl = getattr(tr.main_plot_mean_separation, "treatment_label", None) or "Main-Plot Factor" if tr.main_plot_mean_separation else "Main-Plot Factor"
-                    _sp_lbl = getattr(tr.mean_separation, "treatment_label", None) or "Sub-Plot Factor" if tr.mean_separation else "Sub-Plot Factor"
+                    _sp_lbl = getattr(tr.mean_separation, "treatment_label", None) or "Subplot Factor" if tr.mean_separation else "Subplot Factor"
                     _add_interaction_means_section(
                         doc, tr.interaction_means,
                         mp_label=_mp_lbl, sp_label=_sp_lbl,
-                        trait_name=trait, is_significant=bool(_int_sig),
+                        trait_name=trait, is_significant=_int_sig,
                         sp_mean_separation=tr.mean_separation,
                     )
                     doc.add_paragraph()

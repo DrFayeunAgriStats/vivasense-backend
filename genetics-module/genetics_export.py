@@ -1213,12 +1213,18 @@ def _add_mean_separation_section(
     ms: MeanSeparation,
     domain: str = "plant_breeding",
     factor_name: Optional[str] = None,
+    interaction_significant: bool = False,
 ) -> None:
-    heading = (
-        f"Mean Separation — Main Effect of {factor_name} — {ms.test} (α = {ms.alpha})"
-        if factor_name
-        else f"Mean Separation — {ms.test} (α = {ms.alpha})"
-    )
+    if interaction_significant and factor_name:
+        heading = (
+            f"Marginal Mean Separation — {factor_name} "
+            f"(Interpret with Interaction Context) — "
+            f"{ms.test} (α = {ms.alpha})"
+        )
+    elif factor_name:
+        heading = f"Mean Separation — Main Effect of {factor_name} — {ms.test} (α = {ms.alpha})"
+    else:
+        heading = f"Mean Separation — {ms.test} (α = {ms.alpha})"
     _add_heading(doc, heading, level=2)
 
     is_agronomy = not is_plant_breeding_domain(domain)
@@ -1305,10 +1311,10 @@ def _add_interaction_separation_section(
     _add_stat_table(doc, headers, rows_data, numeric_cols={0, 3, 4})
     doc.add_paragraph()
     note = (
-        f"Cell means sorted by mean descending. "
+        f"Treatment-combination means sorted by mean descending. "
         f"Cells sharing the same letter are not significantly different at α = {int_sep.alpha} ({int_sep.test})."
         if int_sep.test != "Cell Means"
-        else "Interaction HSD could not be computed — cell means displayed without grouping letters."
+        else "Interaction HSD could not be computed — treatment-combination means displayed without grouping letters."
     )
     _add_body(doc, note, italic=True)
 
@@ -1321,7 +1327,7 @@ def _add_interaction_means_section(
     doc: Document,
     interaction_means_dict: Dict[str, Any],
     mp_label: str = "Main-Plot Factor",
-    sp_label: str = "Sub-Plot Factor",
+    sp_label: str = "Subplot Factor",
     trait_name: str = "",
     is_significant: bool = True,
     sp_mean_separation: Optional[Any] = None,
@@ -1344,7 +1350,7 @@ def _add_interaction_means_section(
     tv_vals = cell_means.get("trait_value") or []
 
     if not mp_vals:
-        _add_body(doc, "Interaction cell means not available.", italic=True)
+        _add_body(doc, "Treatment-combination means not available.", italic=True)
         return
 
     headers = [mp_label, sp_label, f"Mean ({trait_name})"]
@@ -1355,9 +1361,30 @@ def _add_interaction_means_section(
     _add_stat_table(doc, headers, rows_data, numeric_cols={2})
     doc.add_paragraph()
 
-    # Uncertainty context — derive SE from sub-plot mean separation (Error B denominator)
+    # Dynamic highest/lowest treatment-combination context sentence
+    try:
+        numeric_tv = [float(v) for v in tv_vals if v is not None]
+        if len(numeric_tv) >= 2:
+            max_idx = tv_vals.index(max(numeric_tv))
+            min_idx = tv_vals.index(min(numeric_tv))
+            max_combo = f"{mp_vals[max_idx]} × {sp_vals[max_idx]}"
+            min_combo = f"{mp_vals[min_idx]} × {sp_vals[min_idx]}"
+            _add_body(
+                doc,
+                f"The highest {trait_name} response was observed under "
+                f"{max_combo} ({float(tv_vals[max_idx]):.3f}), while the lowest response "
+                f"occurred under {min_combo} ({float(tv_vals[min_idx]):.3f}). "
+                f"These treatment-combination means are the primary basis for applied "
+                f"conclusions when the {mp_label} × {sp_label} interaction is significant.",
+                italic=True,
+            )
+            doc.add_paragraph()
+    except (TypeError, ValueError, IndexError):
+        pass
+
+    # SE footnote and interpretation note
     note_parts = [
-        "Cell means are observed averages for each treatment combination. "
+        "Treatment-combination means are observed averages for each factor-level combination. "
         "Cells in the same row share the same main-plot level; differences within a row "
         f"reflect the {sp_label} effect at that {mp_label} level."
     ]
@@ -1381,7 +1408,7 @@ def _generate_interaction_line_plot(
     trait_name: str,
     interaction_means_dict: Dict[str, Any],
     mp_label: str = "Main-Plot Factor",
-    sp_label: str = "Sub-Plot Factor",
+    sp_label: str = "Subplot Factor",
 ) -> Optional[bytes]:
     """
     Generate a publication-quality interaction line plot.
@@ -1935,7 +1962,7 @@ def _add_writing_support_guide(doc: Document, data: DownloadReportRequest) -> No
                 starter_selection = _snv(row.trait, _sel_variants)
             else:
                 starter_selection = (
-                    "These results may support further evaluation of promising genotypes under additional testing environments."
+                    "These results may support further evaluation of the highest-performing treatment combinations under additional testing conditions."
                 )
             _add_body(doc, starter_selection)
 
@@ -1982,12 +2009,11 @@ def _add_writing_support_guide(doc: Document, data: DownloadReportRequest) -> No
         if _guide_agronomy
         else "Report both statistical significance and practical interpretation (e.g., H², GAM%, and practical relevance)."
     )
-    _top_noun_plural = "treatments" if _guide_agronomy else "genotypes"
     checklist = [
         "Confirm that all reported trait names and units match your tables exactly.",
         "State design context clearly (single environment or multi-environment) before presenting ANOVA outcomes.",
         _relevance_item,
-        f"Cross-check mean separation group letters with the narrative conclusions about top {_top_noun_plural}.",
+        "Cross-check mean separation group letters with the narrative conclusions about top-performing treatments.",
         "Ensure every recommendation is traceable to a reported result in the table or figure.",
     ]
     for item in checklist:
@@ -2093,11 +2119,13 @@ def _add_trait_section(
     _add_descriptive_stats(doc, result)
     doc.add_paragraph()
 
-    # Determine split-plot status and factor labels for this trait
+    # Determine split-plot status, factor labels, and interaction significance for this trait
     _is_split_plot_ts = getattr(result, "main_plot_mean_separation", None) is not None
     _mp_label_ts = getattr(result.main_plot_mean_separation, "treatment_label", None) if _is_split_plot_ts else None
     _sp_label_ts = getattr(result.mean_separation, "treatment_label", None) if result.mean_separation else None
     _design_type_ts = "split_plot_rcbd" if _is_split_plot_ts else None
+    from analysis_anova_routes import is_interaction_significant as _is_int_sig
+    _int_sig_ts = bool(_is_int_sig(result.anova_table)) if result.anova_table else False
 
     _add_design_statement(
         doc,
@@ -2119,6 +2147,7 @@ def _add_trait_section(
         _add_mean_separation_section(
             doc, trait_name, result.mean_separation,
             factor_name=result.mean_separation.treatment_label,
+            interaction_significant=_int_sig_ts,
         )
     else:
         _add_heading(doc, "Mean Separation", level=2)
@@ -2133,12 +2162,14 @@ def _add_trait_section(
         _add_mean_separation_section(
             doc, trait_name, result.mean_separation_b,
             factor_name=result.mean_separation_b.treatment_label,
+            interaction_significant=_int_sig_ts,
         )
     if getattr(result, "main_plot_mean_separation", None):
         doc.add_paragraph()
         _add_mean_separation_section(
             doc, trait_name, result.main_plot_mean_separation,
             factor_name=getattr(result.main_plot_mean_separation, "treatment_label", None) or "Main-Plot Factor",
+            interaction_significant=_int_sig_ts,
         )
     if result.interaction_separation:
         doc.add_paragraph()
@@ -2374,10 +2405,13 @@ def export_traits_to_word(
 
             # ── 4. Mean Separation (table + bar chart) ────────────────────────
             _is_split_plot = getattr(result, "main_plot_mean_separation", None) is not None
+            from analysis_anova_routes import is_interaction_significant
+            _int_sig = bool(is_interaction_significant(result.anova_table)) if result.anova_table else False
             if result.mean_separation:
                 _add_mean_separation_section(
                     doc, trait, result.mean_separation, domain=domain,
                     factor_name=result.mean_separation.treatment_label,
+                    interaction_significant=_int_sig,
                 )
             elif not _is_split_plot:
                 _add_heading(doc, "Mean Separation", level=2)
@@ -2392,12 +2426,14 @@ def export_traits_to_word(
                 _add_mean_separation_section(
                     doc, trait, result.mean_separation_b, domain=domain,
                     factor_name=result.mean_separation_b.treatment_label,
+                    interaction_significant=_int_sig,
                 )
             if getattr(result, "main_plot_mean_separation", None):
                 doc.add_paragraph()
                 _add_mean_separation_section(
                     doc, trait, result.main_plot_mean_separation, domain=domain,
                     factor_name=getattr(result.main_plot_mean_separation, "treatment_label", None) or "Main-Plot Factor",
+                    interaction_significant=_int_sig,
                 )
             if result.interaction_separation:
                 doc.add_paragraph()
@@ -2406,10 +2442,8 @@ def export_traits_to_word(
             # ── 4b. Split-plot interaction means table + line plot ─────────────
             _int_means = getattr(result, "interaction_means", None)
             if _is_split_plot and _int_means:
-                from analysis_anova_routes import is_interaction_significant
-                _int_sig = is_interaction_significant(result.anova_table)
                 _mp_lbl = getattr(result.main_plot_mean_separation, "treatment_label", None) or "Main-Plot Factor" if getattr(result, "main_plot_mean_separation", None) else "Main-Plot Factor"
-                _sp_lbl = getattr(result.mean_separation, "treatment_label", None) or "Sub-Plot Factor" if result.mean_separation else "Sub-Plot Factor"
+                _sp_lbl = getattr(result.mean_separation, "treatment_label", None) or "Subplot Factor" if result.mean_separation else "Subplot Factor"
                 doc.add_paragraph()
                 _add_interaction_means_section(
                     doc, _int_means,
