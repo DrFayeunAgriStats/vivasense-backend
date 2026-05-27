@@ -879,7 +879,7 @@ def _add_correlation_section(doc: Document, corr: CorrelationResponse) -> None:
             f"between: {pairs_str}. "
             "A co-selection strategy is recommended — improving one of these "
             "traits through selection will likely produce concurrent gains in "
-            "the correlated traits, improving breeding efficiency.",
+            "the correlated traits, improving experimental efficiency.",
         )
 
     strong_neg = [
@@ -1198,7 +1198,7 @@ def _add_anova_section(doc: Document, at: AnovaTable, domain: str = "plant_breed
             else:
                 _add_body(
                     doc,
-                    "The G×E interaction was not significant — genotype rankings "
+                    "The G×E interaction was not significant — treatment rankings "
                     "are stable across environments.",
                 )
 
@@ -1589,7 +1589,7 @@ def _add_interpretation_section(
     is_agronomy = not is_plant_breeding_domain(domain)
     _add_heading(
         doc,
-        "Interpretation & Recommendations" if is_agronomy else "Interpretation & Breeding Recommendations",
+        "Interpretation & Recommendations",
         level=2,
     )
 
@@ -1980,7 +1980,7 @@ def _add_writing_support_guide(doc: Document, data: DownloadReportRequest) -> No
     _relevance_item = (
         "Report both statistical significance and practical interpretation (e.g., treatment comparison and operational relevance)."
         if _guide_agronomy
-        else "Report both statistical significance and practical interpretation (e.g., H², GAM%, and breeding relevance)."
+        else "Report both statistical significance and practical interpretation (e.g., H², GAM%, and practical relevance)."
     )
     _top_noun_plural = "treatments" if _guide_agronomy else "genotypes"
     checklist = [
@@ -2548,7 +2548,7 @@ def _build_document(data: DownloadReportRequest) -> Document:
         analysis_type="multi_environment" if ds.mode == "multi" else "single_environment",
     )
     if is_plant_breeding_domain(report_domain) and synthesis_text:
-        _add_heading(doc, "Breeding Strategy Summary", level=1)
+        _add_heading(doc, "Experimental Interpretation Summary", level=1)
         for para in synthesis_text.split("\n\n"):
             _add_body(doc, para)
         doc.add_paragraph()

@@ -103,7 +103,7 @@ def build_breeding_synthesis(trait_results: list[dict], analysis_type: Optional[
                 f"(F = {f_text}, p = {p_text}). Genetic advance estimates "
                 f"are unreliable for this trait under the present experimental conditions. "
                 f"Increase sample size or evaluate across multiple environments before "
-                f"making selection decisions."
+                f"drawing applied conclusions."
             )
             continue
 
@@ -197,7 +197,7 @@ def build_breeding_synthesis(trait_results: list[dict], analysis_type: Optional[
             f"amenable to phenotypic selection under the evaluated conditions. "
             + (f"{', '.join(low_h2)} showed comparatively lower "
                 f"heritability and may require replicated multi-environment "
-                f"evaluation before selection decisions are finalised."
+                f"evaluation before applied decisions are finalised."
                if low_h2 else "")
         )
 
@@ -312,11 +312,11 @@ def build_breeding_synthesis(trait_results: list[dict], analysis_type: Optional[
             f"Substantial genotype-by-environment interaction was "
             f"detected for {', '.join(unstable)}. Stability analysis "
             f"(Eberhart-Russell or GGE biplot) is recommended before "
-            f"finalising genotype selection for "
+            f"finalising treatment selection for "
             f"{'this trait' if len(unstable) == 1 else 'these traits'}. "
             f"The nature of this interaction (crossover vs non-crossover) "
             f"requires further stability analysis such as GGE biplot or "
-            f"Eberhart-Russell regression before genotype rankings can be "
+            f"Eberhart-Russell regression before treatment rankings can be "
             f"considered environment-stable."
         )
 
@@ -324,7 +324,7 @@ def build_breeding_synthesis(trait_results: list[dict], analysis_type: Optional[
         "These conclusions are based on data from this specific experiment "
         "and should be interpreted within that context. Findings should be "
         "validated across additional environments and seasons before "
-        "breeding decisions are finalised."
+        "applied decisions are finalised."
     )
 
     synthesis = "\n\n".join(paragraphs)
@@ -393,7 +393,7 @@ def _describe_gcv_pcv(gcv: float, pcv: float, trait_name: str, domain: str = "pl
             f"PCV ({pcv:.2f}%) substantially exceeds GCV ({gcv:.2f}%) "
             f"(inflation: {inflation_pct:.1f}%), indicating strong environmental masking "
             f"of genetic differences for {trait_name}. Replicated multi-environment "
-            f"evaluation is essential before selection decisions are made."
+            f"evaluation is essential before applied conclusions are drawn."
         )
 
 
@@ -457,8 +457,8 @@ def _describe_env_effects(
         if gxe_sig and f_gxe > 10:
             gxe_desc = (
                 " Significant genotype-by-environment interaction was also detected "
-                f"(GxE F = {f_gxe:,.3f}, p < 0.001), suggesting genotype rankings may not be "
-                "consistent across all environments - stability analysis is recommended."
+                f"(GxE F = {f_gxe:,.3f}, p < 0.001), suggesting treatment rankings may not be "
+                "consistent across all environments — stability analysis is recommended."
             )
         elif gxe_sig:
             gxe_desc = (
@@ -610,11 +610,11 @@ def generate_genetics_interpretation_sections(
     if cv_sentence:
         variance_interp = f"{variance_interp} {cv_sentence}".strip()
     
-    # ── Section 5: Breeding Interpretation ───────────────────────────────
+    # ── Section 5: Experimental Interpretation ───────────────────────────
     if h2_class == "not_computed":
         breeding_interp = (
             "Genetic basis could not be established. Expand or redesign the experiment "
-            "before making selection decisions."
+            "before drawing management conclusions."
         )
     elif h2_class == "high":
         if gam_class == "High":
@@ -663,8 +663,8 @@ def generate_genetics_interpretation_sections(
     if gxe_significant:
         risk_parts.append(
             f"Significant genotype-by-environment interaction was detected for {trait_name}, "
-            "indicating that genotype rankings and trait values may vary across environments. "
-            "Multi-environment validation is essential before committing to selection decisions."
+            "indicating that treatment rankings and trait values may vary across environments. "
+            "Multi-environment validation is essential before committing to management decisions."
         )
     
     if environment_significant and not gxe_significant:
@@ -942,7 +942,7 @@ def generate_genetics_interpretation(
     if h2_class == "not_computed":
         breeding_implication = (
             "Heritability could not be reliably estimated. Redesign or expand the experiment "
-            "to improve precision before making treatment or selection decisions."
+            "to improve precision before drawing management conclusions."
         )
     elif h2_class == "high":
         if is_agronomy:

@@ -369,7 +369,7 @@ def _add_gp_tables(doc: Document, tr: GeneticParametersTraitResult) -> None:
                 f"Broad-sense heritability was H² = {_fmt(h2, 3)} (moderate) "
                 "in this experiment. Both genetic and environmental effects "
                 "contributed to phenotypic variation; multi-environment "
-                "evaluation is advisable before drawing selection conclusions.",
+                "evaluation is advisable before drawing applied conclusions.",
             )
         else:
             _add_body(

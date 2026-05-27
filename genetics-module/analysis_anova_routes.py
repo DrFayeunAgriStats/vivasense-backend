@@ -540,7 +540,7 @@ def generate_anova_interpretation(
         _term = "genotype"
         _terms = "genotypes"
         _effect_label = "Genotype Effect"
-        _section_label = "Breeding Interpretation"
+        _section_label = "Experimental Interpretation"
     else:
         _term = "treatment"
         _terms = "treatments"
@@ -641,8 +641,8 @@ def generate_anova_interpretation(
         if genotype_significant is True:
             geno_text = (
                 f"Significant genetic variation was detected for {trait} (p < 0.05), "
-                f"indicating that genotypes differ in their performance and that "
-                f"selection for improved {trait} is feasible."
+                f"indicating that genotypes differ meaningfully in their performance "
+                f"for {trait}."
             )
         elif genotype_significant is False:
             geno_text = (
@@ -757,35 +757,34 @@ def generate_anova_interpretation(
 
     sections.append(("Mean Performance and Ranking", " ".join(ranking)))
 
-    # ── 7 (single: 5). Breeding Interpretation ────────────────────────────────
-    # ── 7 (single: 5). Breeding / Research Interpretation ────────────────────
+    # ── 7 (single: 5). Experimental Interpretation ───────────────────────────────
     breeding = []
     if domain == "plant_breeding":
         if selection_feasible is True:
             breeding.append(
-                f"The results suggest that selection for improved {trait} is feasible."
+                f"Significant differences among {_terms} indicate that the tested "
+                f"levels vary meaningfully in their effect on {trait}."
             )
             if is_multi:
                 if gxe_significant is False:
                     breeding.append(
-                        "Given the absence of significant genotype \u00d7 environment "
-                        "interaction, breeding efforts can focus on broad adaptation "
-                        "across environments."
+                        f"Given the absence of significant {_term} × environment "
+                        "interaction, results are consistent across the tested environments."
                     )
                 else:
                     breeding.append(
-                        "However, due to significant genotype \u00d7 environment "
-                        "interaction, breeding strategies should prioritise stability "
-                        "analysis and environment-specific selection."
+                        f"Due to significant {_term} × environment interaction, "
+                        f"the effect of {_terms} varies across environments; "
+                        "environment-specific recommendations should be considered."
                     )
         else:
             breeding.append(
-                f"The lack of significant genetic variation indicates that selection "
-                f"for {trait} may not be effective with the current germplasm."
+                f"No significant differences among {_terms} indicate that the tested "
+                f"levels do not differ sufficiently in their effect on {trait}."
             )
         breeding.append(
             "The observed variability and experimental precision should guide the "
-            "design of future experiments and breeding trials."
+            "design of future experiments."
         )
     else:
         if selection_feasible is True:
