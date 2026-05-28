@@ -995,7 +995,7 @@ async def export_heatmap_report(data: HeatmapExportRequest):
             "environmental co-responses, or experimental artefacts. "
             "Strong correlations (|r| ≥ 0.70, p < 0.05) may indicate co-selection "
             "potential, but this should be evaluated across multiple environments "
-            "before being used to guide a breeding programme.",
+            "before being used to guide applied decisions.",
         )
         if data.warnings:
             doc.add_paragraph()
