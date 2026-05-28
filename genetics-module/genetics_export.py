@@ -1657,22 +1657,23 @@ def _add_interpretation_section(
             _is_split_plot = result.main_plot_mean_separation is not None
             _design_type = "split_plot_rcbd" if _is_split_plot else None
             if _is_split_plot:
-                mp_sig  = is_main_plot_significant(result.anova_table)
-                sp_sig  = is_subplot_significant(result.anova_table)
-                int_sig = is_interaction_significant(result.anova_table)
+                # Extract labels first — needed to resolve remapped ANOVA source names
+                _mp_label = getattr(result.main_plot_mean_separation, "treatment_label", None)
+                _sp_label = getattr(result.mean_separation, "treatment_label", None)
+                mp_sig  = is_main_plot_significant(result.anova_table, label=_mp_label)
+                sp_sig  = is_subplot_significant(result.anova_table, label=_sp_label)
+                int_sig = is_interaction_significant(result.anova_table, mp_label=_mp_label, sp_label=_sp_label)
                 vc = result.variance_components if isinstance(result.variance_components, dict) else {}
                 cv_a = _clean_cv_percent(float(vc["cv_A"])) if vc.get("cv_A") is not None else None
                 cv_b = _clean_cv_percent(float(vc["cv_B"])) if vc.get("cv_B") is not None else None
                 if cv_b is not None:
                     summary["cv_percent"] = cv_b
             else:
+                _mp_label = _sp_label = None
                 mp_sig = sp_sig = int_sig = None
                 cv_a = cv_b = None
 
             gxe_sig = is_gxe_effect_significant(result.anova_table)
-            # Extract actual factor labels for named interpretation
-            _mp_label = getattr(result.main_plot_mean_separation, "treatment_label", None) if _is_split_plot else None
-            _sp_label = getattr(result.mean_separation, "treatment_label", None) if _is_split_plot else None
             interpretation = generate_anova_interpretation(
                 trait=trait_name,
                 summary=summary,
@@ -1880,9 +1881,9 @@ def _add_writing_support_guide(doc: Document, data: DownloadReportRequest) -> No
             _sp_raw = getattr(result.mean_separation, "treatment_label", None) if result.mean_separation else None
             _MP = _fmt_factor_label(_mp_raw, "main-plot factor")
             _SP = _fmt_factor_label(_sp_raw, "subplot factor")
-            _mp_sig  = is_main_plot_significant(at)
-            _sp_sig  = is_subplot_significant(at)
-            _int_sig = is_interaction_significant(at)
+            _mp_sig  = is_main_plot_significant(at, label=_mp_raw)
+            _sp_sig  = is_subplot_significant(at, label=_sp_raw)
+            _int_sig = is_interaction_significant(at, mp_label=_mp_raw, sp_label=_sp_raw)
             _n_rep   = result.n_reps or data.dataset_summary.n_reps
 
             # Design + interaction sentence
@@ -2178,7 +2179,7 @@ def _add_trait_section(
     _sp_label_ts = getattr(result.mean_separation, "treatment_label", None) if result.mean_separation else None
     _design_type_ts = "split_plot_rcbd" if _is_split_plot_ts else None
     from analysis_anova_routes import is_interaction_significant as _is_int_sig
-    _int_sig_ts = bool(_is_int_sig(result.anova_table)) if result.anova_table else False
+    _int_sig_ts = bool(_is_int_sig(result.anova_table, mp_label=_mp_label_ts, sp_label=_sp_label_ts)) if result.anova_table else False
 
     _add_design_statement(
         doc,

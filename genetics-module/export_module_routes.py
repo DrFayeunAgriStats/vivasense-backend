@@ -590,7 +590,7 @@ async def export_anova_word(data: AnovaExportRequest):
 
             # ── 4. Mean Separation (table + embedded chart) ────────────────────
             from analysis_anova_routes import is_interaction_significant
-            _int_sig = bool(is_interaction_significant(tr.anova_table)) if tr.anova_table else False
+            _int_sig = bool(is_interaction_significant(tr.anova_table, mp_label=_mp_lbl_ds, sp_label=_sp_lbl_ds)) if tr.anova_table else False
             if tr.design_type == "split_plot_rcbd":
                 # For split-plot, sub-plot and main-plot sections are shown separately.
                 # Generic "not available" is suppressed — it would be contradictory.

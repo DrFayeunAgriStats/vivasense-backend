@@ -914,21 +914,41 @@ def _is_term_significant(anova_table, term: str) -> Optional[bool]:
         return None
 
 
-def is_main_plot_significant(anova_table) -> Optional[bool]:
+def is_main_plot_significant(anova_table, label: Optional[str] = None) -> Optional[bool]:
     """Check if the main-plot factor effect is significant (split-plot ANOVA)."""
+    if label:
+        result = _is_term_significant(anova_table, label)
+        if result is not None:
+            return result
     return _is_term_significant(anova_table, "main_plot")
 
 
-def is_subplot_significant(anova_table) -> Optional[bool]:
+def is_subplot_significant(anova_table, label: Optional[str] = None) -> Optional[bool]:
     """Check if the subplot factor effect is significant (split-plot ANOVA)."""
+    if label:
+        result = _is_term_significant(anova_table, label)
+        if result is not None:
+            return result
     return _is_term_significant(anova_table, "sub_plot")
 
 
-def is_interaction_significant(anova_table) -> Optional[bool]:
+def is_interaction_significant(anova_table, mp_label: Optional[str] = None, sp_label: Optional[str] = None) -> Optional[bool]:
     """Check if the main_plot × sub_plot interaction is significant."""
+    if mp_label and sp_label:
+        result = _is_term_significant(anova_table, f"{mp_label}×{sp_label}")
+        if result is not None:
+            return result
     result = _is_term_significant(anova_table, "main_plot:sub_plot")
     if result is None:
         result = _is_term_significant(anova_table, "sub_plot:main_plot")
+    # Fallback: any source containing "×" handles any remapped interaction label
+    if result is None and anova_table and hasattr(anova_table, "source") and hasattr(anova_table, "p_value"):
+        for s, p in zip(anova_table.source, anova_table.p_value):
+            if "×" in str(s) and p is not None:
+                try:
+                    return float(p) < 0.05
+                except (ValueError, TypeError):
+                    pass
     return result
 
 
