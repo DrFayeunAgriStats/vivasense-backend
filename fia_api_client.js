@@ -4,10 +4,10 @@
  * Replace direct Anthropic calls in your Lovable project with these functions.
  * Set VITE_API_URL or VITE_API_BASE_URL in Lovable → Settings → Environment Variables
  *
- * VITE_API_URL = https://vivasense-genetics-docker.onrender.com
+ * VITE_API_URL = https://vivasense-backend-r-production.up.railway.app
  */
 
-const API_BASE = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || "https://vivasense-genetics-docker.onrender.com";
+const API_BASE = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || "https://vivasense-backend-r-production.up.railway.app";
 
 // ── 1. CSP 811 TUTOR CHAT (streaming) ─────────────────────────────────────
 /**

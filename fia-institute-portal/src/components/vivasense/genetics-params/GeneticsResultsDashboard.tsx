@@ -138,7 +138,7 @@ export function GeneticsResultsDashboard({ result }: Props) {
       console.log("[COMPONENT] GeneticsResultsDashboard -> download-results", payload);
 
       const res = await fetch(
-        "https://vivasense-genetics-docker.onrender.com/genetics/download-results",
+        "https://vivasense-backend-r-production.up.railway.app/genetics/download-results",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

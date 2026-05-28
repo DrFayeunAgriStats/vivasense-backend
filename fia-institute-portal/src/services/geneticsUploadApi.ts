@@ -6,7 +6,7 @@
  *   POST /genetics/analyze-upload   – trait-by-trait analysis
  *
  * In Lovable/Vercel environment variables, set:
- *   VITE_API_URL = https://vivasense-genetics-docker.onrender.com
+ *   VITE_API_URL = https://vivasense-backend-r-production.up.railway.app
  */
 
 import { API_BASE } from "./apiConfig";

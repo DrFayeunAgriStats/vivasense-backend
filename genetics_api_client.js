@@ -4,7 +4,7 @@
  * Paste this file into your Lovable project (or import from fia_api_client.js).
  *
  * Set in Lovable/Vercel environment variables:
- *   VITE_API_URL = https://vivasense-genetics-docker.onrender.com
+ *   VITE_API_URL = https://vivasense-backend-r-production.up.railway.app
  *
  * CORRECT TRAIT FORMAT:
  *   formData.append('traits', selectedTraits.join(','));
@@ -12,7 +12,7 @@
  *   // Column names must match CSV header EXACTLY (case-sensitive)
  */
 
-const GENETICS_BASE = import.meta.env.VITE_API_URL || "https://vivasense-genetics-docker.onrender.com";
+const GENETICS_BASE = import.meta.env.VITE_API_URL || "https://vivasense-backend-r-production.up.railway.app";
 
 function getVivaSenseMode() {
   try {

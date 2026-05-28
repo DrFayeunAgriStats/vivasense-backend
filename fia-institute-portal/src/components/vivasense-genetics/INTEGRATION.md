@@ -36,7 +36,7 @@ Do not copy `INTEGRATION.md` or `test_upload_integration.py`.
 In Lovable/Vercel environment variables:
 
 ```
-VITE_API_URL = https://vivasense-genetics-docker.onrender.com
+VITE_API_URL = https://vivasense-backend-r-production.up.railway.app
 ```
 
 `apiConfig.ts` uses this value and all genetics clients consume it.

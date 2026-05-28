@@ -1,6 +1,6 @@
 /**
  * VivaSense Genetics API Service
- * Backend: https://vivasense-genetics-docker.onrender.com
+ * Backend: https://vivasense-backend-r-production.up.railway.app
  */
 
 import type {

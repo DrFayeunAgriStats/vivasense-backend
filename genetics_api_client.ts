@@ -4,13 +4,13 @@
  * Add this file to your Lovable project root as: src/genetics_api_client.ts
  *
  * In Lovable/Vercel environment variables, set:
- *   VITE_API_URL = https://vivasense-genetics-docker.onrender.com
+ *   VITE_API_URL = https://vivasense-backend-r-production.up.railway.app
  *
  * Then import in your components:
  *   import { runVarianceComponents } from "@/genetics_api_client";
  */
 
-const GENETICS_BASE = import.meta.env.VITE_API_URL || "https://vivasense-genetics-docker.onrender.com";
+const GENETICS_BASE = import.meta.env.VITE_API_URL || "https://vivasense-backend-r-production.up.railway.app";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TRAIT NAME MAPPING — display labels → CSV column names

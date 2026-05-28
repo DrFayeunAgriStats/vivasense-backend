@@ -45,7 +45,7 @@ RUN Rscript -e "if (!requireNamespace('car', quietly=TRUE)) stop('R package car 
 COPY . .
 
 # ── Runtime configuration ─────────────────────────────────────────────────────
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app/genetics-module
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \

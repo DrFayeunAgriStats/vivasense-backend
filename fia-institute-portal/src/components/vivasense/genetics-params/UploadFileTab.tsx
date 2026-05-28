@@ -348,7 +348,7 @@ function UploadAnalysisResults({ results }: { results: AnalyzeUploadResponse }) 
         failed_traits: results.failed_traits,
       };
 
-      const res = await fetch("https://vivasense-genetics-docker.onrender.com/genetics/download-results", {
+      const res = await fetch("https://vivasense-backend-r-production.up.railway.app/genetics/download-results", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
