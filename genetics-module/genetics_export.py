@@ -1353,12 +1353,17 @@ def _add_interaction_means_section(
         _add_body(doc, "Treatment-combination means not available.", italic=True)
         return
 
-    headers = [mp_label, sp_label, f"Mean ({trait_name})"]
+    cell_se = interaction_means_dict.get("cell_se")
+    _has_se = (
+        cell_se is not None
+        and not (isinstance(cell_se, float) and (cell_se != cell_se))
+    )
+    headers = [mp_label, sp_label, f"Mean ({trait_name})"] + (["SE"] if _has_se else [])
     rows_data = [
-        [str(mp), str(sp), _fmt(tv, 3)]
+        [str(mp), str(sp), _fmt(tv, 3)] + ([_fmt(cell_se, 4)] if _has_se else [])
         for mp, sp, tv in zip(mp_vals, sp_vals, tv_vals)
     ]
-    _add_stat_table(doc, headers, rows_data, numeric_cols={2})
+    _add_stat_table(doc, headers, rows_data, numeric_cols={2, 3} if _has_se else {2})
     doc.add_paragraph()
 
     # Dynamic highest/lowest treatment-combination context sentence
@@ -1382,13 +1387,17 @@ def _add_interaction_means_section(
     except (TypeError, ValueError, IndexError):
         pass
 
-    # SE footnote and interpretation note
+    # Interpretation note
     note_parts = [
         "Treatment-combination means are observed averages for each factor-level combination. "
         "Cells in the same row share the same main-plot level; differences within a row "
         f"reflect the {sp_label} effect at that {mp_label} level."
     ]
-    if sp_mean_separation is not None:
+    if _has_se:
+        note_parts.append(
+            f"SE = sqrt(MS_Error B / n_reps); applies uniformly to all treatment-combination means."
+        )
+    elif sp_mean_separation is not None:
         try:
             se_vals = [s for s in (sp_mean_separation.se or []) if s is not None]
             if se_vals:
@@ -2026,45 +2035,91 @@ def _add_writing_support_guide(doc: Document, data: DownloadReportRequest) -> No
 # ============================================================================
 
 def _add_assumption_tests_section(doc: Document, assumption_tests: Dict[str, Any]) -> None:
-    """Render assumption test results (Shapiro-Wilk, Levene, etc.) if available."""
-    _add_heading(doc, "Assumption Tests", level=2)
+    """Render assumption diagnostics. Handles both new (normality/homogeneity/overall)
+    and legacy (shapiro_wilk/bartlett) structures from the R engine."""
+    _add_heading(doc, "Assumption Diagnostics", level=2)
 
-    rows_data: List[List[str]] = []
-    for test_name, test_result in assumption_tests.items():
-        label = test_name.replace("_", " ").title()
-        if isinstance(test_result, dict):
-            # Flexible key lookup — R may use p_value or p.value
-            p_val = (
-                test_result.get("p_value")
-                or test_result.get("p.value")
-                or test_result.get("p")
+    _is_new_structure = "overall" in assumption_tests or (
+        "normality" in assumption_tests or "homogeneity" in assumption_tests
+    )
+
+    if _is_new_structure:
+        # Overall sentence
+        overall = assumption_tests.get("overall") or {}
+        overall_interp = overall.get("interpretation") if isinstance(overall, dict) else None
+        if overall_interp:
+            _add_body(doc, overall_interp)
+            doc.add_paragraph()
+
+        # Per-test table rows
+        rows_data: List[List[str]] = []
+        for key in ("normality", "homogeneity"):
+            test_result = assumption_tests.get(key)
+            if not isinstance(test_result, dict):
+                continue
+            test_label = test_result.get("test") or key.replace("_", " ").title()
+            stat = test_result.get("statistic")
+            p_val = test_result.get("p_value") or test_result.get("p.value")
+            passed = test_result.get("passed")
+            interp = test_result.get("interpretation") or (
+                "Passed" if passed is True else ("Failed" if passed is False else "—")
             )
-            stat = (
-                test_result.get("statistic")
-                or test_result.get("test_stat")
-                or test_result.get("W")
-            )
-            conclusion = test_result.get("conclusion") or test_result.get("verdict")
-            if conclusion is None and p_val is not None:
-                conclusion = "Passed (p ≥ 0.05)" if p_val >= 0.05 else "Failed (p < 0.05)"
             rows_data.append([
-                label,
-                _fmt(stat, 3, thousands=False) if stat is not None else "—",
+                key.title(),
+                test_label,
+                _fmt(stat, 4, thousands=False) if stat is not None else "—",
                 _fmt_p(p_val) if p_val is not None else "—",
-                conclusion or "—",
+                "Yes" if passed is True else ("No" if passed is False else "—"),
+                interp,
             ])
-        else:
-            rows_data.append([label, "—", "—", str(test_result)])
 
-    if rows_data:
-        _add_stat_table(
-            doc,
-            ["Test", "Statistic", "p-value", "Result"],
-            rows_data,
-            numeric_cols={1},
-        )
+        if rows_data:
+            _add_stat_table(
+                doc,
+                ["Assumption", "Test", "Statistic", "p-value", "Passed", "Interpretation"],
+                rows_data,
+                numeric_cols={2},
+            )
+        else:
+            _add_body(doc, "Assumption diagnostics were not available for this trait.", italic=True)
+
     else:
-        _add_body(doc, "Assumption test data present but could not be parsed.", italic=True)
+        # Legacy structure: shapiro_wilk / bartlett keys with conclusion field
+        rows_data = []
+        for test_name, test_result in assumption_tests.items():
+            label = test_name.replace("_", " ").title()
+            if isinstance(test_result, dict):
+                p_val = (
+                    test_result.get("p_value")
+                    or test_result.get("p.value")
+                    or test_result.get("p")
+                )
+                stat = (
+                    test_result.get("statistic")
+                    or test_result.get("test_stat")
+                    or test_result.get("W")
+                )
+                conclusion = test_result.get("conclusion") or test_result.get("verdict")
+                if conclusion is None and p_val is not None:
+                    conclusion = "Passed (p ≥ 0.05)" if p_val >= 0.05 else "Failed (p < 0.05)"
+                rows_data.append([
+                    label,
+                    _fmt(stat, 3, thousands=False) if stat is not None else "—",
+                    _fmt_p(p_val) if p_val is not None else "—",
+                    conclusion or "—",
+                ])
+            else:
+                rows_data.append([label, "—", "—", str(test_result)])
+
+        if rows_data:
+            _add_stat_table(
+                doc,
+                ["Test", "Statistic", "p-value", "Result"],
+                rows_data,
+                numeric_cols={1},
+            )
+        else:
+            _add_body(doc, "Assumption test data present but could not be parsed.", italic=True)
 
 
 # ============================================================================

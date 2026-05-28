@@ -495,47 +495,108 @@ compute_single_environment <- function(data, trait_name = "Trait",
 
   anova_table <- sanitize_anova_f_values(anova_table)
 
-  # ── Assumption Tests (Shapiro-Wilk normality + Bartlett homogeneity) ────────
-  # Computed for all design types; stored in assumption_tests_out for JSON output.
-  assumption_tests_out <- list()
-  tryCatch({
-    resid_vec <- residuals(model)
+  # ── Assumption Tests (Shapiro-Wilk + Levene/Bartlett) ───────────────────────
+  assumption_tests_out <- tryCatch({
+    # Split-plot: use within-stratum (Error B) residuals for Shapiro-Wilk
+    resid_vec <- tryCatch(
+      if (has_splitplot) residuals(model[["Error: Within"]]) else residuals(model),
+      error = function(e) residuals(model)
+    )
     resid_vec <- resid_vec[is.finite(resid_vec)]
+
+    normality_result <- NULL
     if (length(resid_vec) >= 3 && length(resid_vec) <= 5000) {
-      sw <- shapiro.test(resid_vec)
-      assumption_tests_out$shapiro_wilk <- list(
-        statistic = as.numeric(sw$statistic),
-        p_value   = as.numeric(sw$p.value),
-        conclusion = if (sw$p.value >= 0.05)
-          sprintf("Normality assumption not violated (W = %.4f, p = %.4f — p ≥ 0.05)",
-                  as.numeric(sw$statistic), as.numeric(sw$p.value))
-          else
-          sprintf("Normality assumption may be violated (W = %.4f, p = %.4f — p < 0.05)",
-                  as.numeric(sw$statistic), as.numeric(sw$p.value))
-      )
+      sw <- tryCatch(shapiro.test(resid_vec), error = function(e) NULL)
+      if (!is.null(sw)) {
+        normality_result <- list(
+          test           = "Shapiro-Wilk",
+          statistic      = as.numeric(sw$statistic),
+          p_value        = as.numeric(sw$p.value),
+          passed         = sw$p.value >= 0.05,
+          interpretation = if (sw$p.value >= 0.05)
+            sprintf(
+              "Normality assumption supported (W = %.4f, p = %.4f). Residuals are consistent with a normal distribution.",
+              as.numeric(sw$statistic), as.numeric(sw$p.value))
+            else
+            sprintf(
+              "Normality assumption may be violated (W = %.4f, p = %.4f). Consider data transformation or non-parametric alternatives.",
+              as.numeric(sw$statistic), as.numeric(sw$p.value))
+        )
+      }
     }
-  }, error = function(e) {
-    message(sprintf("[WARN] Shapiro-Wilk failed for %s: %s", trait_name, conditionMessage(e)))
-  })
-  tryCatch({
+
+    homogeneity_result <- NULL
     grp_col <- if (has_splitplot) data$main_plot else if (has_genotype) data$genotype else NULL
     if (!is.null(grp_col) && nlevels(as.factor(grp_col)) >= 2) {
-      bt <- bartlett.test(data$trait_value ~ grp_col)
-      assumption_tests_out$bartlett <- list(
-        statistic = as.numeric(bt$statistic),
-        p_value   = as.numeric(bt$p.value),
-        conclusion = if (bt$p.value >= 0.05)
-          "Homogeneity of variance not violated (K² = %.4f, p = %.4f — p ≥ 0.05)" %+%
-            c(as.numeric(bt$statistic), as.numeric(bt$p.value))
-          else
-          "Heterogeneity of variance detected (K² = %.4f, p = %.4f — p < 0.05)" %+%
-            c(as.numeric(bt$statistic), as.numeric(bt$p.value))
-      )
+      if (HAS_CAR) {
+        lv <- tryCatch(
+          car::leveneTest(data$trait_value ~ as.factor(grp_col)),
+          error = function(e) NULL
+        )
+        if (!is.null(lv)) {
+          lv_stat <- lv[1, "F value"]
+          lv_p    <- lv[1, "Pr(>F)"]
+          homogeneity_result <- list(
+            test           = "Levene",
+            statistic      = as.numeric(lv_stat),
+            p_value        = as.numeric(lv_p),
+            passed         = lv_p >= 0.05,
+            interpretation = if (lv_p >= 0.05)
+              sprintf(
+                "Homogeneity of variance supported (F = %.4f, p = %.4f). Equal variance assumption is not violated.",
+                as.numeric(lv_stat), as.numeric(lv_p))
+              else
+              sprintf(
+                "Heterogeneity of variance detected (F = %.4f, p = %.4f). Variance differs across treatment groups.",
+                as.numeric(lv_stat), as.numeric(lv_p))
+          )
+        }
+      }
+      if (is.null(homogeneity_result)) {
+        bt <- tryCatch(bartlett.test(data$trait_value ~ grp_col), error = function(e) NULL)
+        if (!is.null(bt)) {
+          homogeneity_result <- list(
+            test           = "Bartlett",
+            statistic      = as.numeric(bt$statistic),
+            p_value        = as.numeric(bt$p.value),
+            passed         = bt$p.value >= 0.05,
+            interpretation = if (bt$p.value >= 0.05)
+              sprintf(
+                "Homogeneity of variance supported (K² = %.4f, p = %.4f). Equal variance assumption is not violated.",
+                as.numeric(bt$statistic), as.numeric(bt$p.value))
+              else
+              sprintf(
+                "Heterogeneity of variance detected (K² = %.4f, p = %.4f). Variance differs across treatment groups.",
+                as.numeric(bt$statistic), as.numeric(bt$p.value))
+          )
+        }
+      }
     }
+
+    norm_pass <- if (!is.null(normality_result))   normality_result$passed   else NA
+    homo_pass <- if (!is.null(homogeneity_result)) homogeneity_result$passed else NA
+    overall_passed <- isTRUE(norm_pass) && isTRUE(homo_pass)
+    overall_interp <- if (is.na(norm_pass) && is.na(homo_pass)) {
+      "Assumption tests could not be computed for this dataset."
+    } else if (overall_passed) {
+      "Both normality and homogeneity of variance assumptions are supported. ANOVA results are reliable under standard parametric assumptions."
+    } else if (isFALSE(norm_pass) && isFALSE(homo_pass)) {
+      "Both assumptions may be violated. ANOVA results should be interpreted with caution; consider data transformation."
+    } else if (isFALSE(norm_pass)) {
+      "The normality assumption may be violated. ANOVA is generally robust to mild non-normality with balanced designs, but results should be verified."
+    } else {
+      "The homogeneity of variance assumption may be violated. Results should be interpreted cautiously, particularly for unbalanced designs."
+    }
+
+    out <- list(overall = list(passed = overall_passed, interpretation = overall_interp))
+    if (!is.null(normality_result))   out$normality   <- normality_result
+    if (!is.null(homogeneity_result)) out$homogeneity <- homogeneity_result
+    if (length(out) <= 1) NULL else out
+
   }, error = function(e) {
-    message(sprintf("[WARN] Bartlett test failed for %s: %s", trait_name, conditionMessage(e)))
+    message(sprintf("[WARN] Assumption tests failed for %s: %s", trait_name, conditionMessage(e)))
+    NULL
   })
-  if (length(assumption_tests_out) == 0) assumption_tests_out <- NULL
 
   # Grand mean — needed for both split-plot and genotype-based paths
   grand_mean    <- mean(data$trait_value, na.rm = TRUE)
@@ -741,7 +802,8 @@ compute_single_environment <- function(data, trait_name = "Trait",
         main_plot_levels = as.character(levels(data$main_plot)),
         sub_plot_levels = as.character(levels(data$sub_plot)),
         cell_means = as.list(cell_means),  # Keep long format too for table display
-        means_matrix = as.list(cell_wide)   # Wide format for plotting
+        means_matrix = as.list(cell_wide), # Wide format for plotting
+        cell_se = tryCatch(sqrt(ms_error_B / n_reps), error = function(e) NA_real_)
       )
     }, error = function(e) {
       message(sprintf("[WARN] Interaction means computation failed for %s: %s", trait_name, conditionMessage(e)))
@@ -773,7 +835,7 @@ compute_single_environment <- function(data, trait_name = "Trait",
           genotype = sub(":.*",      "", rn),
           factor   = sub("^[^:]*:", "", rn),
           mean     = as.numeric(int_sep$groups[[mean_col]]),
-          se       = rep(NA_real_, length(rn)),
+          se       = rep(tryCatch(sqrt(ms_error / n_reps), error = function(e) NA_real_), length(rn)),
           group    = as.character(int_sep$groups$groups),
           test     = "Tukey HSD",
           alpha    = 0.05
@@ -787,7 +849,7 @@ compute_single_environment <- function(data, trait_name = "Trait",
           genotype = as.character(cell$genotype),
           factor   = as.character(cell$factor),
           mean     = cell$trait_value,
-          se       = rep(NA_real_, nrow(cell)),
+          se       = rep(tryCatch(sqrt(ms_error / n_reps), error = function(e) NA_real_), nrow(cell)),
           group    = rep("—", nrow(cell)),
           test     = "Cell Means",
           alpha    = 0.05
