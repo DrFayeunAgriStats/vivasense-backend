@@ -438,7 +438,7 @@ export function AnovaWorkspaceModule({ datasetContext }: AnovaWorkspaceModulePro
         </div>
       </div>
 
-      {results && <ResultsDisplay results={results} onReset={() => setResults(null)} />}
+      {results && <ResultsDisplay results={results} onReset={() => setResults(null)} module="anova" />}
     </div>
   );
 }
