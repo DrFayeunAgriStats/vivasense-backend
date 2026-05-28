@@ -186,11 +186,13 @@ export function ResultsDisplay({
   const isPlantBreeding = effectiveDomain === "plant_breeding";
   const isAgronomy = effectiveDomain === "agronomy";
   const isGeneral = effectiveDomain === "general";
-  const showH2Column = isPlantBreeding || module === "genetic_parameters";
-  const showBreedingMetrics = isPlantBreeding;
-  const showClassColumn = isPlantBreeding;
+  const isAnovaModule = module === "anova";
+  const showH2Column = !isAnovaModule && (isPlantBreeding || module === "genetic_parameters");
+  const showBreedingMetrics = !isAnovaModule && isPlantBreeding;
+  const showClassColumn = !isAnovaModule && isPlantBreeding;
   const totalSummaryColumns =
     3 +
+    (isAnovaModule ? 1 : 0) +
     (showH2Column ? 1 : 0) +
     (showBreedingMetrics ? 3 : 0) +
     (showClassColumn ? 1 : 0);
@@ -206,6 +208,20 @@ export function ResultsDisplay({
     summary_table
       .map((row: SummaryTableRow) => results.trait_results[row.trait]?.analysis_result?.result?.genetic_parameters?.selection_intensity)
       .find((value: unknown): value is number => typeof value === "number") ?? DEFAULT_SELECTION_INTENSITY;
+
+  const subtitleLine = useMemo(() => {
+    if (!isAnovaModule) return null;
+    const firstResult = Object.values(results.trait_results)[0]?.analysis_result?.result;
+    if (firstResult?.design === "split_plot_rcbd") {
+      const nMP = firstResult?.main_plot_mean_separation?.genotype?.length;
+      const nSP = firstResult?.mean_separation?.genotype?.length;
+      if (nMP && nSP) {
+        return `${nMP} main-plot levels × ${nSP} subplot levels · ${dataset_summary.n_reps} reps`;
+      }
+    }
+    return `${dataset_summary.n_genotypes} treatments · ${dataset_summary.n_reps} reps`;
+  }, [isAnovaModule, results.trait_results, dataset_summary]);
+
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(false);
@@ -279,11 +295,15 @@ export function ResultsDisplay({
             {successCount} of {summary_table.length} trait
             {summary_table.length !== 1 ? "s" : ""} analysed successfully
             {" · "}
-            {dataset_summary.n_genotypes} {domainTerms.treatment_plural}
-            {dataset_summary.n_environments
-              ? ` · ${dataset_summary.n_environments} environments`
-              : ` · ${dataset_summary.n_reps} reps`}
-            </p>
+            {subtitleLine ?? (
+              <>
+                {dataset_summary.n_genotypes} {domainTerms.treatment_plural}
+                {dataset_summary.n_environments
+                  ? ` · ${dataset_summary.n_environments} environments`
+                  : ` · ${dataset_summary.n_reps} reps`}
+              </>
+            )}
+</p>
             <p className="mt-2 text-xs text-gray-500">
               Tables, interpretation blocks, and downloadable exports are formatted for scientific review and reporting.
             </p>
@@ -352,14 +372,21 @@ export function ResultsDisplay({
 
       <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-xs text-blue-700 leading-relaxed">
         <span className="font-semibold">How this works: </span>
-        VivaSense Genetics uses ANOVA internally to partition phenotypic variance into genetic,
-        environmental, and error components. Heritability (H²) and genetic advance (GAM) are
-        derived from those variance components. Mean separation (Tukey HSD) identifies which
-        genotypes perform significantly differently — expand any trait row below to see the full
-        statistical output.
-        <p className="mt-1 text-[11px] text-blue-700">
-          {selectionIntensityDisclosure(detectedSelectionIntensity)}
-        </p>
+        {isAnovaModule
+          ? "VivaSense ANOVA partitions total variation into treatment, block, and error components. Mean separation (Tukey HSD / Fisher LSD) identifies which treatment levels differ significantly — expand any trait row to see full output."
+          : (
+            <>
+              VivaSense Genetics uses ANOVA internally to partition phenotypic variance into genetic,
+              environmental, and error components. Heritability (H²) and genetic advance (GAM) are
+              derived from those variance components. Mean separation (Tukey HSD) identifies which
+              genotypes perform significantly differently — expand any trait row below to see the full
+              statistical output.
+              <p className="mt-1 text-[11px] text-blue-700">
+                {selectionIntensityDisclosure(detectedSelectionIntensity)}
+              </p>
+            </>
+          )
+        }
       </div>
 
       {/* Download error */}
@@ -398,9 +425,9 @@ export function ResultsDisplay({
         const { sections, warnings, notes } = buildReportPreview(results);
         return (
           <WordExportPreviewModal
-            moduleName="ANOVA & Genetic Parameters"
+            moduleName={isAnovaModule ? "ANOVA" : "ANOVA & Genetic Parameters"}
             reportTitle="Multi-Trait Genetics Report"
-            datasetSummary={`${dataset_summary.n_genotypes} genotypes · ${dataset_summary.n_traits} traits · ${dataset_summary.mode} environment`}
+            datasetSummary={`${dataset_summary.n_genotypes} ${isAnovaModule ? "treatments" : "genotypes"} · ${dataset_summary.n_traits} traits · ${dataset_summary.mode} environment`}
             sections={sections}
             warnings={warnings}
             notes={notes}
@@ -420,11 +447,17 @@ export function ResultsDisplay({
               <tr>
                 <Th>Trait</Th>
                 <Th>Mean</Th>
-                {showH2Column && <Th>{isPlantBreeding ? domainTerms.h2_label : "Repeatability"}</Th>}
-                {showBreedingMetrics && <Th>{domainTerms.gcv_label}</Th>}
-                {showBreedingMetrics && <Th>{domainTerms.pcv_label}</Th>}
-                {showBreedingMetrics && <Th>{domainTerms.gam_label}</Th>}
-                {showClassColumn && <Th>Class</Th>}
+                {isAnovaModule ? (
+                  <Th>CV %</Th>
+                ) : (
+                  <>
+                    {showH2Column && <Th>{isPlantBreeding ? domainTerms.h2_label : "Repeatability"}</Th>}
+                    {showBreedingMetrics && <Th>{domainTerms.gcv_label}</Th>}
+                    {showBreedingMetrics && <Th>{domainTerms.pcv_label}</Th>}
+                    {showBreedingMetrics && <Th>{domainTerms.gam_label}</Th>}
+                    {showClassColumn && <Th>Class</Th>}
+                  </>
+                )}
                 <Th>Details</Th>
               </tr>
             </thead>
@@ -441,6 +474,7 @@ export function ResultsDisplay({
                   showBreedingMetrics={showBreedingMetrics}
                   showClassColumn={showClassColumn}
                   totalColumns={totalSummaryColumns}
+                  module={module}
                 />
               ))}
             </tbody>
@@ -455,7 +489,7 @@ export function ResultsDisplay({
         </div>
 
         {/* Conditional variance components output */}
-        {isPlantBreeding ? (
+        {isPlantBreeding && !isAnovaModule ? (
           <BreedingSummaryPanel summary={(results as unknown as { breeding_summary?: string }).breeding_summary ?? ""} />
         ) : (
           <ManagementRecommendationsPanel
@@ -542,6 +576,7 @@ function SummaryRow({
   showBreedingMetrics,
   showClassColumn,
   totalColumns,
+  module,
 }: {
   row: SummaryTableRow;
   isEven: boolean;
@@ -552,9 +587,20 @@ function SummaryRow({
   showBreedingMetrics: boolean;
   showClassColumn: boolean;
   totalColumns: number;
+  module?: string;
 }) {
   const [expanded, setExpanded] = useState(isFirst);
   const bg = isEven ? "bg-white" : "bg-gray-50/50";
+  const isAnovaRow = module === "anova";
+
+  const cvPercent = isAnovaRow
+    ? (() => {
+        const ds = (traitResult?.analysis_result?.result as unknown as Record<string, unknown> | undefined)
+          ?.descriptive_stats as Record<string, unknown> | null | undefined;
+        const v = ds?.cv_percent;
+        return typeof v === "number" ? v : null;
+      })()
+    : null;
 
   // Show first sentence of interpretation as a hint below the trait name when collapsed
   const interpHint = (() => {
@@ -590,18 +636,24 @@ function SummaryRow({
           )}
         </td>
         <Td>{fmtSafeFixed(row.grand_mean, 2)}</Td>
-        {showH2Column && (
-          <Td>
-            <HeritabilityCell h2={row.h2} />
-          </Td>
-        )}
-        {showBreedingMetrics && <Td>{fmtSafeFixed(row.gcv, 1)}</Td>}
-        {showBreedingMetrics && <Td>{fmtSafeFixed(row.pcv, 1)}</Td>}
-        {showBreedingMetrics && <Td>{fmtSafeFixed(row.gam_percent, 1)}</Td>}
-        {showClassColumn && (
-          <td className="px-4 py-3">
-            <ClassBadge cls={row.gam_class} />
-          </td>
+        {isAnovaRow ? (
+          <Td>{cvPercent != null ? `${cvPercent.toFixed(1)}%` : "—"}</Td>
+        ) : (
+          <>
+            {showH2Column && (
+              <Td>
+                <HeritabilityCell h2={row.h2} />
+              </Td>
+            )}
+            {showBreedingMetrics && <Td>{fmtSafeFixed(row.gcv, 1)}</Td>}
+            {showBreedingMetrics && <Td>{fmtSafeFixed(row.pcv, 1)}</Td>}
+            {showBreedingMetrics && <Td>{fmtSafeFixed(row.gam_percent, 1)}</Td>}
+            {showClassColumn && (
+              <td className="px-4 py-3">
+                <ClassBadge cls={row.gam_class} />
+              </td>
+            )}
+          </>
         )}
         <td className="px-4 py-3">
           {hasDetails && (
@@ -618,7 +670,7 @@ function SummaryRow({
       {expanded && traitResult && (
         <tr className={bg}>
           <td colSpan={totalColumns} className="px-6 pb-5 pt-1">
-            <TraitDetails traitResult={traitResult} traitName={row.trait} domainTerms={domainTerms} />
+            <TraitDetails traitResult={traitResult} traitName={row.trait} domainTerms={domainTerms} module={module} />
           </td>
         </tr>
       )}
@@ -708,15 +760,18 @@ function TraitDetails({
   traitResult,
   traitName,
   domainTerms,
+  module,
 }: {
   traitResult: TraitResult;
   traitName: string;
   domainTerms: ReturnType<typeof getDomainTerms>;
+  module?: string;
 }) {
   const [showAnovaDetails, setShowAnovaDetails] = useState(true);
   const [showAcademic, setShowAcademic] = useState(false);
   const [showProModal, setShowProModal] = useState(false);
   const isPro = getVivaSenseMode() === "pro";
+  const isAnovaModule = module === "anova";
 
   const ar = traitResult.analysis_result;
   const result = ar?.result;
@@ -798,6 +853,7 @@ function TraitDetails({
               ms={result.mean_separation}
               domainTerms={domainTerms}
               factorLabel={isSplitPlot ? spLabel : undefined}
+              module={module}
             />
           </div>
         ) : (
@@ -816,6 +872,7 @@ function TraitDetails({
               ms={result.main_plot_mean_separation}
               domainTerms={domainTerms}
               factorLabel={mpLabel}
+              module={module}
             />
           </div>
         )}
@@ -837,10 +894,10 @@ function TraitDetails({
         <AssumptionTestsPanel tests={assumptionTests} />
       )}
 
-      {/* ── SECTION: Genetic Parameters ────────────────────────────────────── */}
+      {/* ── SECTION: Variance Parameters ───────────────────────────────────── */}
       {result?.variance_components && (
         <div className="space-y-2">
-          <SubSectionLabel>{domainTerms.variance_module}</SubSectionLabel>
+          <SubSectionLabel>{isAnovaModule ? "Experimental Parameters" : domainTerms.variance_module}</SubSectionLabel>
           <div className="grid gap-2 sm:grid-cols-3">
             {Object.entries(result.variance_components)
               .filter(([, v]) => typeof v === "number" && v !== null)
@@ -1164,14 +1221,18 @@ function MeanSeparationSection({
   ms,
   domainTerms,
   factorLabel,
+  module,
 }: {
   ms: MeanSeparation;
   domainTerms: ReturnType<typeof getDomainTerms>;
   factorLabel?: string;
+  module?: string;
 }) {
-  // Identify the top group letter for selection guidance
+  const isAnovaModule = module === "anova";
+  // Identify the top group letter for row highlighting
   const topGroup = ms.group[0] ?? "a";
-  const columnHeader = factorLabel ?? domainTerms.treatment;
+  const columnHeader = factorLabel
+    ?? (isAnovaModule ? (ms.treatment_label ?? "Treatment") : domainTerms.treatment);
 
   return (
     <div className="space-y-2">
@@ -1216,12 +1277,10 @@ function MeanSeparationSection({
           </tbody>
         </table>
       </div>
-      {/* Selection guidance */}
+      {/* Statistical significance note */}
       <div className="rounded-md bg-emerald-50 border border-emerald-100 px-3 py-2 text-xs text-emerald-800">
-        <span className="font-semibold">{ms.test} (α = {ms.alpha}) — </span>
-        {domainTerms.treatments} sharing the same letter are <em>not</em> significantly different.
-        {" "}{domainTerms.treatments} in group <strong className="font-mono">&apos;{topGroup}&apos;</strong> are
-        the top performers — considered a {domainTerms.top_performer}.
+        {factorLabel ?? domainTerms.treatments} sharing the same letter are{" "}
+        <em>not</em> significantly different at α&nbsp;=&nbsp;{ms.alpha} ({ms.test}).
       </div>
     </div>
   );
