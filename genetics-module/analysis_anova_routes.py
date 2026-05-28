@@ -108,20 +108,18 @@ def _cv_tier_narrative(cv: Optional[float], domain: str = "general") -> Optional
     cv_val = _sanitize_cv_percent(cv)
     if cv_val is None:
         return None
+    if cv_val < 1:
+        return "Residual variability was extremely low relative to the trait mean. Verify raw data consistency and experimental realism."
     if cv_val < 10:
-        base = "Residual variability was relatively low, suggesting high experimental precision within the scope of this design."
+        return "Residual variability was relatively low, suggesting high experimental precision within the scope of this design."
     elif cv_val < 20:
         from domain_guard import is_plant_breeding_domain
-        base = (
+        return (
             "Experimental variability appeared acceptable for genotype comparison under the evaluated conditions."
             if is_plant_breeding_domain(domain)
             else "Experimental variability appeared acceptable for treatment comparison under the evaluated conditions."
         )
-    else:
-        base = "Residual variability was comparatively high, and findings should therefore be interpreted cautiously."
-    if cv_val < 1:
-        base += " Residual variability was extremely low relative to the trait mean. Verify raw data consistency and experimental realism."
-    return base
+    return "Residual variability was comparatively high, and findings should therefore be interpreted cautiously."
 
 
 def compute_cv_from_anova(
@@ -206,7 +204,7 @@ def _generate_split_plot_interpretation(
             f"The overall grand mean for {trait} across all treatment combinations "
             f"was {summary['grand_mean']:.2f}."
         )
-    sections.append(("Overview", " ".join(overview)))
+    sections.append(("Split-Plot Design Overview", " ".join(overview)))
 
     # ── 2. Statistical Model ────────────────────────────────────────────────────
     model_desc = [

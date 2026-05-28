@@ -410,9 +410,8 @@ def test_breeding_cv_precision_narrative_uses_governed_language():
         domain="plant_breeding",
     )
     lowered = interpretation.lower()
-    assert "residual variability was relatively low" in lowered
-    assert "experimental precision within the scope of this design" in lowered
     assert "residual variability was extremely low relative to the trait mean" in lowered
+    assert "verify raw data consistency" in lowered
 
 
 def test_breeding_export_governance_scan_flags_single_env_forbidden_phrases():

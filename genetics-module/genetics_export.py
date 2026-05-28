@@ -189,19 +189,17 @@ def _cv_precision_narrative(cv_percent: Optional[float], domain: Optional[str] =
     cv_val = _clean_cv_percent(cv_percent)
     if cv_val is None:
         return ""
+    if cv_val < 1:
+        return "Residual variability was extremely low relative to the trait mean. Verify raw data consistency and experimental realism."
     if cv_val < 10:
-        base = "Residual variability was relatively low, suggesting high experimental precision within the scope of this design."
+        return "Residual variability was relatively low, suggesting high experimental precision within the scope of this design."
     elif cv_val < 20:
-        base = (
+        return (
             "Experimental variability appeared acceptable for treatment comparison under the evaluated conditions."
             if not is_plant_breeding_domain(domain)
             else "Experimental variability appeared acceptable for genotype comparison under the evaluated conditions."
         )
-    else:
-        base = "Residual variability was comparatively high, and findings should therefore be interpreted cautiously."
-    if cv_val < 1:
-        base += " Residual variability was extremely low relative to the trait mean. Verify raw data consistency and experimental realism."
-    return base
+    return "Residual variability was comparatively high, and findings should therefore be interpreted cautiously."
 
 
 def _find_breeding_governance_hits(text: str, analysis_type: Optional[str]) -> List[str]:

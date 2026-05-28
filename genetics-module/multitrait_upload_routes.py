@@ -1083,6 +1083,21 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                         if factor_col:
                             int_sep["factor_label"] = factor_col
 
+                if (request.design_type == "split_plot_rcbd"
+                        and isinstance(r_result, dict)):
+                    at = r_result.get("anova_table")
+                    if at and isinstance(at.get("source"), list):
+                        main_col = request.main_plot_column or "main_plot"
+                        sub_col = request.sub_plot_column or "sub_plot"
+                        _sp_lmap = {
+                            "main_plot":          main_col,
+                            "sub_plot":           sub_col,
+                            "main_plot:sub_plot": f"{main_col}×{sub_col}",
+                        }
+                        at["source"] = [
+                            _sp_lmap.get(s.strip(), s) for s in at["source"]
+                        ]
+
                 # Attach selection intensity label for reporting
                 if "result" in result_dict and "genetic_parameters" in result_dict["result"]:
                     result_dict["result"]["genetic_parameters"]["selection_intensity_label"] = intensity["label"]

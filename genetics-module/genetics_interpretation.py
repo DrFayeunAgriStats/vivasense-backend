@@ -37,19 +37,17 @@ def _cv_precision_narrative(cv_percent: Optional[float], domain: str = "plant_br
     except (TypeError, ValueError):
         return ""
 
+    if cv_val < 1:
+        return "Residual variability was extremely low relative to the trait mean. Verify raw data consistency and experimental realism."
     if cv_val < 10:
-        base = "Residual variability was relatively low, suggesting high experimental precision within the scope of this design."
+        return "Residual variability was relatively low, suggesting high experimental precision within the scope of this design."
     elif cv_val < 20:
-        base = (
+        return (
             "Experimental variability appeared acceptable for genotype comparison under the evaluated conditions."
             if is_plant_breeding_domain(domain)
             else "Experimental variability appeared acceptable for treatment comparison under the evaluated conditions."
         )
-    else:
-        base = "Residual variability was comparatively high, and findings should therefore be interpreted cautiously."
-    if cv_val < 1:
-        base += " Residual variability was extremely low relative to the trait mean. Verify raw data consistency and experimental realism."
-    return base
+    return "Residual variability was comparatively high, and findings should therefore be interpreted cautiously."
 
 
 def build_breeding_synthesis(trait_results: list[dict], analysis_type: Optional[str] = None) -> str:
