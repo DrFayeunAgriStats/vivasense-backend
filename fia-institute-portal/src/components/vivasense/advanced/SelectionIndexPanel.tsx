@@ -264,7 +264,7 @@ export function SelectionIndexPanel({ datasetContext }: Props) {
             <SummaryCard label="Selection accuracy" value={fmt(result.selection_accuracy, 3)} accent="emerald" />
             <SummaryCard label="Total merit" value={fmt(result.total_merit, 3)} />
             <SummaryCard label="# Selected" value={result.n_selected ?? selectedSet.size ?? "—"} />
-            <SummaryCard label="Top genotype" value={result.top_genotype ?? (result.rankings?.[0]?.genotype ?? "—")} />
+            <SummaryCard label="Top entry" value={result.top_genotype ?? (result.rankings?.[0]?.genotype ?? "—")} />
           </div>
 
           {indexWeightsData.length > 0 && (

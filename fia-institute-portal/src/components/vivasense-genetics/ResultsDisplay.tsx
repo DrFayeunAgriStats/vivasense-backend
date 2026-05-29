@@ -511,12 +511,12 @@ export function ResultsDisplay({
           <ManagementRecommendationsPanel
             rows={summary_table}
             traitResults={results.trait_results}
-            treatmentLabel={domainTerms.treatment}
+            treatmentLabel={isAnovaModule ? "Treatment" : domainTerms.treatment}
           />
         )}
 
-        {/* Legend for Plant Breeding only */}
-        {isPlantBreeding && (
+        {/* Legend for Plant Breeding only — not shown for ANOVA module */}
+        {isPlantBreeding && !isAnovaModule && (
           <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-500">
             <span className="font-medium text-gray-600">{domainTerms.h2_label} class:</span>
             <span className="flex items-center gap-1">
@@ -847,8 +847,8 @@ function TraitDetails({
               isSplitPlot
                 ? <SplitPlotResults
                     anovaTable={result.anova_table}
-                    cvMainPlot={(result as unknown as Record<string, number>).cv_main_plot_pct}
-                    cvSubPlot={(result as unknown as Record<string, number>).cv_sub_plot_pct}
+                    cvMainPlot={(result.variance_components as Record<string, unknown>)?.cv_A as number | undefined}
+                    cvSubPlot={(result.variance_components as Record<string, unknown>)?.cv_B as number | undefined}
                   />
                 : <AnovaTableSection at={result.anova_table} />
             )}
