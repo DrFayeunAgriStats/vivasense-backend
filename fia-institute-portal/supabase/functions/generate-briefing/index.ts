@@ -126,12 +126,28 @@ serve(async (req) => {
       );
     }
 
-    // Fetch student profile
-    const { data: profile } = await supabaseService
-      .from("profiles")
-      .select("full_name, academic_track, discipline, current_research_stage, thesis_title")
-      .eq("id", user.id)
-      .single();
+    // Fetch student profile and reading log stats in parallel
+    const [profileRes, rlRes] = await Promise.all([
+      supabaseService
+        .from("profiles")
+        .select("full_name, academic_track, discipline, current_research_stage, thesis_title")
+        .eq("id", user.id)
+        .single(),
+      supabaseService
+        .from("reading_log")
+        .select("id, answer_completed, title, year")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(50),
+    ]);
+    const profile = profileRes.data;
+    const rlRows  = (rlRes.data || []) as Array<Record<string, unknown>>;
+    const rlTotal    = rlRows.length;
+    const rlAnswered = rlRows.filter((r) => r.answer_completed).length;
+    const rlRecent   = rlRows[0];
+    const readingStats = rlTotal > 0
+      ? `Reading record: ${rlTotal} paper${rlTotal !== 1 ? "s" : ""} logged, ${rlAnswered} with completed answers. Most recently logged: "${rlRecent?.title || "unknown"}" (${rlRecent?.year || "n/a"}).`
+      : null;
 
     const studentName = (profile as Record<string, unknown>)?.full_name as string || "The student";
     const track = ((profile as Record<string, unknown>)?.academic_track as string || "").replace(/_/g, " ");
@@ -163,7 +179,7 @@ Current Research Stage: ${stageLabel}
 Thesis / Project Title: ${thesisTitle}
 AI Session Mode: ${modeLabel}
 Session Date: ${today}
-Number of student exchanges: ${userMsgCount}
+Number of student exchanges: ${userMsgCount}${readingStats ? `\n${readingStats}` : ""}
 
 SESSION TRANSCRIPT:
 ${transcript}

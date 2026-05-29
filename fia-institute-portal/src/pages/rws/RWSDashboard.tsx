@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { ReadingLogSection } from "@/components/rws/ReadingLogSection";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -562,6 +563,11 @@ export default function RWSDashboard() {
             ))}
           </div>
         </div>
+
+        {/* ── Reading Log ──────────────────────────────────────────────────── */}
+        {user && (
+          <ReadingLogSection userId={user.id} profile={profile} />
+        )}
 
         {/* ── Supervisor Briefings ─────────────────────────────────────────── */}
         <div>

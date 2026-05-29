@@ -136,6 +136,34 @@ serve(async (req) => {
 
     const trimmedMessages = messages.slice(-50);
 
+    // Fetch reading log context for authenticated users
+    // Uses the user-scoped client — RLS ensures only the user's own rows are returned
+    let readingLogContext = "";
+    if (userId) {
+      try {
+        const { data: rlEntries } = await supabase
+          .from("reading_log")
+          .select("title, year, relevance_note, student_answers")
+          .eq("answer_completed", true)
+          .order("created_at", { ascending: false })
+          .limit(5);
+
+        if (rlEntries && rlEntries.length > 0) {
+          const lines = (rlEntries as Array<Record<string, unknown>>).map((e) => {
+            const answers = Array.isArray(e.student_answers) ? e.student_answers as string[] : [];
+            const q3Connection = ((answers[2] || "") as string)
+              .replace(/\n/g, " ")
+              .substring(0, 120);
+            return `- "${e.title}" (${e.year}) — Why it matters: ${e.relevance_note} — Student's connection to their work: ${q3Connection}`;
+          });
+          readingLogContext =
+            "\n\nStudent reading record (last 5 answered papers):\n" + lines.join("\n");
+        }
+      } catch {
+        // Non-fatal — proceed without reading log context if fetch fails
+      }
+    }
+
     let enrichedSystem = systemPrompt;
     if (context) {
       enrichedSystem += `\n\nStudent Context:\n`;
@@ -145,6 +173,9 @@ serve(async (req) => {
       if (context.title) enrichedSystem += `- Research Title: ${context.title}\n`;
       if (context.analysis_type) enrichedSystem += `- Analysis Type: ${context.analysis_type}\n`;
       if (context.data_summary) enrichedSystem += `- Data Summary: ${context.data_summary}\n`;
+    }
+    if (readingLogContext) {
+      enrichedSystem += readingLogContext;
     }
 
     let convId = conversation_id;
