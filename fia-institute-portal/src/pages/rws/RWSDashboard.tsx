@@ -234,7 +234,7 @@ export default function RWSDashboard() {
   const progressPct = currentStageIdx >= 0 ? Math.round(((currentStageIdx + 1) / ROADMAP.length) * 100) : 10;
 
   let nextAction = NEXT_ACTIONS[0];
-  if (profile.diagnostic_score !== null && profile.diagnostic_score !== undefined) {
+  if (profile.diagnostic_level !== null && profile.diagnostic_level !== undefined) {
     const stageAction = NEXT_ACTIONS.find((a) => a.condition === profile.current_research_stage);
     nextAction = stageAction || { condition: "default", label: "Open Research Writing Mentor", description: "Continue your research journey", href: "/thesis-mentor" };
   }
