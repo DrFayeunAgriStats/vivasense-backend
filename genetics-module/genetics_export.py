@@ -1202,6 +1202,99 @@ def _add_anova_section(doc: Document, at: AnovaTable, domain: str = "plant_breed
 
 
 # ============================================================================
+# SECTION: KEY FINDINGS (split-plot and factorial)
+# ============================================================================
+
+def _add_key_findings(
+    doc: "Document",
+    result: "GeneticsResult",
+    trait_name: str,
+    mp_label: Optional[str] = None,
+    sp_label: Optional[str] = None,
+) -> None:
+    """One-paragraph summary of two-factor ANOVA outcomes for split-plot or factorial designs."""
+    at = result.anova_table
+    if at is None:
+        return
+
+    # p-value lookup by source label (handles remapped labels like "Irrigation")
+    pval: Dict[str, float] = {}
+    if hasattr(at, "source") and hasattr(at, "p_value"):
+        for s, p in zip(at.source, at.p_value):
+            if s is not None and p is not None:
+                try:
+                    pval[str(s).strip()] = float(p)
+                except (TypeError, ValueError):
+                    pass
+
+    main_col = mp_label or "main-plot factor"
+    sub_col  = sp_label or "subplot factor"
+    int_key  = f"{main_col}×{sub_col}"
+
+    def _lookup(primary: str, *fallbacks: str) -> Optional[float]:
+        for k in (primary,) + fallbacks:
+            if k in pval:
+                return pval[k]
+        return None
+
+    def _fmt_p(p: Optional[float]) -> Optional[str]:
+        if p is None:
+            return None
+        return "p < 0.001" if p < 0.001 else f"p = {p:.4f}"
+
+    def _sig(p: Optional[float]) -> str:
+        return "significantly" if (p is not None and p < 0.05) else "non-significantly"
+
+    mp_p   = _lookup(main_col, "main_plot")
+    sp_p   = _lookup(sub_col,  "sub_plot")
+    int_p  = _lookup(int_key,  "main_plot:sub_plot", "sub_plot:main_plot")
+
+    mp_p_str  = _fmt_p(mp_p)
+    sp_p_str  = _fmt_p(sp_p)
+    int_p_str = _fmt_p(int_p)
+
+    parts: List[str] = []
+    if mp_p_str:
+        parts.append(f"{main_col} {_sig(mp_p)} affected {trait_name} ({mp_p_str}).")
+    if sp_p_str:
+        parts.append(f"{sub_col} {_sig(sp_p)} affected {trait_name} ({sp_p_str}).")
+    if int_p_str:
+        int_significant = int_p is not None and int_p < 0.05
+        int_desc = "significant" if int_significant else "non-significant"
+        tail = (
+            f", indicating that {sub_col} response depended on {main_col} level."
+            if int_significant else "."
+        )
+        parts.append(
+            f"A {int_desc} {main_col} × {sub_col} interaction was detected ({int_p_str}){tail}"
+        )
+
+    # Highest treatment-combination mean from interaction_means
+    int_means = getattr(result, "interaction_means", None)
+    if isinstance(int_means, dict):
+        try:
+            cell = int_means.get("cell_means", {})
+            tv   = cell.get("trait_value") if isinstance(cell, dict) else None
+            mps  = cell.get("main_plot")   if isinstance(cell, dict) else None
+            sps  = cell.get("sub_plot")    if isinstance(cell, dict) else None
+            if tv and mps and sps and len(tv) == len(mps) == len(sps):
+                max_idx = max(range(len(tv)), key=lambda i: float(tv[i]))
+                combo   = f"{mps[max_idx]} × {sps[max_idx]}"
+                max_val = float(tv[max_idx])
+                parts.append(
+                    f"The highest treatment-combination mean was {combo} ({max_val:.2f})."
+                )
+        except Exception:
+            pass
+
+    if not parts:
+        return
+
+    _add_heading(doc, "Key Findings", level=2)
+    _add_body(doc, " ".join(parts))
+
+
+# ============================================================================
 # SECTION: MEAN SEPARATION (per trait)
 # ============================================================================
 
@@ -2197,6 +2290,10 @@ def _add_trait_section(
         _add_body(doc, "ANOVA table not available for this trait.", italic=True)
     doc.add_paragraph()
 
+    if _is_split_plot_ts or getattr(result, "mean_separation_b", None) is not None:
+        _add_key_findings(doc, result, trait_name, mp_label=_mp_label_ts, sp_label=_sp_label_ts)
+        doc.add_paragraph()
+
     if result.mean_separation:
         _add_mean_separation_section(
             doc, trait_name, result.mean_separation,
@@ -2457,8 +2554,18 @@ def export_traits_to_word(
                 _add_body(doc, "ANOVA table not available for this trait.", italic=True)
             doc.add_paragraph()
 
-            # ── 4. Mean Separation (table + bar chart) ────────────────────────
+            # ── 3b. Key Findings (split-plot / factorial only) ────────────────
             _is_split_plot = getattr(result, "main_plot_mean_separation", None) is not None
+            _is_factorial   = getattr(result, "mean_separation_b", None) is not None
+            if _is_split_plot or _is_factorial:
+                _mp_lbl_kf = getattr(
+                    getattr(result, "main_plot_mean_separation", None), "treatment_label", None
+                )
+                _sp_lbl_kf = getattr(result.mean_separation, "treatment_label", None) if result.mean_separation else None
+                _add_key_findings(doc, result, trait, mp_label=_mp_lbl_kf, sp_label=_sp_lbl_kf)
+                doc.add_paragraph()
+
+            # ── 4. Mean Separation (table + bar chart) ────────────────────────
             from analysis_anova_routes import is_interaction_significant
             _int_sig = bool(is_interaction_significant(result.anova_table)) if result.anova_table else False
             if result.mean_separation:

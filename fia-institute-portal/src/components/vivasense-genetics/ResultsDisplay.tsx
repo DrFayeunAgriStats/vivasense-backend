@@ -68,6 +68,15 @@ const VARIANCE_SYMBOL_MAP: Record<string, { symbol: string; label: string }> = {
   gam: { symbol: "GAM%", label: "Genetic advance as % of mean" },
 };
 
+const SPLIT_PLOT_VARIANCE_PARAMS: Array<{ key: string; label: string; fmt: number }> = [
+  { key: "sigma2_whole_plot_error", label: "Whole-plot variance (σ²)", fmt: 4 },
+  { key: "sigma2_subplot_error",    label: "Subplot variance (σ²)",    fmt: 4 },
+  { key: "cv_A",                    label: "CV-A — Main-plot (%)",     fmt: 2 },
+  { key: "cv_B",                    label: "CV-B — Subplot (%)",       fmt: 2 },
+  { key: "n_main_plot_levels",      label: "Main-plot levels",         fmt: 0 },
+  { key: "n_sub_plot_levels",       label: "Subplot levels",           fmt: 0 },
+];
+
 function fmtP(p: number | null): { text: string; stars: string } {
   if (p === null) return { text: "—", stars: "" };
   if (p < 0.001) return { text: p.toExponential(2), stars: "***" };
@@ -212,14 +221,21 @@ export function ResultsDisplay({
   const subtitleLine = useMemo(() => {
     if (!isAnovaModule) return null;
     const firstResult = Object.values(results.trait_results)[0]?.analysis_result?.result;
-    if (firstResult?.design === "split_plot_rcbd") {
-      const nMP = firstResult?.main_plot_mean_separation?.genotype?.length;
-      const nSP = firstResult?.mean_separation?.genotype?.length;
-      if (nMP && nSP) {
-        return `${nMP} main-plot levels × ${nSP} subplot levels · ${dataset_summary.n_reps} reps`;
+    const isSP = firstResult?.design === "split_plot_rcbd" || firstResult?.main_plot_mean_separation != null;
+    if (isSP) {
+      const vc = firstResult?.variance_components as Record<string, unknown> | null | undefined;
+      const nMain =
+        (typeof vc?.n_main_plot_levels === "number" ? vc.n_main_plot_levels as number : undefined) ??
+        firstResult?.main_plot_mean_separation?.genotype?.length;
+      const nSub =
+        (typeof vc?.n_sub_plot_levels === "number" ? vc.n_sub_plot_levels as number : undefined) ??
+        firstResult?.mean_separation?.genotype?.length;
+      if (nMain && nSub) {
+        return `${nMain} main-plot levels × ${nSub} subplot levels · ${dataset_summary.n_reps} reps`;
       }
+      return `split-plot design · ${dataset_summary.n_reps} reps`;
     }
-    return `${dataset_summary.n_genotypes} treatments · ${dataset_summary.n_reps} reps`;
+    return `${dataset_summary.n_genotypes ?? ""} treatments · ${dataset_summary.n_reps} reps`.trim();
   }, [isAnovaModule, results.trait_results, dataset_summary]);
 
   const [downloading, setDownloading] = useState(false);
@@ -781,7 +797,7 @@ function TraitDetails({
   );
   const interpretationSections = buildScientificInterpretationSections(ar?.interpretation ?? "");
 
-  const isSplitPlot = result?.design === "split_plot_rcbd";
+  const isSplitPlot = result?.design === "split_plot_rcbd" || result?.main_plot_mean_separation != null;
   const interactionMeans = result?.interaction_means ?? null;
   const assumptionTests = (result?.assumption_tests ?? null) as Record<string, { statistic: number; p_value: number; conclusion: string }> | null;
 
@@ -898,29 +914,49 @@ function TraitDetails({
       {result?.variance_components && (
         <div className="space-y-2">
           <SubSectionLabel>{isAnovaModule ? "Experimental Parameters" : domainTerms.variance_module}</SubSectionLabel>
-          <div className="grid gap-2 sm:grid-cols-3">
-            {Object.entries(result.variance_components)
-              .filter(([, v]) => typeof v === "number" && v !== null)
-              .map(([key, val]) => (
-                <div key={key} className="rounded-lg bg-gray-100 px-3 py-2">
-                  {(() => {
-                    const mapped = VARIANCE_SYMBOL_MAP[key] ?? {
-                      symbol: key,
-                      label: key.replace(/_/g, " "),
-                    };
+          {isSplitPlot ? (
+            <div className="rounded-lg border border-gray-200 overflow-hidden text-sm">
+              <table className="w-full">
+                <tbody>
+                  {SPLIT_PLOT_VARIANCE_PARAMS.map(({ key, label, fmt }) => {
+                    const val = (result.variance_components as Record<string, unknown>)[key];
+                    if (typeof val !== "number") return null;
+                    const display = fmt === 0 ? Math.round(val).toString() : val.toFixed(fmt);
                     return (
-                      <p className="text-sm text-gray-800 leading-relaxed">
-                        <strong>{mapped.symbol}</strong>
-                        <span className="mx-1 text-gray-500">|</span>
-                        <span>{mapped.label}</span>
-                        <span className="mx-1 text-gray-500">|</span>
-                        <span className="font-semibold">{fmtSafeFixed(val, 4)}</span>
-                      </p>
+                      <tr key={key} className="border-b border-gray-100 last:border-0 even:bg-gray-50">
+                        <td className="px-3 py-1.5 text-gray-600">{label}</td>
+                        <td className="px-3 py-1.5 font-semibold text-gray-800 text-right font-mono">{display}</td>
+                      </tr>
                     );
-                  })()}
-                </div>
-              ))}
-          </div>
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="grid gap-2 sm:grid-cols-3">
+              {Object.entries(result.variance_components)
+                .filter(([, v]) => typeof v === "number" && v !== null)
+                .map(([key, val]) => (
+                  <div key={key} className="rounded-lg bg-gray-100 px-3 py-2">
+                    {(() => {
+                      const mapped = VARIANCE_SYMBOL_MAP[key] ?? {
+                        symbol: key,
+                        label: key.replace(/_/g, " "),
+                      };
+                      return (
+                        <p className="text-sm text-gray-800 leading-relaxed">
+                          <strong>{mapped.symbol}</strong>
+                          <span className="mx-1 text-gray-500">|</span>
+                          <span>{mapped.label}</span>
+                          <span className="mx-1 text-gray-500">|</span>
+                          <span className="font-semibold">{fmtSafeFixed(val, 4)}</span>
+                        </p>
+                      );
+                    })()}
+                  </div>
+                ))}
+            </div>
+          )}
         </div>
       )}
 
