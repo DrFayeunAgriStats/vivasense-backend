@@ -36,6 +36,8 @@ import VivaSenseWorkspace from "./pages/VivaSenseWorkspace";
 import VivaSenseAnova from "./pages/VivaSenseAnova";
 import VivaSenseGenetics from "./pages/VivaSenseGenetics";
 import VivaSenseAdvanced from "./pages/VivaSenseAdvanced";
+import VivaSenseAuth from "./pages/VivaSenseAuth";
+import VivaSenseAuthGuard from "@/components/vivasense/VivaSenseAuthGuard";
 import PrivacyPolicy from "@/pages/PrivacyPolicy";
 
 import CSP409PlantGenetics from "./pages/CSP409PlantGenetics";
@@ -116,9 +118,10 @@ function AppRoutes() {
         <Route path="/agro-services" element={<Navigate to="/services/agro-services" replace />} />
         <Route path="/vivasense" element={<VivaSenseProvider><VivaSense /></VivaSenseProvider>} />
         <Route path="/vivasense/workspace" element={<Navigate to="/vivasense/genetics" replace />} />
-        <Route path="/vivasense/anova" element={<VivaSenseAnova />} />
-        <Route path="/vivasense/genetics" element={<VivaSenseGenetics />} />
-        <Route path="/vivasense/advanced" element={<VivaSenseAdvanced />} />
+        <Route path="/vivasense/auth" element={<VivaSenseAuth />} />
+        <Route path="/vivasense/anova" element={<VivaSenseAuthGuard><VivaSenseAnova /></VivaSenseAuthGuard>} />
+        <Route path="/vivasense/genetics" element={<VivaSenseAuthGuard><VivaSenseGenetics /></VivaSenseAuthGuard>} />
+        <Route path="/vivasense/advanced" element={<VivaSenseAuthGuard><VivaSenseAdvanced /></VivaSenseAuthGuard>} />
         <Route path="/privacy" element={<PrivacyPolicy />} />
         <Route path="/tutor" element={<Navigate to="/adap-tutor" replace />} />
         <Route path="/plant-genetics-mastery-tutor" element={<CSP409PlantGenetics />} />
