@@ -25,6 +25,7 @@ import {
 } from "@/services/geneticsUploadApi";
 import { ProFeatureError } from "@/services/featureMode";
 import { ProFeatureModal } from "./ProFeatureModal";
+import { logAnalysis } from "../../lib/analysisLogger";
 
 type Step = "idle" | "confirming" | "analyzing" | "results";
 
@@ -216,8 +217,6 @@ export function MultiTraitUpload({ onDatasetReady, onFileStatus }: MultiTraitUpl
           availableTraitColumns: p.detected_columns.traits || [],
           mode: p.mode_suggestion,
           datasetToken: p.dataset_token,
-          columns: p.column_names,
-          availableColumns: p.column_names,
         });
       } catch (err) {
         console.warn("[MultiTraitUpload] Failed to generate initial dataset context", err);
@@ -244,6 +243,7 @@ export function MultiTraitUpload({ onDatasetReady, onFileStatus }: MultiTraitUpl
     setResearchDomain(mapping.research_domain);
     setStep("analyzing");
     setAnalysisError(null);
+    const startedAt = Date.now();
 
     try {
       const base64_content = await fileToBase64(file);
@@ -299,8 +299,6 @@ export function MultiTraitUpload({ onDatasetReady, onFileStatus }: MultiTraitUpl
         mode: mapping.mode,
         datasetToken: finalToken,
         research_domain: mapping.research_domain,
-        columns: preview?.column_names ?? [],
-        availableColumns: preview?.column_names ?? [],
       };
       console.log(
         "[MultiTraitUpload] sharing dataset context — datasetToken:",
@@ -323,9 +321,29 @@ export function MultiTraitUpload({ onDatasetReady, onFileStatus }: MultiTraitUpl
         selection_intensity: mapping.selectionIntensity,
         research_domain: mapping.research_domain,
       });
+
+      await logAnalysis({
+        analysis_type: "genetics",
+        design_type: (mapping.design_type || mapping.mode) as "crd" | "rcbd" | "factorial" | "split_plot_rcbd" | "met" | undefined,
+        trait_count: mapping.selectedTraits.length,
+        dataset_rows: preview?.n_rows,
+        success: true,
+        duration_ms: Date.now() - startedAt,
+      });
+
       setResults(data);
       setStep("results");
     } catch (err) {
+      await logAnalysis({
+        analysis_type: "genetics",
+        design_type: (mapping.design_type || mapping.mode) as "crd" | "rcbd" | "factorial" | "split_plot_rcbd" | "met" | undefined,
+        trait_count: mapping.selectedTraits.length,
+        dataset_rows: preview?.n_rows,
+        success: false,
+        error_message: err instanceof Error ? err.message : "Analysis failed",
+        duration_ms: Date.now() - startedAt,
+      });
+
       if (err instanceof ProFeatureError) {
         setShowProModal(true);
         setAnalysisError(null);

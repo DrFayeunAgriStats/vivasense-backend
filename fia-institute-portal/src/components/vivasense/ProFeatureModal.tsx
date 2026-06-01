@@ -1,9 +1,9 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Sparkles, Lock, KeyRound, CalendarCheck } from "lucide-react";
-import { useState } from "react";
-import { Input } from "@/components/ui/input";
-import { setVivaSenseMode, type ProGuardInfo } from "@/lib/vivasenseGating";
+import { Sparkles, Lock, CalendarCheck } from "lucide-react";
+import { type ProGuardInfo } from "@/lib/vivasenseGating";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 interface ProFeatureModalProps {
   open: boolean;
@@ -11,24 +11,30 @@ interface ProFeatureModalProps {
   guard: ProGuardInfo | null;
 }
 
-const PRO_CODES = ["FIA-PRO-2026", "VIVASENSE-PRO"];
+const PRO_INTEREST_URL = "https://wa.me/2349022158026?text=Hi%20Dr.%20Fayeun%2C%20I'm%20interested%20in%20VivaSense%20Pro.%20Please%20send%20payment%20details.";
 
 export function ProFeatureModal({ open, onOpenChange, guard }: ProFeatureModalProps) {
-  const [showCodeInput, setShowCodeInput] = useState(false);
-  const [code, setCode] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
   if (!guard) return null;
 
-  const submitCode = () => {
-    if (PRO_CODES.includes(code.trim().toUpperCase())) {
-      setVivaSenseMode("pro");
-      setError(null);
-      setCode("");
-      setShowCodeInput(false);
+  const recordInterest = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) {
+        toast.error("Please sign in first.");
+        return;
+      }
+
+      await supabase.from("profiles").update({
+        pro_interest: true,
+        pro_interest_date: new Date().toISOString(),
+      }).eq("id", session.user.id);
+
+      toast.success("Thanks! We will contact you within 24 hours.");
       onOpenChange(false);
-    } else {
-      setError("Invalid Pro code. Contact FIA for access.");
+      window.open(PRO_INTEREST_URL, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      console.error("Failed to record Pro interest:", err);
+      toast.error("Could not save your interest. Please try again.");
     }
   };
 
@@ -43,7 +49,7 @@ export function ProFeatureModal({ open, onOpenChange, guard }: ProFeatureModalPr
             {guard.title}
           </DialogTitle>
           <DialogDescription className="text-center pt-2">
-            Upgrade to access advanced analysis features. {guard.description}
+            Get access to advanced analysis features. {guard.description}
           </DialogDescription>
         </DialogHeader>
 
@@ -56,32 +62,36 @@ export function ProFeatureModal({ open, onOpenChange, guard }: ProFeatureModalPr
           </p>
         </div>
 
-        {showCodeInput && (
-          <div className="space-y-2">
-            <Input
-              placeholder="Enter Pro access code"
-              value={code}
-              onChange={(e) => { setCode(e.target.value); setError(null); }}
-              onKeyDown={(e) => e.key === "Enter" && submitCode()}
-              autoFocus
-            />
-            {error && <p className="text-xs text-destructive">{error}</p>}
-            <Button onClick={submitCode} className="w-full" style={{ backgroundColor: "#1B5E20" }}>
-              Activate Pro
-            </Button>
-          </div>
-        )}
+        <div className="rounded-xl bg-green-50 p-5 text-sm text-green-800">
+          <p className="font-semibold text-green-900 mb-3">✨ Pro includes:</p>
+          <ul className="space-y-2">
+            <li>✓ Download publication-ready Word reports</li>
+            <li>✓ AI-powered academic interpretation</li>
+            <li>✓ Genetic parameters (H², GCV, PCV, GAM)</li>
+            <li>✓ Multi-trait batch analysis</li>
+            <li>✓ G×E interaction & stability analysis</li>
+            <li>✓ Trait relationships & heatmaps</li>
+            <li>✓ Priority email support</li>
+          </ul>
+        </div>
+
+        <div className="text-center">
+          <p className="text-3xl font-bold text-gray-900">
+            ₦5,000<span className="text-base font-normal text-gray-500">/month</span>
+          </p>
+          <p className="text-sm text-gray-500 mt-1">Special rate for African researchers</p>
+        </div>
 
         <DialogFooter className="sm:justify-center gap-2 flex-col sm:flex-row">
-          <Button variant="outline" onClick={() => setShowCodeInput((s) => !s)} className="gap-1.5">
-            <KeyRound className="h-4 w-4" />
-            Enter Pro Code
-          </Button>
-          <Button variant="outline" asChild className="gap-1.5">
-            <a href="mailto:hello@fieldtoinsightacademy.com.ng?subject=VivaSense%20Data%20Clinic%20Booking">
-              <CalendarCheck className="h-4 w-4" />
-              Book Data Clinic
+          <Button variant="outline" className="gap-1.5" asChild>
+            <a href={PRO_INTEREST_URL} target="_blank" rel="noopener noreferrer" onClick={() => void recordInterest()}>
+              <Sparkles className="h-4 w-4" />
+              Get Pro via WhatsApp
             </a>
+          </Button>
+          <Button variant="outline" onClick={() => void recordInterest()} className="gap-1.5">
+            <CalendarCheck className="h-4 w-4" />
+            I'm Interested — Contact Me Later
           </Button>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             Close

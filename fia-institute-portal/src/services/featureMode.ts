@@ -2,7 +2,6 @@ export type VivaSenseMode = "free" | "pro";
 
 export const VIVASENSE_MODE_KEY = "vivasense_mode";
 export const VIVASENSE_DEFAULT_MODE: VivaSenseMode = "free";
-export const VIVASENSE_PILOT_ACCESS_CODE = "VIVASENSE-PILOT-2026";
 export const BOOK_DATA_CLINIC_URL = "https://wa.me/2349022158026?text=Hello%20VivaSense%2C%20I%20want%20to%20book%20a%20Data%20Clinic%20session.";
 export const VIVASENSE_MODE_CHANGED_EVENT = "vivasense-mode-changed";
 
@@ -31,13 +30,8 @@ export function setVivaSenseMode(mode: VivaSenseMode): void {
 }
 
 export function activateProWithCode(code: string): boolean {
-  const normalized = code.trim();
-  if (normalized !== VIVASENSE_PILOT_ACCESS_CODE) {
-    return false;
-  }
-  // Temporary pilot access code - replace with secure backend validation before public launch.
-  setVivaSenseMode("pro");
-  return true;
+  void code;
+  return false;
 }
 
 export function isProMode(): boolean {

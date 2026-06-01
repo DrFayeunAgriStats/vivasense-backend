@@ -14,6 +14,11 @@ interface Profile {
   diagnostic_level: string | null;
   diagnostic_score: number | null;
   onboarding_completed: boolean;
+  plan: string | null;
+  plan_activated_at: string | null;
+  plan_notes: string | null;
+  pro_interest: boolean | null;
+  pro_interest_date: string | null;
 }
 
 interface AuthContextType {

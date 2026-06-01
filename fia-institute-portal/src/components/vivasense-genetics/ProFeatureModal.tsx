@@ -1,8 +1,7 @@
-import React, { useMemo, useState } from "react";
-import {
-  activateProWithCode,
-  BOOK_DATA_CLINIC_URL,
-} from "@/services/featureMode";
+import React from "react";
+import { BOOK_DATA_CLINIC_URL } from "@/services/featureMode";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 interface ProFeatureModalProps {
   open: boolean;
@@ -36,24 +35,31 @@ export function ProFeatureModal({
   onActivated,
   featureName,
 }: ProFeatureModalProps) {
-  const [accessCode, setAccessCode] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<"compare" | "code">("compare");
-
-  const canSubmit = useMemo(() => accessCode.trim().length > 0, [accessCode]);
+  const PRO_INTEREST_URL = "https://wa.me/2349022158026?text=Hi%20Dr.%20Fayeun%2C%20I'm%20interested%20in%20VivaSense%20Pro.%20Please%20send%20payment%20details.";
 
   if (!open) return null;
 
-  const handleActivate = () => {
-    const ok = activateProWithCode(accessCode);
-    if (!ok) {
-      setError("Invalid access code. Please try again.");
-      return;
+  const recordInterest = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) {
+        toast.error("Please sign in first.");
+        return;
+      }
+
+      await supabase.from("profiles").update({
+        pro_interest: true,
+        pro_interest_date: new Date().toISOString(),
+      }).eq("id", session.user.id);
+
+      toast.success("Thanks! We will contact you within 24 hours.");
+      onActivated?.();
+      onClose();
+      window.open(PRO_INTEREST_URL, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      console.error("Failed to record Pro interest:", err);
+      toast.error("Could not save your interest. Please try again.");
     }
-    setAccessCode("");
-    setError(null);
-    onActivated?.();
-    onClose();
   };
 
   const handleBookClinic = () => {
@@ -92,93 +98,54 @@ export function ProFeatureModal({
           </button>
         </div>
 
-        {/* ── Tab bar ── */}
-        <div className="flex border-b border-gray-100 bg-white">
-          {(["compare", "code"] as const).map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setTab(t)}
-              className={[
-                "flex-1 py-3 text-sm font-medium transition-colors",
-                tab === t
-                  ? "border-b-2 border-emerald-600 text-emerald-700"
-                  : "text-gray-500 hover:text-gray-700",
-              ].join(" ")}
-            >
-              {t === "compare" ? "Free vs Pro" : "Enter Access Code"}
-            </button>
-          ))}
+        <div className="border-b border-gray-100 bg-white px-6 py-4 text-center">
+          <p className="text-sm text-gray-600 leading-relaxed">
+            Get access to advanced analysis features. {featureName ? <span className="font-semibold">{featureName}</span> : null}
+          </p>
         </div>
 
         {/* ── Body ── */}
         <div className="p-6">
-          {tab === "compare" && (
-            <div className="grid sm:grid-cols-2 gap-4">
-              {/* Free column */}
-              <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-                <span className="inline-block rounded-full bg-gray-200 px-2.5 py-0.5 text-xs font-semibold text-gray-600 mb-3">
-                  Free
-                </span>
-                <ul className="space-y-2">
-                  {FREE_FEATURES.map((f) => (
-                    <li key={f} className="flex items-start gap-2 text-sm text-gray-600">
-                      <span className="mt-0.5 shrink-0 text-gray-400">✓</span>
-                      {f}
-                    </li>
-                  ))}
-                </ul>
-              </div>
+          <div className="text-center">
+            <div className="text-5xl mb-3">⭐</div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">Unlock VivaSense Pro</h2>
+            <p className="text-gray-600 text-sm">Get access to advanced features</p>
+          </div>
 
-              {/* Pro column */}
-              <div className="rounded-xl border border-emerald-300 bg-gradient-to-b from-emerald-50 to-white p-4 relative overflow-hidden">
-                <div className="absolute -right-4 -top-4 h-20 w-20 rounded-full bg-emerald-200/50 blur-xl pointer-events-none" />
-                <div className="flex items-center gap-2 mb-3">
-                  <span className="inline-block rounded-full bg-emerald-700 px-2.5 py-0.5 text-xs font-semibold text-white">Pro</span>
-                  <span className="text-xs text-emerald-600">Everything in Free, plus:</span>
-                </div>
-                <ul className="space-y-2">
-                  {PRO_FEATURES.map((f) => (
-                    <li key={f} className="flex items-start gap-2 text-sm font-medium text-emerald-800">
-                      <span className="mt-0.5 shrink-0 text-emerald-500">✓</span>
-                      {f}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          )}
+          <div className="bg-green-50 rounded-xl p-5 my-6">
+            <p className="font-semibold text-green-900 mb-3">✨ Pro includes:</p>
+            <ul className="space-y-2 text-sm text-green-800">
+              {PRO_FEATURES.map((feature) => (
+                <li key={feature}>✓ {feature}</li>
+              ))}
+              <li>✓ Priority email support</li>
+            </ul>
+          </div>
 
-          {tab === "code" && (
-            <div className="max-w-sm mx-auto space-y-4">
-              <p className="text-sm text-gray-600 leading-relaxed">
-                Enter your VivaSense Pro access code to unlock all features immediately.
-              </p>
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-gray-500">
-                  Pro Access Code
-                </label>
-                <input
-                  type="text"
-                  value={accessCode}
-                  onChange={(e) => { setAccessCode(e.target.value); setError(null); }}
-                  onKeyDown={(e) => e.key === "Enter" && canSubmit && handleActivate()}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-200 transition-shadow"
-                  placeholder="VIVASENSE-PILOT-2026"
-                  autoFocus
-                />
-                {error && <p className="mt-1.5 text-xs text-red-600">{error}</p>}
-              </div>
-              <button
-                type="button"
-                onClick={handleActivate}
-                disabled={!canSubmit}
-                className="w-full rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-              >
-                Activate Pro
-              </button>
-            </div>
-          )}
+          <div className="text-center mb-6">
+            <p className="text-3xl font-bold text-gray-900">
+              ₦5,000<span className="text-base font-normal text-gray-500">/month</span>
+            </p>
+            <p className="text-sm text-gray-500 mt-1">Special rate for African researchers</p>
+          </div>
+
+          <a
+            href={PRO_INTEREST_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => void recordInterest()}
+            className="block w-full bg-green-700 text-white text-center py-3 rounded-xl font-semibold hover:bg-green-800"
+          >
+            💬 Get Pro via WhatsApp
+          </a>
+
+          <button
+            type="button"
+            onClick={() => void recordInterest()}
+            className="w-full mt-3 border border-gray-300 text-gray-700 py-3 rounded-xl font-medium hover:bg-gray-50"
+          >
+            I'm Interested — Contact Me Later
+          </button>
         </div>
 
         {/* ── Footer ── */}
@@ -194,15 +161,6 @@ export function ProFeatureModal({
             >
               Book Data Clinic
             </button>
-            {tab === "compare" && (
-              <button
-                type="button"
-                onClick={() => setTab("code")}
-                className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800 transition-colors"
-              >
-                I have a code →
-              </button>
-            )}
           </div>
         </div>
       </div>

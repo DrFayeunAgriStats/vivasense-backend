@@ -953,8 +953,13 @@ export type Database = {
           id: string
           institution: string | null
           onboarding_completed: boolean
+          plan: string | null
+          plan_activated_at: string | null
+          plan_notes: string | null
           portfolio_share_token: string | null
           portfolio_visibility: string
+          pro_interest: boolean | null
+          pro_interest_date: string | null
           updated_at: string
         }
         Insert: {
@@ -974,8 +979,13 @@ export type Database = {
           id: string
           institution?: string | null
           onboarding_completed?: boolean
+          plan?: string | null
+          plan_activated_at?: string | null
+          plan_notes?: string | null
           portfolio_share_token?: string | null
           portfolio_visibility?: string
+          pro_interest?: boolean | null
+          pro_interest_date?: string | null
           updated_at?: string
         }
         Update: {
@@ -995,9 +1005,53 @@ export type Database = {
           id?: string
           institution?: string | null
           onboarding_completed?: boolean
+          plan?: string | null
+          plan_activated_at?: string | null
+          plan_notes?: string | null
           portfolio_share_token?: string | null
           portfolio_visibility?: string
+          pro_interest?: boolean | null
+          pro_interest_date?: string | null
           updated_at?: string
+        }
+        Relationships: []
+      }
+      analysis_logs: {
+        Row: {
+          analysis_type: string
+          created_at: string
+          dataset_rows: number | null
+          design_type: string | null
+          duration_ms: number | null
+          error_message: string | null
+          id: string
+          success: boolean
+          trait_count: number | null
+          user_id: string
+        }
+        Insert: {
+          analysis_type: string
+          created_at?: string
+          dataset_rows?: number | null
+          design_type?: string | null
+          duration_ms?: number | null
+          error_message?: string | null
+          id?: string
+          success?: boolean
+          trait_count?: number | null
+          user_id: string
+        }
+        Update: {
+          analysis_type?: string
+          created_at?: string
+          dataset_rows?: number | null
+          design_type?: string | null
+          duration_ms?: number | null
+          error_message?: string | null
+          id?: string
+          success?: boolean
+          trait_count?: number | null
+          user_id?: string
         }
         Relationships: []
       }
