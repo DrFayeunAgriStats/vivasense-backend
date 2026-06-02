@@ -1,7 +1,7 @@
 // VivaSense Service Worker
 // Handles offline support, caching, and background sync
 
-const CACHE_NAME = 'vivasense-v2';
+const CACHE_NAME = 'vivasense-v3';
 const STATIC_ASSETS = [
   '/',
   '/index.html'

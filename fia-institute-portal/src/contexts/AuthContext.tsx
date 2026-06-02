@@ -19,6 +19,11 @@ interface Profile {
   plan_notes: string | null;
   pro_interest: boolean | null;
   pro_interest_date: string | null;
+  platform_source: string | null;
+  position: string | null;
+  research_area: string | null;
+  registration_source: string | null;
+  terms_accepted_at: string | null;
 }
 
 interface AuthContextType {

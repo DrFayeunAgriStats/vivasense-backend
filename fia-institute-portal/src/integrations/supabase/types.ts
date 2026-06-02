@@ -958,8 +958,13 @@ export type Database = {
           plan_notes: string | null
           portfolio_share_token: string | null
           portfolio_visibility: string
+          platform_source: string | null
+          position: string | null
           pro_interest: boolean | null
           pro_interest_date: string | null
+          registration_source: string | null
+          research_area: string | null
+          terms_accepted_at: string | null
           updated_at: string
         }
         Insert: {
@@ -984,8 +989,13 @@ export type Database = {
           plan_notes?: string | null
           portfolio_share_token?: string | null
           portfolio_visibility?: string
+          platform_source?: string | null
+          position?: string | null
           pro_interest?: boolean | null
           pro_interest_date?: string | null
+          registration_source?: string | null
+          research_area?: string | null
+          terms_accepted_at?: string | null
           updated_at?: string
         }
         Update: {
@@ -1010,8 +1020,13 @@ export type Database = {
           plan_notes?: string | null
           portfolio_share_token?: string | null
           portfolio_visibility?: string
+          platform_source?: string | null
+          position?: string | null
           pro_interest?: boolean | null
           pro_interest_date?: string | null
+          registration_source?: string | null
+          research_area?: string | null
+          terms_accepted_at?: string | null
           updated_at?: string
         }
         Relationships: []

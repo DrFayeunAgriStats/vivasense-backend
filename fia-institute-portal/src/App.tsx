@@ -37,6 +37,7 @@ import VivaSenseAnova from "./pages/VivaSenseAnova";
 import VivaSenseGenetics from "./pages/VivaSenseGenetics";
 import VivaSenseAdvanced from "./pages/VivaSenseAdvanced";
 import VivaSenseAuth from "./pages/VivaSenseAuth";
+import VivaSenseCompleteProfile from "./pages/VivaSenseCompleteProfile";
 import VivaSenseAuthGuard from "@/components/vivasense/VivaSenseAuthGuard";
 import PrivacyPolicy from "@/pages/PrivacyPolicy";
 
@@ -119,6 +120,7 @@ function AppRoutes() {
         <Route path="/vivasense" element={<VivaSenseProvider><VivaSense /></VivaSenseProvider>} />
         <Route path="/vivasense/workspace" element={<Navigate to="/vivasense/genetics" replace />} />
         <Route path="/vivasense/auth" element={<VivaSenseAuth />} />
+        <Route path="/vivasense/complete-profile" element={<VivaSenseCompleteProfile />} />
         <Route path="/vivasense/anova" element={<VivaSenseAuthGuard><VivaSenseAnova /></VivaSenseAuthGuard>} />
         <Route path="/vivasense/genetics" element={<VivaSenseAuthGuard><VivaSenseGenetics /></VivaSenseAuthGuard>} />
         <Route path="/vivasense/advanced" element={<VivaSenseAuthGuard><VivaSenseAdvanced /></VivaSenseAuthGuard>} />

@@ -7,43 +7,82 @@ interface VivaSenseAuthGuardProps {
   children: React.ReactNode;
 }
 
+// Admin users retain access to these paths even if platform_source = 'legacy'
+const ADMIN_BYPASS_PREFIXES = ["/admin/", "/vivasense-dashboard"];
+
+function isAdminBypassPath(pathname: string): boolean {
+  return ADMIN_BYPASS_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}
+
 export default function VivaSenseAuthGuard({ children }: VivaSenseAuthGuardProps) {
   const [loading, setLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
-  const syncPlan = async (userId: string) => {
-    const { data, error } = await supabase
+  const redirectToAuth = () => {
+    navigate(
+      `/vivasense/auth?next=${encodeURIComponent(location.pathname)}`,
+      { replace: true }
+    );
+  };
+
+  const redirectToCompleteProfile = () => {
+    navigate(
+      `/vivasense/complete-profile?next=${encodeURIComponent(location.pathname)}`,
+      { replace: true }
+    );
+  };
+
+  const checkAccess = async (userId: string) => {
+    // Fetch profile and plan in a single query
+    const { data: profile, error } = await supabase
       .from("profiles")
-      .select("plan")
+      .select("plan, platform_source")
       .eq("id", userId)
-      .single();
+      .maybeSingle();
 
     if (error) {
-      console.error("Failed to load VivaSense plan:", error);
-      setVivaSenseMode("free");
-      return;
+      console.error("VivaSenseAuthGuard: profile fetch error", error);
     }
 
-    if (data?.plan === "pro" || data?.plan === "institutional") {
+    // Sync Pro/Free mode
+    if (profile?.plan === "pro" || profile?.plan === "institutional") {
       setVivaSenseMode("pro");
     } else {
       setVivaSenseMode("free");
     }
+
+    // Admin bypass: fetch roles only when profile is missing or legacy
+    if (!profile || profile.platform_source !== "vivasense") {
+      const { data: roleRows } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", userId);
+
+      const isAdmin = roleRows?.some((r) => r.role === "admin") ?? false;
+
+      if (isAdmin && isAdminBypassPath(location.pathname)) {
+        // Admin accessing an admin path — let them through regardless of profile state
+        setAuthenticated(true);
+        return;
+      }
+
+      // Non-admin, or admin on a normal VivaSense route: require completion
+      redirectToCompleteProfile();
+      return;
+    }
+
+    setAuthenticated(true);
   };
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (session?.user) {
-        await syncPlan(session.user.id);
-        setAuthenticated(true);
+        await checkAccess(session.user.id);
       } else {
         setVivaSenseMode("free");
-        navigate(
-          `/vivasense/auth?next=${encodeURIComponent(location.pathname)}`,
-          { replace: true }
-        );
+        redirectToAuth();
       }
       setLoading(false);
     });
@@ -52,18 +91,17 @@ export default function VivaSenseAuthGuard({ children }: VivaSenseAuthGuardProps
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user) {
-        void syncPlan(session.user.id).then(() => setAuthenticated(true));
+        void checkAccess(session.user.id).then(() => setLoading(false));
       } else {
         setVivaSenseMode("free");
-        navigate(
-          `/vivasense/auth?next=${encodeURIComponent(location.pathname)}`,
-          { replace: true }
-        );
+        setAuthenticated(false);
+        redirectToAuth();
       }
     });
 
     return () => subscription.unsubscribe();
-  }, [navigate, location.pathname]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname]);
 
   if (loading) {
     return (
