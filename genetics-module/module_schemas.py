@@ -151,6 +151,9 @@ class GenotypeDescriptiveStats(BaseModel):
     min: Optional[float] = None
     max: Optional[float] = None
     n_reps: Optional[int] = None
+    median: Optional[float] = None
+    q1: Optional[float] = None
+    q3: Optional[float] = None
 
 
 class SummaryStats(BaseModel):
@@ -183,6 +186,8 @@ class AnovaTraitResult(BaseModel):
     environment_significant: Optional[bool] = None
     gxe_significant: Optional[bool] = None
     assumption_tests: Optional[Dict[str, Any]] = None
+    residuals: Optional[List[float]] = None
+    fitted_values: Optional[List[float]] = None
     mean_separation: Optional[MeanSeparation] = None
     main_plot_mean_separation: Optional[MeanSeparation] = None  # split-plot main-plot level
     interaction_means: Optional[Dict[str, Any]] = None  # split-plot A×B cell means for interaction plot

@@ -66,27 +66,45 @@ def compute_descriptive_stats(series: pd.Series) -> Dict[str, Any]:
 
 def compute_per_genotype_stats(
     df: pd.DataFrame, trait_column: str, genotype_column: str
-) -> List[Dict[str, Optional[float]]]:
-    """Compute per-genotype descriptive statistics for the requested trait."""
+) -> List[Dict[str, Optional[Any]]]:
+    """Compute per-genotype descriptive statistics for the requested trait, including boxplot quantiles."""
     if genotype_column not in df.columns:
         return []
     grouped = df[[genotype_column, trait_column]].copy()
     grouped[trait_column] = pd.to_numeric(grouped[trait_column], errors="coerce")
-    stats: List[Dict[str, Optional[float]]] = []
+    stats: List[Dict[str, Optional[Any]]] = []
     for genotype, group in grouped.groupby(genotype_column, sort=True):
         clean = group[trait_column].dropna()
-        n = len(clean)
+        n = int(len(clean))
         if n == 0:
-            stats.append({"genotype": genotype, "mean": None, "sd": None, "cv_percent": None})
+            stats.append({
+                "genotype": genotype,
+                "mean": None,
+                "se": None,
+                "min": None,
+                "max": None,
+                "n_reps": None,
+                "median": None,
+                "q1": None,
+                "q3": None,
+            })
             continue
         mean_val = float(clean.mean())
-        sd_val, cv_percent = None, None
+        se_val = None
         if n >= 2:
-            variance = float(clean.var(ddof=1))
-            sd_val = float(variance ** 0.5)
-            if mean_val != 0:
-                cv_percent = float((sd_val / abs(mean_val)) * 100)
-        stats.append({"genotype": genotype, "mean": mean_val, "sd": sd_val, "cv_percent": cv_percent})
+            sd = float(clean.std(ddof=1))
+            se_val = float(sd / (n ** 0.5))
+        stats.append({
+            "genotype": genotype,
+            "mean": mean_val,
+            "se": se_val,
+            "min": float(clean.min()),
+            "max": float(clean.max()),
+            "n_reps": n,
+            "median": float(clean.median()),
+            "q1": float(clean.quantile(0.25)),
+            "q3": float(clean.quantile(0.75)),
+        })
     return stats
 
 

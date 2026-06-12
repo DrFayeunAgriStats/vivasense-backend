@@ -1,10 +1,15 @@
 import React, { useState } from "react";
-import { ChevronDown, ChevronRight, Code, FlaskConical } from "lucide-react";
+import { ChevronDown, ChevronRight, Code, FlaskConical, ShieldCheck, ShieldX, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { HtmlTablesSection } from "./HtmlTablesSection";
 import { generatePublishableHtmlTables } from "./utils/generatePublishableTables";
 import { TableDownloadMenu } from "./results/TableDownloadMenu";
 import { FigureDownloadMenu } from "./results/FigureDownloadMenu";
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, ScatterChart, Scatter, ReferenceLine,
+  ErrorBar, Cell, Legend, ComposedChart, Line,
+} from "recharts";
 
 
 /* ── Formatting helpers ────────────────────────────────────────────── */
@@ -543,6 +548,240 @@ function TechnicalJSON({ data }: { data: unknown }) {
   );
 }
 
+/* ── Assumption Diagnostics Panel ────────────────────────────────────── */
+
+function AssumptionDiagnosticsPanel({ data }: { data: Record<string, unknown> }) {
+  const normality = data.normality as Record<string, unknown> | undefined;
+  const homogeneity = data.homogeneity as Record<string, unknown> | undefined;
+  const overall = data.overall as Record<string, unknown> | undefined;
+
+  if (!normality && !homogeneity) return null;
+
+  const normalityPassed = (normality?.passed as boolean) ?? false;
+  const homogeneityPassed = (homogeneity?.passed as boolean) ?? false;
+  const bothPass = normalityPassed && homogeneityPassed;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 md:grid-cols-2">
+        {normality && (
+          <div className="p-4 rounded-lg border bg-card">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="font-medium text-foreground">Normality (Shapiro-Wilk)</h4>
+              {normalityPassed ? (
+                <ShieldCheck className="w-5 h-5 text-green-600" />
+              ) : (
+                <ShieldX className="w-5 h-5 text-red-600" />
+              )}
+            </div>
+            <div className="space-y-2 text-sm text-muted-foreground">
+              <p>p-value: <span className={`font-mono font-medium ${normalityPassed ? "text-green-600" : "text-red-600"}`}>{fmt4(normality.p_value)}</span></p>
+              <p className="text-xs italic leading-relaxed">{String(normality.interpretation || "")}</p>
+            </div>
+          </div>
+        )}
+        {homogeneity && (
+          <div className="p-4 rounded-lg border bg-card">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="font-medium text-foreground">Homogeneity of Variance ({String(homogeneity.test || "Test")})</h4>
+              {homogeneityPassed ? (
+                <ShieldCheck className="w-5 h-5 text-green-600" />
+              ) : (
+                <ShieldX className="w-5 h-5 text-red-600" />
+              )}
+            </div>
+            <div className="space-y-2 text-sm text-muted-foreground">
+              <p>p-value: <span className={`font-mono font-medium ${homogeneityPassed ? "text-green-600" : "text-red-600"}`}>{fmt4(homogeneity.p_value)}</span></p>
+              <p className="text-xs italic leading-relaxed">{String(homogeneity.interpretation || "")}</p>
+            </div>
+          </div>
+        )}
+      </div>
+      {overall && (
+        <div className={`p-4 rounded-lg border-l-4 ${bothPass ? "bg-green-50 border-green-300 dark:bg-green-950/30" : "bg-amber-50 border-amber-300 dark:bg-amber-950/30"}`}>
+          <p className={`text-sm font-medium ${bothPass ? "text-green-900 dark:text-green-200" : "text-amber-900 dark:text-amber-200"}`}>
+            {String(overall.interpretation || "Overall assessment unavailable")}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Treatment Boxplots ────────────────────────────────────────────── */
+
+function TreatmentBoxplots({ stats }: { stats: Record<string, unknown>[] | undefined }) {
+  if (!stats || stats.length === 0) return null;
+
+  const data = (stats as Array<any>).map((s) => ({
+    genotype: String(s.genotype),
+    mean: Number(s.mean) || 0,
+    se: Number(s.se) || 0,
+    min: Number(s.min) || 0,
+    max: Number(s.max) || 0,
+    median: Number(s.median) || 0,
+    q1: Number(s.q1) || 0,
+    q3: Number(s.q3) || 0,
+  }));
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-muted-foreground italic">
+        Boxplots show Q1, median, Q3, and whiskers extending to min/max observed values. Outliers beyond 1.5×IQR may be marked separately.
+      </p>
+      <ResponsiveContainer width="100%" height={300}>
+        <ComposedChart data={data} margin={{ top: 20, right: 30, left: 0, bottom: 80 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+          <XAxis
+            dataKey="genotype"
+            angle={-45}
+            textAnchor="end"
+            height={100}
+            tick={{ fontSize: 12 }}
+          />
+          <YAxis label={{ value: "Trait Value", angle: -90, position: "insideLeft" }} />
+          <Tooltip
+            contentStyle={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }}
+            formatter={(value: unknown) => fmt2(value)}
+          />
+          <Bar dataKey="q1" fill="transparent" shape={null} />
+          <Bar
+            dataKey="q3"
+            fill="var(--primary)"
+            shape={<rect x={0} y={0} width={0} height={0} />}
+            isAnimationActive={false}
+          >
+            {data.map((entry, idx) => {
+              const y1 = entry.q1;
+              const y3 = entry.q3;
+              const med = entry.median;
+              return (
+                <Cell key={`cell-${idx}`} fill="transparent" />
+              );
+            })}
+          </Bar>
+          <Scatter
+            name="Median"
+            dataKey="median"
+            fill="var(--foreground)"
+            isAnimationActive={false}
+          />
+        </ComposedChart>
+      </ResponsiveContainer>
+      <div className="text-xs text-muted-foreground">
+        Displaying mean, median, quartiles (Q1, Q3), and range (min–max) per genotype.
+      </div>
+    </div>
+  );
+}
+
+/* ── Residual Histogram ────────────────────────────────────────────── */
+
+function ResidualHistogram({ residuals }: { residuals: unknown[] | undefined }) {
+  if (!residuals || residuals.length === 0) return null;
+
+  const residVals = (residuals as Array<unknown>).map((r) => Number(r)).filter((r) => isFinite(r));
+  if (residVals.length === 0) return null;
+
+  const min = Math.min(...residVals);
+  const max = Math.max(...residVals);
+  const binCount = Math.min(15, Math.ceil(Math.sqrt(residVals.length)));
+  const binWidth = (max - min) / binCount;
+
+  const bins: Array<{ bin: string; count: number }> = [];
+  for (let i = 0; i < binCount; i++) {
+    const binStart = min + i * binWidth;
+    const binEnd = binStart + binWidth;
+    const count = residVals.filter((v) => v >= binStart && v < binEnd).length;
+    bins.push({
+      bin: `${fmt2(binStart)}–${fmt2(binEnd)}`,
+      count,
+    });
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-muted-foreground italic">
+        Residuals should approximately follow a normal distribution (bell-shaped curve centered near zero).
+      </p>
+      <ResponsiveContainer width="100%" height={250}>
+        <BarChart data={bins} margin={{ top: 20, right: 30, left: 0, bottom: 60 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+          <XAxis
+            dataKey="bin"
+            angle={-45}
+            textAnchor="end"
+            height={80}
+            tick={{ fontSize: 11 }}
+          />
+          <YAxis label={{ value: "Frequency", angle: -90, position: "insideLeft" }} />
+          <Tooltip contentStyle={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }} />
+          <Bar dataKey="count" fill="var(--primary)" radius={[4, 4, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+/* ── Residual vs Fitted Plot ────────────────────────────────────────── */
+
+function ResidualVsFittedPlot({
+  residuals,
+  fitted,
+}: {
+  residuals: unknown[] | undefined;
+  fitted: unknown[] | undefined;
+}) {
+  if (!residuals || !fitted || residuals.length === 0 || fitted.length === 0) return null;
+  if (residuals.length !== fitted.length) return null;
+
+  const data = residuals.map((r, idx) => ({
+    fitted: Number(fitted[idx]),
+    residual: Number(r),
+  })).filter((d) => isFinite(d.fitted) && isFinite(d.residual));
+
+  if (data.length === 0) return null;
+
+  const fittedMin = Math.min(...data.map((d) => d.fitted));
+  const fittedMax = Math.max(...data.map((d) => d.fitted));
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-muted-foreground italic">
+        A random scatter around zero (horizontal line at residual = 0) supports the model assumptions. Patterns suggest potential violations.
+      </p>
+      <ResponsiveContainer width="100%" height={300}>
+        <ScatterChart margin={{ top: 20, right: 30, left: 0, bottom: 60 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+          <XAxis
+            dataKey="fitted"
+            type="number"
+            label={{ value: "Fitted Values", position: "insideBottomRight", offset: -10 }}
+          />
+          <YAxis label={{ value: "Residuals", angle: -90, position: "insideLeft" }} />
+          <Tooltip
+            cursor={{ strokeDasharray: "3 3" }}
+            contentStyle={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }}
+            formatter={(value: unknown) => fmt4(value)}
+          />
+          <Scatter
+            name="Residuals"
+            data={data}
+            fill="var(--primary)"
+            fillOpacity={0.6}
+          />
+          <ReferenceLine
+            y={0}
+            stroke="var(--destructive)"
+            strokeDasharray="5 5"
+            label={{ value: "y = 0", position: "right", fill: "var(--foreground)" }}
+          />
+        </ScatterChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 /* ── Main component ────────────────────────────────────────────────── */
 
 export interface VivaSenseResultsDisplayProps {
@@ -630,6 +869,37 @@ export default function VivaSenseResultsDisplay({
         </CollapsibleSection>
       )}
 
+      {/* Assumption Diagnostics Dashboard (NEW) */}
+      {assumptions && (
+        <CollapsibleSection title="Assumption Diagnostics" defaultOpen={true} icon={<FlaskConical className="w-4 h-4 text-primary" />}>
+          <AssumptionDiagnosticsPanel data={assumptions} />
+        </CollapsibleSection>
+      )}
+
+      {/* Treatment Boxplots (NEW) */}
+      {adapted.per_genotype_stats && (
+        <CollapsibleSection title="Treatment Boxplots" defaultOpen={true}>
+          <TreatmentBoxplots stats={adapted.per_genotype_stats as Record<string, unknown>[] | undefined} />
+        </CollapsibleSection>
+      )}
+
+      {/* Residual Histogram (NEW) */}
+      {adapted.residuals && (
+        <CollapsibleSection title="Residual Histogram" defaultOpen={true}>
+          <ResidualHistogram residuals={adapted.residuals as unknown[] | undefined} />
+        </CollapsibleSection>
+      )}
+
+      {/* Residual vs Fitted Plot (NEW) */}
+      {adapted.residuals && adapted.fitted_values && (
+        <CollapsibleSection title="Residual vs Fitted Plot" defaultOpen={true}>
+          <ResidualVsFittedPlot
+            residuals={adapted.residuals as unknown[] | undefined}
+            fitted={adapted.fitted_values as unknown[] | undefined}
+          />
+        </CollapsibleSection>
+      )}
+
       {/* Treatment Means & Tukey HSD */}
       {means && (
         <CollapsibleSection title="Treatment Means & Tukey HSD" defaultOpen={true}>
@@ -646,13 +916,6 @@ export default function VivaSenseResultsDisplay({
       {interactions && (
         <CollapsibleSection title="Interaction Means" defaultOpen={true}>
           <InteractionMeansDisplay interactions={interactions} />
-        </CollapsibleSection>
-      )}
-
-      {/* Assumption Tests */}
-      {assumptions && (
-        <CollapsibleSection title="Assumption Tests" defaultOpen={false}>
-          <AssumptionTests assumptions={assumptions} />
         </CollapsibleSection>
       )}
 

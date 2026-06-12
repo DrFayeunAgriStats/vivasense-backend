@@ -495,13 +495,25 @@ compute_single_environment <- function(data, trait_name = "Trait",
 
   anova_table <- sanitize_anova_f_values(anova_table)
 
+  # ── Hoist Residuals and Fitted Values for Diagnostic Plots ─────────────────
+  resid_full <- tryCatch({
+    vec <- if (has_splitplot) residuals(model[["Error: Within"]]) else residuals(model)
+    as.numeric(vec[is.finite(vec)])
+  }, error = function(e) NULL)
+
+  fitted_full <- tryCatch({
+    as.numeric(fitted(model))
+  }, error = function(e) NULL)
+
   # ── Assumption Tests (Shapiro-Wilk + Levene/Bartlett) ───────────────────────
   assumption_tests_out <- tryCatch({
     # Split-plot: use within-stratum (Error B) residuals for Shapiro-Wilk
-    resid_vec <- tryCatch(
-      if (has_splitplot) residuals(model[["Error: Within"]]) else residuals(model),
-      error = function(e) residuals(model)
-    )
+    resid_vec <- if (!is.null(resid_full)) resid_full else {
+      tryCatch(
+        if (has_splitplot) residuals(model[["Error: Within"]]) else residuals(model),
+        error = function(e) residuals(model)
+      )
+    }
     resid_vec <- resid_vec[is.finite(resid_vec)]
 
     normality_result <- NULL
@@ -883,6 +895,8 @@ compute_single_environment <- function(data, trait_name = "Trait",
     main_plot_mean_separation  = if (has_splitplot) main_plot_mean_sep else NULL,
     interaction_means          = if (has_splitplot) interaction_means else NULL,
     assumption_tests           = assumption_tests_out,
+    residuals                  = resid_full,
+    fitted_values              = fitted_full,
     ms_genotype                = ms_genotype,
     ms_error                   = ms_error
   )

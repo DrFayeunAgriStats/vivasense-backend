@@ -110,6 +110,8 @@ class GeneticsResult(BaseModel):
     # can render them without schema changes each time the engine adds new fields.
     descriptive_stats: Optional[Dict[str, Any]] = None
     assumption_tests: Optional[Dict[str, Any]] = None
+    residuals: Optional[List[float]] = None
+    fitted_values: Optional[List[float]] = None
     breeding_implication: Optional[str] = None
 
     @field_validator("variance_components", "heritability", "genetic_parameters", mode="before")

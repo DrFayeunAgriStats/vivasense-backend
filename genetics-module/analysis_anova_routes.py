@@ -1259,6 +1259,8 @@ async def analysis_anova(request: ModuleRequest, http_request: Request):
                 environment_significant=environment_significant,
                 gxe_significant=gxe_significant,
                 assumption_tests=res.assumption_tests,
+                residuals=res.residuals,
+                fitted_values=res.fitted_values,
                 mean_separation=res.mean_separation,
                 main_plot_mean_separation=res.main_plot_mean_separation if is_sp else None,
                 interaction_means=res.interaction_means if is_sp and hasattr(res, 'interaction_means') else None,
