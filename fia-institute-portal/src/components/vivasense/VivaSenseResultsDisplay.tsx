@@ -616,63 +616,138 @@ function AssumptionDiagnosticsPanel({ data }: { data: Record<string, unknown> })
 function TreatmentBoxplots({ stats }: { stats: Record<string, unknown>[] | undefined }) {
   if (!stats || stats.length === 0) return null;
 
-  const data = (stats as Array<any>).map((s) => ({
+  const data = (stats as Array<any>).map((s, idx) => ({
+    index: idx,
     genotype: String(s.genotype),
-    mean: Number(s.mean) || 0,
-    se: Number(s.se) || 0,
-    min: Number(s.min) || 0,
-    max: Number(s.max) || 0,
-    median: Number(s.median) || 0,
-    q1: Number(s.q1) || 0,
-    q3: Number(s.q3) || 0,
+    mean: Number(s.mean) ?? 0,
+    se: Number(s.se) ?? 0,
+    min: Number(s.min) ?? 0,
+    max: Number(s.max) ?? 0,
+    median: Number(s.median) ?? 0,
+    q1: Number(s.q1) ?? 0,
+    q3: Number(s.q3) ?? 0,
+    n_reps: Number(s.n_reps) ?? 0,
   }));
+
+  // Compute y-axis range with padding
+  const allValues = data.flatMap(d => [d.min, d.q1, d.median, d.q3, d.max]);
+  const minVal = Math.min(...allValues);
+  const maxVal = Math.max(...allValues);
+  const padding = (maxVal - minVal) * 0.1;
+
+  // Custom SVG rendering for each box
+  const BoxplotShape = (props: any) => {
+    const { x, y, width, height, payload } = props;
+    if (!payload) return null;
+
+    const chartHeight = height;
+    const yMin = payload.min;
+    const yQ1 = payload.q1;
+    const yMedian = payload.median;
+    const yQ3 = payload.q3;
+    const yMax = payload.max;
+
+    // Convert data values to pixel coordinates (assume y-axis range is minVal to maxVal with padding)
+    const range = maxVal + padding - (minVal - padding);
+    const yToPixel = (val: number) => chartHeight - ((val - (minVal - padding)) / range) * chartHeight;
+
+    const boxX = x + width * 0.25;
+    const boxWidth = width * 0.5;
+
+    const yPixelMin = yToPixel(yMin);
+    const yPixelQ1 = yToPixel(yQ1);
+    const yPixelMedian = yToPixel(yMedian);
+    const yPixelQ3 = yToPixel(yQ3);
+    const yPixelMax = yToPixel(yMax);
+
+    return (
+      <g>
+        {/* Whisker lines (min to Q1, Q3 to max) */}
+        <line x1={x + width / 2} y1={yPixelMin} x2={x + width / 2} y2={yPixelQ1} stroke="var(--muted-foreground)" strokeWidth={1} />
+        <line x1={x + width / 2} y1={yPixelQ3} x2={x + width / 2} y2={yPixelMax} stroke="var(--muted-foreground)" strokeWidth={1} />
+
+        {/* Whisker caps (min and max) */}
+        <line x1={x + width * 0.4} y1={yPixelMin} x2={x + width * 0.6} y2={yPixelMin} stroke="var(--muted-foreground)" strokeWidth={1} />
+        <line x1={x + width * 0.4} y1={yPixelMax} x2={x + width * 0.6} y2={yPixelMax} stroke="var(--muted-foreground)" strokeWidth={1} />
+
+        {/* Box (Q1 to Q3) */}
+        <rect
+          x={boxX}
+          y={yPixelQ3}
+          width={boxWidth}
+          height={yPixelQ1 - yPixelQ3}
+          fill="rgba(59, 130, 246, 0.2)"
+          stroke="var(--primary)"
+          strokeWidth={1.5}
+        />
+
+        {/* Median line (bold) */}
+        <line
+          x1={boxX}
+          y1={yPixelMedian}
+          x2={boxX + boxWidth}
+          y2={yPixelMedian}
+          stroke="var(--foreground)"
+          strokeWidth={2.5}
+        />
+
+        {/* Mean as small diamond */}
+        <circle
+          cx={x + width / 2}
+          cy={yToPixel(payload.mean)}
+          r={2.5}
+          fill="var(--foreground)"
+          opacity={0.7}
+        />
+      </g>
+    );
+  };
 
   return (
     <div className="space-y-4">
       <p className="text-xs text-muted-foreground italic">
-        Boxplots show Q1, median, Q3, and whiskers extending to min/max observed values. Outliers beyond 1.5×IQR may be marked separately.
+        Box spans Q1 to Q3, median line shown in bold, whiskers extend to min/max, mean marked as dot.
       </p>
-      <ResponsiveContainer width="100%" height={300}>
-        <ComposedChart data={data} margin={{ top: 20, right: 30, left: 0, bottom: 80 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-          <XAxis
-            dataKey="genotype"
-            angle={-45}
-            textAnchor="end"
-            height={100}
-            tick={{ fontSize: 12 }}
-          />
-          <YAxis label={{ value: "Trait Value", angle: -90, position: "insideLeft" }} />
-          <Tooltip
-            contentStyle={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }}
-            formatter={(value: unknown) => fmt2(value)}
-          />
-          <Bar dataKey="q1" fill="transparent" shape={null} />
-          <Bar
-            dataKey="q3"
-            fill="var(--primary)"
-            shape={<rect x={0} y={0} width={0} height={0} />}
-            isAnimationActive={false}
-          >
-            {data.map((entry, idx) => {
-              const y1 = entry.q1;
-              const y3 = entry.q3;
-              const med = entry.median;
-              return (
-                <Cell key={`cell-${idx}`} fill="transparent" />
-              );
-            })}
-          </Bar>
-          <Scatter
-            name="Median"
-            dataKey="median"
-            fill="var(--foreground)"
-            isAnimationActive={false}
-          />
-        </ComposedChart>
-      </ResponsiveContainer>
+      <div className="w-full overflow-x-auto">
+        <ResponsiveContainer width={Math.max(600, data.length * 120)} height={350}>
+          <ComposedChart data={data} margin={{ top: 20, right: 30, left: 60, bottom: 100 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+            <XAxis
+              dataKey="genotype"
+              angle={-45}
+              textAnchor="end"
+              height={120}
+              tick={{ fontSize: 12 }}
+            />
+            <YAxis
+              domain={[minVal - padding, maxVal + padding]}
+              label={{ value: "Trait Value", angle: -90, position: "insideLeft" }}
+            />
+            <Tooltip
+              contentStyle={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }}
+              cursor={false}
+              content={({ active, payload }) => {
+                if (!active || !payload?.[0]) return null;
+                const d = payload[0].payload;
+                return (
+                  <div className="p-2 bg-card border border-border rounded text-xs">
+                    <p className="font-semibold">{d.genotype}</p>
+                    <p>Min: {fmt2(d.min)}</p>
+                    <p>Q1: {fmt2(d.q1)}</p>
+                    <p className="font-semibold">Median: {fmt2(d.median)}</p>
+                    <p>Q3: {fmt2(d.q3)}</p>
+                    <p>Max: {fmt2(d.max)}</p>
+                    <p className="text-muted-foreground">n = {d.n_reps ?? "—"}</p>
+                  </div>
+                );
+              }}
+            />
+            <Bar dataKey="index" shape={<BoxplotShape />} isAnimationActive={false} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
       <div className="text-xs text-muted-foreground">
-        Displaying mean, median, quartiles (Q1, Q3), and range (min–max) per genotype.
+        Five-number summary (min, Q1, median, Q3, max) per genotype with mean marked as dot.
       </div>
     </div>
   );
