@@ -32,6 +32,7 @@ import {
   Table2,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { AssumptionDiagnosticsDashboard } from "@/components/vivasense-genetics/AssumptionDiagnosticsDashboard";
 
 /* ─── Types ─── */
 type DesignType = "oneway" | "oneway_rcbd" | "twoway" | "rcbd_factorial";
@@ -528,6 +529,9 @@ export default function VivaSenseAnova() {
 
                 {/* SECTION 4: Table of Means with Tukey Letters */}
                 {tukey && <TukeyMeansCard data={tukey as Record<string, unknown>} designType={design as DesignType} />}
+
+                {/* SECTION 4B: Assumption Diagnostics Dashboard */}
+                <AssumptionDiagnosticsDashboard result={results as Record<string, unknown>} />
 
                 {/* SECTION 5: Post-hoc Pairwise Comparisons */}
                 {tukey && <PairwiseCard data={tukey as Record<string, unknown>} designType={design as DesignType} />}

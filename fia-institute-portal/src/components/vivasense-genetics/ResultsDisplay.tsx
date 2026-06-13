@@ -25,6 +25,7 @@ import {
   DEFAULT_SELECTION_INTENSITY,
   selectionIntensityDisclosure,
 } from "./selectionIntensity";
+import { AssumptionDiagnosticsDashboard } from "./AssumptionDiagnosticsDashboard";
 import { SplitPlotResults } from "./SplitPlotResults";
 import {
   LineChart,
@@ -904,6 +905,9 @@ function TraitDetails({
           <InteractionLinePlot data={interactionMeans} mpLabel={mpLabel} spLabel={spLabel} traitName={traitName} />
         </div>
       )}
+
+      {/* Assumption diagnostics dashboard */}
+      <AssumptionDiagnosticsDashboard traitResult={traitResult} />
 
       {/* Assumption diagnostics */}
       {assumptionTests && Object.keys(assumptionTests).length > 0 && (
