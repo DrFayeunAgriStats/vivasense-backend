@@ -40,6 +40,9 @@ type GenotypeStat = {
   n?: number | null;
 };
 
+type BoxplotTooltipDatum = GenotypeStat & { genotypeLabel?: string };
+type BoxplotTooltipItem = { payload?: BoxplotTooltipDatum };
+
 interface AssumptionDiagnosticsDashboardProps {
   traitResult?: TraitResult | null;
   result?: Record<string, unknown> | null;
@@ -124,7 +127,13 @@ function formatNumber(value: unknown, digits = 2): string {
   return parsed.toFixed(digits);
 }
 
-function CustomBoxPlotTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload?: GenotypeStat & { genotypeLabel?: string }> }> }) {
+function CustomBoxPlotTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: BoxplotTooltipItem[];
+}) {
   if (!active || !payload?.[0]?.payload) return null;
   const d = payload[0].payload;
 
