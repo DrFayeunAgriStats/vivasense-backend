@@ -116,7 +116,17 @@ function VivaSenseWorkspaceInner() {
   const toSingleTraitAnovaResult = (response: Record<string, unknown>, trait: string): Record<string, unknown> => {
     const traitResults = response.trait_results as Record<string, unknown> | undefined;
     const traitResult = (traitResults?.[trait] as Record<string, unknown> | undefined) ?? response;
-    return { ...traitResult, response: trait, anova: (traitResult as any).anova_table };
+
+    // Extract nested analysis_result fields if present (from /genetics/analyze-upload flow)
+    const analysisResult = (traitResult as any).analysis_result;
+    const resultFields = analysisResult?.result || {};
+
+    return {
+      ...traitResult,
+      ...resultFields,
+      response: trait,
+      anova: (traitResult as any).anova_table
+    };
   };
 
   const handleAnovaSubmit = async (analysisType: AnalysisType, formData: FormData) => {
