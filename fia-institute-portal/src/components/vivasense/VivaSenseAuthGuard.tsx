@@ -35,15 +35,27 @@ export default function VivaSenseAuthGuard({ children }: VivaSenseAuthGuardProps
   };
 
   const checkAccess = async (userId: string) => {
-    // Fetch profile and plan in a single query
-    const { data: profile, error } = await supabase
-      .from("profiles")
-      .select("plan, platform_source")
-      .eq("id", userId)
-      .maybeSingle();
+    let profile: any = null;
 
-    if (error) {
-      console.error("VivaSenseAuthGuard: profile fetch error", error);
+    // Fetch profile with fault tolerance — missing platform_source column must not block login
+    try {
+      const { data: fetchedProfile, error } = await supabase
+        .from("profiles")
+        .select("plan, platform_source")
+        .eq("id", userId)
+        .maybeSingle();
+
+      if (error) {
+        console.warn("VivaSenseAuthGuard: profile fetch error (will use defaults)", error.message);
+        // If platform_source column doesn't exist or other query error, use safe defaults
+        profile = { plan: "free", platform_source: "vivasense" };
+      } else {
+        profile = fetchedProfile;
+      }
+    } catch (err) {
+      console.warn("VivaSenseAuthGuard: profile fetch exception (will use defaults)", err);
+      // Graceful fallback: missing column or network error shouldn't block login
+      profile = { plan: "free", platform_source: "vivasense" };
     }
 
     // Sync Pro/Free mode
