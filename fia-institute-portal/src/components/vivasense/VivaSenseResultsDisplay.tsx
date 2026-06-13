@@ -71,6 +71,9 @@ function adaptBackendResult(raw: Record<string, unknown>): Record<string, unknow
   // Normalize interaction_means
   if (r.interaction_means && !r.interactions) r.interactions = r.interaction_means;
 
+  // Normalize assumption_tests → assumptions
+  if (r.assumption_tests && !r.assumptions) r.assumptions = r.assumption_tests;
+
   return r;
 }
 
