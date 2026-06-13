@@ -1,28 +1,4 @@
 {
-  "redirects": [
-    {
-      "source": "/:path*",
-      "has": [
-        {
-          "type": "host",
-          "value": "vivasensestat.com"
-        }
-      ],
-      "destination": "https://fieldtoinsightacademy.com.ng/vivasense",
-      "permanent": true
-    },
-    {
-      "source": "/:path*",
-      "has": [
-        {
-          "type": "host",
-          "value": "www.vivasensestat.com"
-        }
-      ],
-      "destination": "https://fieldtoinsightacademy.com.ng/vivasense",
-      "permanent": true
-    }
-  ],
   "rewrites": [
     {
       "source": "/vivasense/:path*",
@@ -32,8 +8,7 @@
       "source": "/:path((?!api|_next|.*\\..*).*)",
       "destination": "/index.html"
     }
-  ]
-  ,
+  ],
   "buildCommand": "npm run build",
   "outputDirectory": "dist"
 }
