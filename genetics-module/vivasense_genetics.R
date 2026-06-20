@@ -760,15 +760,23 @@ compute_single_environment <- function(data, trait_name = "Trait",
       "The homogeneity of variance assumption may be violated. Results should be interpreted cautiously, particularly for unbalanced designs."
     }
 
-    reviewer_status <- if (isTRUE(norm_pass) && isTRUE(homo_pass) && n_influential_obs == 0) {
+    # Status is based ONLY on assumption tests (normality + homogeneity), NOT on influential observations
+    # Influential observations are diagnostic info, not assumption test failures
+    reviewer_status <- if (isTRUE(norm_pass) && isTRUE(homo_pass)) {
       "PASS"
     } else {
       "WARN"
     }
     reviewer_summary <- if (reviewer_status == "PASS") {
-      "✓ Normality satisfied; ✓ Homogeneity satisfied; ✓ No influential outliers detected"
+      "✓ Normality satisfied; ✓ Homogeneity satisfied"
     } else {
-      "⚠ Assumptions violated"
+      "⚠ Assumption test(s) may not be satisfied"
+    }
+
+    # Add separate informational note about influential observations
+    if (n_influential_obs > 0) {
+      reviewer_summary <- paste(reviewer_summary,
+        sprintf("Note: %d observation(s) flagged as influential (high leverage) and may warrant review.", n_influential_obs))
     }
 
     out <- list(overall = list(
