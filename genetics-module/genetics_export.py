@@ -587,13 +587,16 @@ def _add_heading(doc: Document, text: str, level: int) -> None:
     h.paragraph_format.space_after = Pt(3)
 
 
-def _add_body(doc: Document, text: str, italic: bool = False) -> None:
+def _add_body(doc: Document, text: str, italic: bool = False, bold: bool = False) -> None:
     p = doc.add_paragraph(text)
     p.paragraph_format.space_before = Pt(2)
     p.paragraph_format.space_after = Pt(2)
-    if italic:
+    if italic or bold:
         for run in p.runs:
-            run.italic = True
+            if italic:
+                run.italic = True
+            if bold:
+                run.bold = True
 
 
 def _add_kv(doc: Document, key: str, value: str) -> None:
