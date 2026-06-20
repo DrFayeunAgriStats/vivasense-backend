@@ -2,6 +2,7 @@
 # Three-layer architecture: Computation | Validation | Interpretation
 # Supports single-environment and multi-environment analysis
 # Returns structured JSON + interpretation text
+# BUILD_TRIGGER: 2026-06-20 20:35 - Assumption diagnostics deployment
 
 suppressPackageStartupMessages({
   library(jsonlite)
