@@ -539,13 +539,17 @@ compute_single_environment <- function(data, trait_name = "Trait",
   available_lengths <- available_lengths[available_lengths > 0]
   diag_n <- if (length(available_lengths) > 0) min(available_lengths) else 0
 
+  message(sprintf("[DEBUG] diag_n=%d, available_lengths=%s", diag_n, paste(available_lengths, collapse=",")))
+
   if (diag_n > 0) {
     observed_full <- observed_full[seq_len(diag_n)]
     fitted_full <- fitted_full[seq_len(diag_n)]
     resid_full <- resid_full[seq_len(diag_n)]
     standardized_resid_full <- standardized_resid_full[seq_len(diag_n)]
     cooks_distance_full <- cooks_distance_full[seq_len(diag_n)]
+    message(sprintf("[DEBUG] Diagnostic arrays trimmed to length %d", diag_n))
   } else {
+    message("[DEBUG] diag_n=0, all diagnostic arrays set to NULL")
     observed_full <- NULL
     fitted_full <- NULL
     resid_full <- NULL
