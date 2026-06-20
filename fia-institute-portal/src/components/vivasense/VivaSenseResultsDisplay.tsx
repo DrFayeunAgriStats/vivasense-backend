@@ -53,6 +53,66 @@ const pDisplay = (p: unknown): string => {
 
 const cleanSource = (s: string) => s.replace(/Q\('(.+?)'\)/g, "$1");
 
+function toRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function normalizeAssumptions(input: unknown): Record<string, unknown> | null {
+  const src = toRecord(input);
+  if (!src) return null;
+
+  // Already in the newer dashboard shape
+  if (src.normality || src.homogeneity || src.overall) return src;
+
+  // Legacy flat shape: shapiro_wilk / shapiro and bartlett / levene
+  const shapiro = toRecord(src.shapiro_wilk) ?? toRecord(src.shapiro) ?? null;
+  const homogeneity =
+    toRecord(src.bartlett) ??
+    toRecord(src.levene) ??
+    toRecord(src.homogeneity) ??
+    null;
+
+  if (!shapiro && !homogeneity) return src;
+
+  const normalityPassed = typeof shapiro?.passed === "boolean"
+    ? (shapiro.passed as boolean)
+    : Number(shapiro?.p_value) >= 0.05;
+  const homogeneityPassed = typeof homogeneity?.passed === "boolean"
+    ? (homogeneity.passed as boolean)
+    : Number(homogeneity?.p_value) >= 0.05;
+  const bothPassed = Boolean(normalityPassed) && Boolean(homogeneityPassed);
+
+  return {
+    normality: shapiro
+      ? {
+          ...shapiro,
+          test: shapiro.test ?? shapiro.test_name ?? "Shapiro-Wilk",
+          passed: normalityPassed,
+        }
+      : undefined,
+    homogeneity: homogeneity
+      ? {
+          ...homogeneity,
+          test: homogeneity.test ?? homogeneity.test_name ?? (src.bartlett ? "Bartlett" : "Levene"),
+          passed: homogeneityPassed,
+        }
+      : undefined,
+    overall: {
+      passed: bothPassed,
+      interpretation: bothPassed
+        ? "Both normality and homogeneity assumptions are supported."
+        : "One or more assumptions may be violated. Interpret inferential results with caution.",
+    },
+  };
+}
+
+function asDiagnosticsRows(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return [];
+  return value.filter((x): x is Record<string, unknown> => !!x && typeof x === "object");
+}
+
 /* ── adaptBackendResult ────────────────────────────────────────────── */
 
 function adaptBackendResult(raw: Record<string, unknown>): Record<string, unknown> {
@@ -71,8 +131,17 @@ function adaptBackendResult(raw: Record<string, unknown>): Record<string, unknow
   // Normalize interaction_means
   if (r.interaction_means && !r.interactions) r.interactions = r.interaction_means;
 
-  // Normalize assumption_tests → assumptions
-  if (r.assumption_tests && !r.assumptions) r.assumptions = r.assumption_tests;
+  // Normalize assumption fields from multiple API response shapes.
+  const tables = toRecord(r.tables);
+  const rawAssumptions =
+    r.assumptions ??
+    r.assumption_checks ??
+    r.assumption_tests ??
+    tables?.assumptions ??
+    tables?.assumption_checks ??
+    tables?.assumption_tests;
+  const normalizedAssumptions = normalizeAssumptions(rawAssumptions);
+  if (normalizedAssumptions && !r.assumptions) r.assumptions = normalizedAssumptions;
 
   return r;
 }
@@ -554,9 +623,14 @@ function TechnicalJSON({ data }: { data: unknown }) {
 /* ── Assumption Diagnostics Panel ────────────────────────────────────── */
 
 function AssumptionDiagnosticsPanel({ data }: { data: Record<string, unknown> }) {
-  const normality = data.normality as Record<string, unknown> | undefined;
-  const homogeneity = data.homogeneity as Record<string, unknown> | undefined;
-  const overall = data.overall as Record<string, unknown> | undefined;
+  const normalized = normalizeAssumptions(data) ?? data;
+  const normality = normalized.normality as Record<string, unknown> | undefined;
+  const homogeneity = normalized.homogeneity as Record<string, unknown> | undefined;
+  const overall = normalized.overall as Record<string, unknown> | undefined;
+  const reviewerMode = normalized.reviewer_mode as Record<string, unknown> | undefined;
+  const reviewerSummary = String(
+    reviewerMode?.summary ?? overall?.reviewer_summary ?? ""
+  ).trim();
 
   if (!normality && !homogeneity) return null;
 
@@ -602,6 +676,11 @@ function AssumptionDiagnosticsPanel({ data }: { data: Record<string, unknown> })
       </div>
       {overall && (
         <div className={`p-4 rounded-lg border-l-4 ${bothPass ? "bg-green-50 border-green-300 dark:bg-green-950/30" : "bg-amber-50 border-amber-300 dark:bg-amber-950/30"}`}>
+          {reviewerSummary && (
+            <p className={`text-sm font-semibold mb-1 ${bothPass ? "text-green-900 dark:text-green-200" : "text-amber-900 dark:text-amber-200"}`}>
+              {reviewerSummary}
+            </p>
+          )}
           <p className={`text-sm font-medium ${bothPass ? "text-green-900 dark:text-green-200" : "text-amber-900 dark:text-amber-200"}`}>
             {String(overall.interpretation || "Overall assessment unavailable")}
           </p>
@@ -860,6 +939,109 @@ function ResidualVsFittedPlot({
   );
 }
 
+function ResidualsVsTreatmentPlot({ observations }: { observations: Array<Record<string, unknown>> }) {
+  if (!observations.length) return null;
+  const rows = observations
+    .map((o, idx) => ({
+      treatment: String(o.treatment ?? `Obs ${idx + 1}`),
+      residual: Number(o.residual),
+    }))
+    .filter((r) => Number.isFinite(r.residual));
+  if (!rows.length) return null;
+
+  return (
+    <ResponsiveContainer width="100%" height={320}>
+      <ScatterChart margin={{ top: 20, right: 30, left: 0, bottom: 80 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+        <XAxis dataKey="treatment" angle={-45} textAnchor="end" height={90} interval={0} />
+        <YAxis label={{ value: "Residual", angle: -90, position: "insideLeft" }} />
+        <Tooltip contentStyle={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }} />
+        <ReferenceLine y={0} stroke="var(--destructive)" strokeDasharray="5 5" />
+        <Scatter data={rows} fill="var(--primary)" fillOpacity={0.65} />
+      </ScatterChart>
+    </ResponsiveContainer>
+  );
+}
+
+function ScaleLocationPlot({ observations }: { observations: Array<Record<string, unknown>> }) {
+  if (!observations.length) return null;
+  const rows = observations
+    .map((o) => {
+      const fitted = Number(o.fitted);
+      const std = Number(o.standardized_residual);
+      return {
+        fitted,
+        sqrtAbsStd: Number.isFinite(std) ? Math.sqrt(Math.abs(std)) : NaN,
+      };
+    })
+    .filter((r) => Number.isFinite(r.fitted) && Number.isFinite(r.sqrtAbsStd));
+  if (!rows.length) return null;
+
+  return (
+    <ResponsiveContainer width="100%" height={300}>
+      <ScatterChart margin={{ top: 20, right: 30, left: 0, bottom: 60 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+        <XAxis dataKey="fitted" type="number" label={{ value: "Fitted Values", position: "insideBottomRight", offset: -10 }} />
+        <YAxis label={{ value: "Sqrt(|Std Resid|)", angle: -90, position: "insideLeft" }} />
+        <Tooltip contentStyle={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }} formatter={(v: unknown) => fmt4(v)} />
+        <Scatter data={rows} fill="#0f766e" fillOpacity={0.65} />
+      </ScatterChart>
+    </ResponsiveContainer>
+  );
+}
+
+function CooksDistancePlot({ observations, threshold }: { observations: Array<Record<string, unknown>>; threshold: number }) {
+  if (!observations.length) return null;
+  const rows = observations
+    .map((o, idx) => ({
+      observation: Number(o.observation ?? idx + 1),
+      cooksDistance: Number(o.cooks_distance),
+    }))
+    .filter((r) => Number.isFinite(r.cooksDistance));
+  if (!rows.length) return null;
+
+  return (
+    <ResponsiveContainer width="100%" height={300}>
+      <ComposedChart data={rows} margin={{ top: 20, right: 30, left: 0, bottom: 60 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+        <XAxis dataKey="observation" label={{ value: "Observation", position: "insideBottomRight", offset: -10 }} />
+        <YAxis label={{ value: "Cook's Distance", angle: -90, position: "insideLeft" }} />
+        <Tooltip contentStyle={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }} formatter={(v: unknown) => fmt4(v)} />
+        <Bar dataKey="cooksDistance" fill="#c2410c" radius={[3, 3, 0, 0]} />
+        {Number.isFinite(threshold) && threshold > 0 && (
+          <ReferenceLine y={threshold} stroke="var(--destructive)" strokeDasharray="5 5" />
+        )}
+      </ComposedChart>
+    </ResponsiveContainer>
+  );
+}
+
+function StandardizedResidualPlot({ observations }: { observations: Array<Record<string, unknown>> }) {
+  if (!observations.length) return null;
+  const rows = observations
+    .map((o, idx) => ({
+      observation: Number(o.observation ?? idx + 1),
+      stdResidual: Number(o.standardized_residual),
+    }))
+    .filter((r) => Number.isFinite(r.stdResidual));
+  if (!rows.length) return null;
+
+  return (
+    <ResponsiveContainer width="100%" height={300}>
+      <ComposedChart data={rows} margin={{ top: 20, right: 30, left: 0, bottom: 60 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+        <XAxis dataKey="observation" label={{ value: "Observation", position: "insideBottomRight", offset: -10 }} />
+        <YAxis label={{ value: "Standardized Residual", angle: -90, position: "insideLeft" }} />
+        <Tooltip contentStyle={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }} formatter={(v: unknown) => fmt4(v)} />
+        <Line dataKey="stdResidual" stroke="#1d4ed8" strokeWidth={2} dot={false} />
+        <ReferenceLine y={0} stroke="var(--foreground)" strokeDasharray="3 3" />
+        <ReferenceLine y={3} stroke="var(--destructive)" strokeDasharray="5 5" />
+        <ReferenceLine y={-3} stroke="var(--destructive)" strokeDasharray="5 5" />
+      </ComposedChart>
+    </ResponsiveContainer>
+  );
+}
+
 /* ── Main component ────────────────────────────────────────────────── */
 
 export interface VivaSenseResultsDisplayProps {
@@ -904,6 +1086,9 @@ export default function VivaSenseResultsDisplay({
   const plots = adapted.plots as Record<string, string> | undefined;
   const posthoc = adapted.posthoc as Record<string, Record<string, unknown>> | undefined;
   const interactions = adapted.interactions as unknown;
+  const diagnosticObservations = asDiagnosticsRows(adapted.diagnostic_observations);
+  const outlierSummary = toRecord(adapted.outlier_summary) ?? toRecord(assumptions?.outlier_detection);
+  const cooksThreshold = Number(outlierSummary?.cooks_distance_threshold ?? 0);
 
   return (
     <div className="space-y-2">
@@ -975,6 +1160,34 @@ export default function VivaSenseResultsDisplay({
             residuals={adapted.residuals as unknown[] | undefined}
             fitted={adapted.fitted_values as unknown[] | undefined}
           />
+        </CollapsibleSection>
+      )}
+
+      {/* Residuals vs Treatment (NEW) */}
+      {diagnosticObservations.length > 0 && (
+        <CollapsibleSection title="Residuals vs Treatment" defaultOpen={true}>
+          <ResidualsVsTreatmentPlot observations={diagnosticObservations} />
+        </CollapsibleSection>
+      )}
+
+      {/* Scale-Location Plot (NEW) */}
+      {diagnosticObservations.length > 0 && (
+        <CollapsibleSection title="Scale-Location Plot" defaultOpen={true}>
+          <ScaleLocationPlot observations={diagnosticObservations} />
+        </CollapsibleSection>
+      )}
+
+      {/* Cook's Distance Plot (NEW) */}
+      {diagnosticObservations.length > 0 && (
+        <CollapsibleSection title="Cook's Distance" defaultOpen={true}>
+          <CooksDistancePlot observations={diagnosticObservations} threshold={cooksThreshold} />
+        </CollapsibleSection>
+      )}
+
+      {/* Standardized Residual Plot (NEW) */}
+      {diagnosticObservations.length > 0 && (
+        <CollapsibleSection title="Standardized Residual Plot" defaultOpen={true}>
+          <StandardizedResidualPlot observations={diagnosticObservations} />
         </CollapsibleSection>
       )}
 

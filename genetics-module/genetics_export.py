@@ -2129,7 +2129,7 @@ def _add_writing_support_guide(doc: Document, data: DownloadReportRequest) -> No
 def _add_assumption_tests_section(doc: Document, assumption_tests: Dict[str, Any]) -> None:
     """Render assumption diagnostics. Handles both new (normality/homogeneity/overall)
     and legacy (shapiro_wilk/bartlett) structures from the R engine."""
-    _add_heading(doc, "Assumption Diagnostics", level=2)
+    _add_heading(doc, "Model Assumptions and Diagnostic Evaluation", level=2)
 
     _is_new_structure = "overall" in assumption_tests or (
         "normality" in assumption_tests or "homogeneity" in assumption_tests
@@ -2139,6 +2139,9 @@ def _add_assumption_tests_section(doc: Document, assumption_tests: Dict[str, Any
         # Overall sentence
         overall = assumption_tests.get("overall") or {}
         overall_interp = overall.get("interpretation") if isinstance(overall, dict) else None
+        reviewer_summary = overall.get("reviewer_summary") if isinstance(overall, dict) else None
+        if reviewer_summary:
+            _add_body(doc, str(reviewer_summary), bold=True)
         if overall_interp:
             _add_body(doc, overall_interp)
             doc.add_paragraph()
@@ -2174,6 +2177,46 @@ def _add_assumption_tests_section(doc: Document, assumption_tests: Dict[str, Any
             )
         else:
             _add_body(doc, "Assumption diagnostics were not available for this trait.", italic=True)
+
+        outlier_detection = assumption_tests.get("outlier_detection")
+        if isinstance(outlier_detection, dict):
+            _add_heading(doc, "Outlier and Influence Screening", level=3)
+            _add_stat_table(
+                doc,
+                ["Metric", "Value"],
+                [
+                    ["|Standardized residual| threshold", _fmt(outlier_detection.get("standardized_residual_threshold"), 2, thousands=False)],
+                    ["Cook's distance threshold", _fmt(outlier_detection.get("cooks_distance_threshold"), 4, thousands=False)],
+                    ["Extreme outliers detected", str(outlier_detection.get("n_extreme_outliers", 0))],
+                    ["Influential observations detected", str(outlier_detection.get("n_influential_observations", 0))],
+                ],
+            )
+
+            outlier_interp = outlier_detection.get("interpretation")
+            if outlier_interp:
+                _add_body(doc, str(outlier_interp))
+
+            flagged = outlier_detection.get("flagged_observations")
+            if isinstance(flagged, list) and flagged:
+                flagged_rows: List[List[str]] = []
+                for row in flagged[:25]:
+                    if not isinstance(row, dict):
+                        continue
+                    flagged_rows.append([
+                        str(row.get("observation", "—")),
+                        str(row.get("treatment", "—")),
+                        str(row.get("block", "—")),
+                        _fmt(row.get("standardized_residual"), 3, thousands=False),
+                        _fmt(row.get("cooks_distance"), 4, thousands=False),
+                        "Yes" if bool(row.get("influential")) else "No",
+                    ])
+                if flagged_rows:
+                    _add_stat_table(
+                        doc,
+                        ["Obs", "Treatment", "Block", "Std Resid", "Cook's D", "Influential"],
+                        flagged_rows,
+                        numeric_cols={3, 4},
+                    )
 
     else:
         # Legacy structure: shapiro_wilk / bartlett keys with conclusion field
@@ -2327,7 +2370,7 @@ def _add_trait_section(
         _add_interaction_separation_section(doc, trait_name, result.interaction_separation)
     doc.add_paragraph()
 
-    _add_genetic_parameters_section(doc, result, domain=domain)
+    _add_genetic_parameters_section(doc, result)
     doc.add_paragraph()
 
     # Log interpretation details before rendering
@@ -2339,7 +2382,7 @@ def _add_trait_section(
         trait_name, tr_interp_len, ar_interp_len, tr_breeding_len
     )
 
-    _add_interpretation_section(doc, ar, result, trait_name, tr, domain=domain)
+    _add_interpretation_section(doc, ar, result, trait_name, tr)
 
 
 # ============================================================================

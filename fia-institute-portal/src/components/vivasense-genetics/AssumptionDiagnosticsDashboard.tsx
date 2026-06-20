@@ -481,8 +481,6 @@ export function AssumptionDiagnosticsDashboard({ traitResult, result }: Assumpti
     );
   }, [resolvedResult]);
 
-  if (residuals.length === 0 || fittedValues.length === 0) return null;
-
   const assumptionTests = asRecord(
     resolvedResult?.assumption_tests ??
     resolvedResult?.assumption_checks ??
@@ -491,6 +489,11 @@ export function AssumptionDiagnosticsDashboard({ traitResult, result }: Assumpti
   const perGenotypeStats = Array.isArray(resolvedResult?.per_genotype_stats)
     ? (resolvedResult?.per_genotype_stats as GenotypeStat[])
     : [];
+
+  const hasPlots = residuals.length > 0 && fittedValues.length > 0;
+  const hasAssumptionTests = assumptionTests != null && Object.keys(assumptionTests).length > 0;
+
+  if (!hasPlots && !hasAssumptionTests && perGenotypeStats.length === 0) return null;
 
   const shapiro = getTestRecord(assumptionTests, ["shapiro", "shapiro_wilk", "normality"]);
   const levene = getTestRecord(assumptionTests, ["levene", "homogeneity", "bartlett"]);
@@ -515,10 +518,12 @@ export function AssumptionDiagnosticsDashboard({ traitResult, result }: Assumpti
       {open && (
         <CardContent className="pt-0">
           <div className="grid gap-4 lg:grid-cols-2">
-            <AssumptionSummaryTable tests={assumptionTests} />
+            {hasAssumptionTests && <AssumptionSummaryTable tests={assumptionTests} />}
             <TreatmentBoxplots stats={perGenotypeStats} />
-            <ResidualHistogram residuals={residuals} shapiroPValue={shapiroP} />
-            <ResidualVsFittedPlot residuals={residuals} fittedValues={fittedValues} levenePValue={leveneP} />
+            {hasPlots && <ResidualHistogram residuals={residuals} shapiroPValue={shapiroP} />}
+            {hasPlots && (
+              <ResidualVsFittedPlot residuals={residuals} fittedValues={fittedValues} levenePValue={leveneP} />
+            )}
           </div>
         </CardContent>
       )}

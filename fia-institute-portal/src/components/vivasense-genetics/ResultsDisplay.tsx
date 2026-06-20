@@ -800,7 +800,9 @@ function TraitDetails({
 
   const isSplitPlot = result?.design === "split_plot_rcbd" || result?.main_plot_mean_separation != null;
   const interactionMeans = result?.interaction_means ?? null;
-  const assumptionTests = (result?.assumption_tests ?? null) as Record<string, { statistic: number; p_value: number; conclusion: string }> | null;
+  const assumptionTests = (
+    result?.assumption_tests ?? result?.assumption_checks ?? result?.assumptions ?? null
+  ) as Record<string, { statistic: number; p_value: number; conclusion: string }> | null;
 
   const intSig = isSplitPlot ? isInteractionSignificant(result?.anova_table) : false;
   const mpLabel = (result?.main_plot_mean_separation as MeanSeparation | null | undefined)?.treatment_label ?? "Main-Plot Factor";
@@ -1164,9 +1166,9 @@ function AssumptionTestsPanel({
 }: {
   tests: Record<string, { statistic: number; p_value: number; conclusion: string }>;
 }) {
-  const sw = tests.shapiro_wilk;
-  const bt = tests.bartlett;
-  if (!sw && !bt) return null;
+  const sw = tests.shapiro_wilk ?? tests.shapiro ?? tests.normality;
+  const hv = tests.bartlett ?? tests.levene ?? tests.homogeneity;
+  if (!sw && !hv) return null;
 
   const card = (
     label: string,
@@ -1192,7 +1194,7 @@ function AssumptionTestsPanel({
     <div className="space-y-2">
       <SubSectionLabel>Assumption Diagnostics</SubSectionLabel>
       {sw && card("Shapiro-Wilk — Residual Normality", sw, "W")}
-      {bt && card("Bartlett — Homogeneity of Variance", bt, "K²")}
+      {hv && card(`${tests.bartlett ? "Bartlett" : "Levene"} — Homogeneity of Variance`, hv, tests.bartlett ? "K²" : "F")}
     </div>
   );
 }

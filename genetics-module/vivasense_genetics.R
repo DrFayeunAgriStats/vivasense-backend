@@ -495,15 +495,170 @@ compute_single_environment <- function(data, trait_name = "Trait",
 
   anova_table <- sanitize_anova_f_values(anova_table)
 
-  # ── Hoist Residuals and Fitted Values for Diagnostic Plots ─────────────────
+  # ── Observation-Level Diagnostics From Fitted ANOVA Model ─────────────────
+  diag_model <- tryCatch({
+    if (has_splitplot) model[["Error: Within"]] else model
+  }, error = function(e) model)
+
+  diag_frame <- tryCatch(model.frame(diag_model), error = function(e) NULL)
+
+  observed_full <- tryCatch({
+    if (!is.null(diag_frame)) {
+      as.numeric(model.response(diag_frame))
+    } else {
+      as.numeric(data$trait_value)
+    }
+  }, error = function(e) NULL)
+
   resid_full <- tryCatch({
-    vec <- if (has_splitplot) residuals(model[["Error: Within"]]) else residuals(model)
-    as.numeric(vec[is.finite(vec)])
+    as.numeric(residuals(diag_model))
   }, error = function(e) NULL)
 
   fitted_full <- tryCatch({
-    as.numeric(fitted(model))
+    as.numeric(fitted(diag_model))
   }, error = function(e) NULL)
+
+  standardized_resid_full <- tryCatch({
+    as.numeric(rstandard(diag_model))
+  }, error = function(e) {
+    if (!is.null(resid_full)) as.numeric(scale(resid_full)) else NULL
+  })
+
+  cooks_distance_full <- tryCatch({
+    as.numeric(cooks.distance(diag_model))
+  }, error = function(e) NULL)
+
+  available_lengths <- c(
+    length(observed_full),
+    length(fitted_full),
+    length(resid_full),
+    length(standardized_resid_full),
+    length(cooks_distance_full)
+  )
+  available_lengths <- available_lengths[available_lengths > 0]
+  diag_n <- if (length(available_lengths) > 0) min(available_lengths) else 0
+
+  if (diag_n > 0) {
+    observed_full <- observed_full[seq_len(diag_n)]
+    fitted_full <- fitted_full[seq_len(diag_n)]
+    resid_full <- resid_full[seq_len(diag_n)]
+    standardized_resid_full <- standardized_resid_full[seq_len(diag_n)]
+    cooks_distance_full <- cooks_distance_full[seq_len(diag_n)]
+  } else {
+    observed_full <- NULL
+    fitted_full <- NULL
+    resid_full <- NULL
+    standardized_resid_full <- NULL
+    cooks_distance_full <- NULL
+  }
+
+  treatment_labels <- NULL
+  block_labels <- NULL
+  if (diag_n > 0) {
+    treatment_labels <- tryCatch({
+      if (!is.null(diag_frame) && "genotype" %in% names(diag_frame)) {
+        as.character(diag_frame$genotype)
+      } else if (!is.null(diag_frame) && all(c("main_plot", "sub_plot") %in% names(diag_frame))) {
+        paste0(as.character(diag_frame$main_plot), " x ", as.character(diag_frame$sub_plot))
+      } else if (!is.null(diag_frame) && "sub_plot" %in% names(diag_frame)) {
+        as.character(diag_frame$sub_plot)
+      } else {
+        rep("Observation", diag_n)
+      }
+    }, error = function(e) rep("Observation", diag_n))
+
+    block_labels <- tryCatch({
+      if (!is.null(diag_frame) && "rep" %in% names(diag_frame)) {
+        as.character(diag_frame$rep)
+      } else {
+        rep(NA_character_, diag_n)
+      }
+    }, error = function(e) rep(NA_character_, diag_n))
+
+    treatment_labels <- treatment_labels[seq_len(min(length(treatment_labels), diag_n))]
+    if (length(treatment_labels) < diag_n) {
+      treatment_labels <- c(treatment_labels, rep("Observation", diag_n - length(treatment_labels)))
+    }
+
+    block_labels <- block_labels[seq_len(min(length(block_labels), diag_n))]
+    if (length(block_labels) < diag_n) {
+      block_labels <- c(block_labels, rep(NA_character_, diag_n - length(block_labels)))
+    }
+  }
+
+  cook_threshold <- if (diag_n > 0) (4 / diag_n) else NA_real_
+  extreme_flags <- if (!is.null(standardized_resid_full)) abs(standardized_resid_full) > 3 else logical(0)
+  influential_flags <- if (!is.null(cooks_distance_full) && is.finite(cook_threshold)) {
+    cooks_distance_full > cook_threshold
+  } else {
+    logical(length(extreme_flags))
+  }
+  if (length(influential_flags) == 0 && length(extreme_flags) > 0) {
+    influential_flags <- rep(FALSE, length(extreme_flags))
+  }
+
+  n_extreme_outliers <- if (length(extreme_flags) > 0) sum(extreme_flags, na.rm = TRUE) else 0
+  n_influential_obs <- if (length(influential_flags) > 0) sum(influential_flags, na.rm = TRUE) else 0
+
+  diagnostic_observations <- if (diag_n > 0) {
+    lapply(seq_len(diag_n), function(i) {
+      list(
+        observation = i,
+        treatment = treatment_labels[i],
+        block = block_labels[i],
+        observed = observed_full[i],
+        fitted = fitted_full[i],
+        residual = resid_full[i],
+        standardized_residual = standardized_resid_full[i],
+        cooks_distance = cooks_distance_full[i],
+        extreme_outlier = isTRUE(extreme_flags[i]),
+        influential = isTRUE(influential_flags[i])
+      )
+    })
+  } else NULL
+
+  residuals_vs_treatment <- if (!is.null(diagnostic_observations)) {
+    lapply(diagnostic_observations, function(x) {
+      list(
+        treatment = x$treatment,
+        residual = x$residual,
+        standardized_residual = x$standardized_residual
+      )
+    })
+  } else NULL
+
+  scale_location_points <- if (!is.null(diagnostic_observations)) {
+    lapply(diagnostic_observations, function(x) {
+      list(
+        fitted = x$fitted,
+        sqrt_abs_standardized_residual = if (is.null(x$standardized_residual) || is.na(x$standardized_residual)) NA_real_ else sqrt(abs(x$standardized_residual))
+      )
+    })
+  } else NULL
+
+  cooks_distance_points <- if (!is.null(diagnostic_observations)) {
+    lapply(diagnostic_observations, function(x) {
+      list(
+        observation = x$observation,
+        treatment = x$treatment,
+        cooks_distance = x$cooks_distance
+      )
+    })
+  } else NULL
+
+  standardized_residual_points <- if (!is.null(diagnostic_observations)) {
+    lapply(diagnostic_observations, function(x) {
+      list(
+        observation = x$observation,
+        treatment = x$treatment,
+        standardized_residual = x$standardized_residual
+      )
+    })
+  } else NULL
+
+  flagged_observations <- if (!is.null(diagnostic_observations)) {
+    Filter(function(x) isTRUE(x$extreme_outlier) || isTRUE(x$influential), diagnostic_observations)
+  } else NULL
 
   # ── Assumption Tests (Shapiro-Wilk + Levene/Bartlett) ───────────────────────
   assumption_tests_out <- tryCatch({
@@ -600,9 +755,43 @@ compute_single_environment <- function(data, trait_name = "Trait",
       "The homogeneity of variance assumption may be violated. Results should be interpreted cautiously, particularly for unbalanced designs."
     }
 
-    out <- list(overall = list(passed = overall_passed, interpretation = overall_interp))
+    reviewer_status <- if (isTRUE(norm_pass) && isTRUE(homo_pass) && n_influential_obs == 0) {
+      "PASS"
+    } else {
+      "WARN"
+    }
+    reviewer_summary <- if (reviewer_status == "PASS") {
+      "✓ Normality satisfied; ✓ Homogeneity satisfied; ✓ No influential outliers detected"
+    } else {
+      "⚠ Assumptions violated"
+    }
+
+    out <- list(overall = list(
+      passed = overall_passed,
+      interpretation = overall_interp,
+      reviewer_summary = reviewer_summary
+    ))
     if (!is.null(normality_result))   out$normality   <- normality_result
     if (!is.null(homogeneity_result)) out$homogeneity <- homogeneity_result
+    out$outlier_detection <- list(
+      standardized_residual_threshold = 3,
+      cooks_distance_threshold = cook_threshold,
+      n_extreme_outliers = n_extreme_outliers,
+      n_influential_observations = n_influential_obs,
+      flagged_observations = flagged_observations,
+      interpretation = if (n_extreme_outliers == 0 && n_influential_obs == 0) {
+        "No extreme outliers or influential observations were detected under the configured thresholds."
+      } else {
+        "Extreme residual outliers and/or influential observations were detected; inspect flagged records before inference."
+      }
+    )
+    out$reviewer_mode <- list(
+      status = reviewer_status,
+      normality_satisfied = isTRUE(norm_pass),
+      homogeneity_satisfied = isTRUE(homo_pass),
+      no_influential_outliers = n_influential_obs == 0,
+      summary = reviewer_summary
+    )
     if (length(out) <= 1) NULL else out
 
   }, error = function(e) {
@@ -895,8 +1084,24 @@ compute_single_environment <- function(data, trait_name = "Trait",
     main_plot_mean_separation  = if (has_splitplot) main_plot_mean_sep else NULL,
     interaction_means          = if (has_splitplot) interaction_means else NULL,
     assumption_tests           = assumption_tests_out,
+    diagnostic_observations    = diagnostic_observations,
+    diagnostic_plots           = list(
+      residuals_vs_treatment = residuals_vs_treatment,
+      scale_location = scale_location_points,
+      cooks_distance = cooks_distance_points,
+      standardized_residual = standardized_residual_points
+    ),
     residuals                  = resid_full,
     fitted_values              = fitted_full,
+    standardized_residuals     = standardized_resid_full,
+    cooks_distance             = cooks_distance_full,
+    outlier_summary            = list(
+      standardized_residual_threshold = 3,
+      cooks_distance_threshold = cook_threshold,
+      n_extreme_outliers = n_extreme_outliers,
+      n_influential_observations = n_influential_obs,
+      flagged_observations = flagged_observations
+    ),
     ms_genotype                = ms_genotype,
     ms_error                   = ms_error
   )
