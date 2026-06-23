@@ -851,12 +851,18 @@ class PathCoefficient(BaseModel):
 
 
 class CorrelationDecomp(BaseModel):
-    """Decomposition of trait correlation into direct and indirect effects."""
+    """Decomposition of trait correlation into direct and indirect effects.
+
+    percent_direct is only meaningful when direct_effect and total_correlation
+    are on the same scale (i.e., when standardize=True). When standardize=False,
+    direct_effect is on original scale while total_correlation is dimensionless,
+    so percent_direct is set to None.
+    """
     predictor: str
     total_correlation: float
     direct_effect: float
     indirect_effect: float
-    percent_direct: float
+    percent_direct: Optional[float] = None
 
 
 class PathAnalysisRequest(BaseModel):

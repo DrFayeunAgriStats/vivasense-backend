@@ -57,7 +57,20 @@ def _compute_path_analysis(
     predictors: List[str],
     standardize: bool,
 ) -> Dict[str, Any]:
-    """Path analysis via multiple OLS regression (statsmodels for inference)."""
+    """Path analysis via multiple OLS regression (statsmodels for inference).
+
+    When standardize=True:
+      - All variables are z-scored before OLS
+      - Path coefficients are standardised (typically -1 to +1)
+      - Correlation matrix is on standardised scale
+      - percent_direct is meaningful
+
+    When standardize=False:
+      - OLS uses original-scale data
+      - Path coefficients are on original scale
+      - Correlation matrix is still computed on standardised scale for decomposition
+      - percent_direct is still meaningful because both terms use standardised correlations
+    """
     import statsmodels.api as sm
 
     cols = [outcome] + predictors
@@ -71,18 +84,27 @@ def _compute_path_analysis(
             "clean missing values, or upload more data."
         )
 
-    # Standardise if requested
-    if standardize:
-        means = data_clean.mean()
-        stds = data_clean.std()
-        # Avoid division by zero for constant columns
-        stds[stds == 0] = 1.0
-        data_std = (data_clean - means) / stds
-    else:
-        data_std = data_clean.copy()
+    # Compute standardised data (always needed for correlation decomposition)
+    means = data_clean.mean()
+    stds = data_clean.std()
+    # Avoid division by zero for constant columns
+    stds[stds == 0] = 1.0
+    data_standardised = (data_clean - means) / stds
 
-    X = data_std[predictors].values.astype(float)
-    y = data_std[outcome].values.astype(float)
+    # Decide what data to use for OLS
+    if standardize:
+        data_for_ols = data_standardised.copy()
+    else:
+        data_for_ols = data_clean.copy()
+
+    # Log standardization status
+    logger.info(
+        f"[PATH ANALYSIS] standardize={standardize}, data_clean shape={data_clean.shape}, "
+        f"data_standardised shape={data_standardised.shape}, using_standardised_for_ols={standardize}"
+    )
+
+    X = data_for_ols[predictors].values.astype(float)
+    y = data_for_ols[outcome].values.astype(float)
 
     # Fit OLS with statsmodels for proper inference
     X_with_const = sm.add_constant(X)
@@ -107,18 +129,25 @@ def _compute_path_analysis(
             )
         )
 
-    # Correlation matrix for decomposition
-    all_std_df = data_std[cols]
-    corr_matrix = all_std_df.corr()
+    # Correlation matrix for decomposition (always on standardised scale for consistency)
+    all_standardised_df = data_standardised[cols]
+    corr_matrix = all_standardised_df.corr()
 
     decomp: List[CorrelationDecomp] = []
     for i, pred in enumerate(predictors):
         total_r = float(corr_matrix.loc[pred, outcome])
         direct = float(coefs[i])
         indirect = total_r - direct
-        pct_direct = (
-            float(abs(direct) / abs(total_r) * 100) if total_r != 0 else 0.0
-        )
+        # percent_direct is only meaningful when direct_effect and total_correlation
+        # are on the same scale (both standardised). When standardize=False, direct_effect
+        # is on original scale (e.g., kg/ha) while total_r is dimensionless (Pearson r),
+        # so the ratio is meaningless. In that case, set percent_direct to None.
+        if standardize:
+            pct_direct = (
+                float(abs(direct) / abs(total_r) * 100) if total_r != 0 else 0.0
+            )
+        else:
+            pct_direct = None
         decomp.append(
             CorrelationDecomp(
                 predictor=pred,
