@@ -280,6 +280,21 @@ export function PathAnalysisPanel({ datasetContext }: Props) {
 
       {result && (
         <>
+          <div className="flex justify-end mb-4">
+            <Button
+              onClick={handleExportWord}
+              disabled={exporting}
+              size="sm"
+              className="bg-[#0A7F5A] hover:bg-[#086647] text-white"
+            >
+              {exporting ? (
+                <><Loader2 className="w-4 h-4 mr-1 animate-spin" />Exporting...</>
+              ) : (
+                <><Download className="w-4 h-4 mr-1" />Download Word Report</>
+              )}
+            </Button>
+          </div>
+
           {result.interpretation && <InterpretationPanel text={result.interpretation} />}
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -324,21 +339,7 @@ export function PathAnalysisPanel({ datasetContext }: Props) {
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle className="font-serif text-lg">Path coefficients</CardTitle>
-                <div className="flex items-center gap-2">
-                  <ExportToolbar onCsv={() => downloadCsv("path_coefficients.csv", pathCoefficients as unknown as Record<string, unknown>[])} />
-                  <Button
-                    onClick={handleExportWord}
-                    disabled={!result || exporting}
-                    size="sm"
-                    variant="outline"
-                  >
-                    {exporting ? (
-                      <><Loader2 className="w-4 h-4 mr-1 animate-spin" />Exporting...</>
-                    ) : (
-                      <><Download className="w-4 h-4 mr-1" />Word Export</>
-                    )}
-                  </Button>
-                </div>
+                <ExportToolbar onCsv={() => downloadCsv("path_coefficients.csv", pathCoefficients as unknown as Record<string, unknown>[])} />
               </CardHeader>
               <CardContent className="overflow-x-auto">
                 <Table>
