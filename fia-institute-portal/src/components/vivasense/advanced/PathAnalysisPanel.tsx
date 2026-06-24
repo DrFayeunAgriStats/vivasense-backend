@@ -11,9 +11,10 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { Loader2, Play, AlertTriangle, GitBranch } from "lucide-react";
+import { Download, Loader2, Play, AlertTriangle, GitBranch } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { runPathAnalysis, buildPathAnalysisPayload } from "@/lib/advancedAnalysisApi";
+import { exportWordReport } from "@/lib/geneticsUploadApi";
 import type { DatasetContext } from "@/types/geneticsUpload";
 import type { PathAnalysisResponse, PathAnalysisMethod, PathDiagramEdge } from "@/types/advancedAnalysis";
 import {
@@ -49,6 +50,7 @@ export function PathAnalysisPanel({ datasetContext }: Props) {
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<PathAnalysisResponse | null>(null);
+  const [exporting, setExporting] = useState(false);
   const diagramRef = useRef<SVGSVGElement>(null);
   const datasetToken = datasetContext?.datasetToken ?? null;
 
@@ -85,6 +87,28 @@ export function PathAnalysisPanel({ datasetContext }: Props) {
       setError(msg);
       toast({ title: "Analysis failed", description: msg, variant: "destructive" });
     } finally { setIsRunning(false); }
+  };
+
+  const handleExportWord = async () => {
+    if (!datasetContext?.geneticsResults) {
+      toast({ title: "Run ANOVA and Genetic Parameters first before exporting" });
+      return;
+    }
+    setExporting(true);
+    try {
+      await exportWordReport(
+        datasetContext.geneticsResults,
+        "path_analysis_report.docx",
+        datasetContext.domain,
+        result
+      );
+      toast({ title: "Report exported", description: "Word report downloaded" });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Export failed";
+      toast({ title: "Export failed", description: msg, variant: "destructive" });
+    } finally {
+      setExporting(false);
+    }
   };
 
   // ── Defensive normalization helpers ──────────────────────────────────────
@@ -300,7 +324,21 @@ export function PathAnalysisPanel({ datasetContext }: Props) {
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle className="font-serif text-lg">Path coefficients</CardTitle>
-                <ExportToolbar onCsv={() => downloadCsv("path_coefficients.csv", pathCoefficients as unknown as Record<string, unknown>[])} />
+                <div className="flex items-center gap-2">
+                  <ExportToolbar onCsv={() => downloadCsv("path_coefficients.csv", pathCoefficients as unknown as Record<string, unknown>[])} />
+                  <Button
+                    onClick={handleExportWord}
+                    disabled={!result || exporting}
+                    size="sm"
+                    variant="outline"
+                  >
+                    {exporting ? (
+                      <><Loader2 className="w-4 h-4 mr-1 animate-spin" />Exporting...</>
+                    ) : (
+                      <><Download className="w-4 h-4 mr-1" />Word Export</>
+                    )}
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent className="overflow-x-auto">
                 <Table>
