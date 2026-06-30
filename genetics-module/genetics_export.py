@@ -46,6 +46,7 @@ from pydantic import BaseModel, Field
 
 from genetics_schemas import AnovaTable, MeanSeparation, InteractionMeans, GeneticsResult, GeneticsResponse
 from multitrait_upload_schemas import UploadAnalysisResponse, SummaryTableRow, TraitResult
+from module_schemas import PathAnalysisResponse
 from trait_relationships_schemas import CorrelationResponse
 import result_cache
 from genetics_interpretation import (
@@ -84,12 +85,13 @@ _DUPLICATE_ENV_SENTENCE_2 = (
 
 class DownloadReportRequest(UploadAnalysisResponse):
     """
-    Extends UploadAnalysisResponse with optional correlation data.
-    The frontend can POST the raw UploadAnalysisResponse and correlation
+    Extends UploadAnalysisResponse with optional correlation and path analysis data.
+    The frontend can POST the raw UploadAnalysisResponse and these fields
     will default to None — fully backwards compatible.
     """
     module: str = "genetic_parameters"
     correlation: Optional[CorrelationResponse] = None
+    path_analysis: Optional[PathAnalysisResponse] = None
 
 
 # ─── Tukey-group colour palette ───────────────────────────────────────────────
@@ -1702,6 +1704,135 @@ def _add_genetic_parameters_section(doc: Document, result: GeneticsResult, domai
         doc.add_paragraph()
 
 
+# ============================================================================
+# SECTION: PATH ANALYSIS
+# ============================================================================
+
+def add_path_analysis_section(doc: Document, path_result: Dict[str, Any]) -> None:
+    """Add a Path Analysis section to the Word document.
+
+    Args:
+        doc: The python-docx Document object
+        path_result: Dictionary containing path analysis results with keys:
+            - outcome_trait: str
+            - predictor_traits: List[str]
+            - n_observations: int
+            - path_coefficients: List[Dict] with direct_effect, std_error, t_statistic, p_value, significant
+            - correlation_decomposition: List[Dict] with total_correlation, direct_effect, indirect_effect, percent_direct
+            - r_squared: float
+            - residual_effect: float
+            - interpretation: str
+    """
+    if not path_result or not isinstance(path_result, dict):
+        return
+
+    _add_heading(doc, "Path Analysis", level=2)
+
+    outcome_trait = path_result.get("outcome_trait", "")
+    predictor_traits = path_result.get("predictor_traits", [])
+    n_obs = path_result.get("n_observations", 0)
+    path_coefs = path_result.get("path_coefficients", [])
+    corr_decomp = path_result.get("correlation_decomposition", [])
+    r_squared = path_result.get("r_squared", 0)
+    residual_effect = path_result.get("residual_effect", 0)
+    interpretation = path_result.get("interpretation", "")
+
+    # ── Path Coefficients Table ────────────────────────────────────────────────
+    _add_heading(doc, "Path Coefficients", level=3)
+
+    pc_headers = ["Trait", "Direct Effect (β)", "Std Error", "t-statistic", "p-value", "Significant"]
+    pc_rows = []
+
+    for coef_dict in path_coefs:
+        predictor = coef_dict.get("predictor", "")
+        direct = coef_dict.get("direct_effect")
+        std_err = coef_dict.get("std_error")
+        t_stat = coef_dict.get("t_statistic")
+        p_val = coef_dict.get("p_value")
+        significant = coef_dict.get("significant", False)
+
+        pc_rows.append({
+            "data": [
+                predictor,
+                _fmt(direct, 3),
+                _fmt(std_err, 3),
+                _fmt(t_stat, 3),
+                _fmt(p_val, 4),
+                "Yes*" if significant else "No",
+            ],
+            "significant": significant,
+        })
+
+    # Build table with highlighting for significant rows
+    if pc_rows:
+        table = doc.add_table(rows=1, cols=len(pc_headers))
+        table.style = "Table Grid"
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+        hdr = table.rows[0]
+        for i, h in enumerate(pc_headers):
+            hdr.cells[i].text = h
+        _bold_row(hdr, size_pt=12, bg=_HEADER_BG)
+
+        for row_dict in pc_rows:
+            row_data = row_dict["data"]
+            is_sig = row_dict["significant"]
+            r = table.add_row()
+            for i, val in enumerate(row_data):
+                r.cells[i].text = str(val)
+            # Bold significant rows
+            if is_sig:
+                for cell in r.cells:
+                    for para in cell.paragraphs:
+                        for run in para.runs:
+                            run.font.bold = True
+            _style_data_row(r, numeric_cols={1, 2, 3, 4})
+
+        doc.add_paragraph()
+
+    # ── Correlation Decomposition Table ────────────────────────────────────────
+    _add_heading(doc, "Correlation Decomposition", level=3)
+
+    cd_headers = ["Trait", "Total r", "Direct Effect", "Indirect Effect", "% Direct"]
+    cd_rows = []
+
+    for decomp_dict in corr_decomp:
+        predictor = decomp_dict.get("predictor", "")
+        total_r = decomp_dict.get("total_correlation")
+        direct = decomp_dict.get("direct_effect")
+        indirect = decomp_dict.get("indirect_effect")
+        pct_direct = decomp_dict.get("percent_direct")
+
+        cd_rows.append([
+            predictor,
+            _fmt(total_r, 4),
+            _fmt(direct, 4),
+            _fmt(indirect, 4),
+            _fmt(pct_direct, 2) if pct_direct is not None else "—",
+        ])
+
+    if cd_rows:
+        _add_stat_table(doc, cd_headers, cd_rows, numeric_cols={1, 2, 3, 4})
+        doc.add_paragraph()
+
+    # ── Model Summary ──────────────────────────────────────────────────────────
+    _add_heading(doc, "Model Summary", level=3)
+
+    summary_text = (
+        f"R² = {_fmt(r_squared, 4)} ({r_squared * 100:.1f}% variation explained); "
+        f"Residual path coefficient = {_fmt(residual_effect, 4)}; "
+        f"n = {n_obs} observations."
+    )
+    _add_body(doc, summary_text)
+    doc.add_paragraph()
+
+    # ── Interpretation ─────────────────────────────────────────────────────────
+    _add_heading(doc, "Interpretation", level=3)
+
+    if interpretation:
+        _add_body(doc, interpretation)
+    doc.add_paragraph()
+
 
 # ============================================================================
 # SECTION: INTERPRETATION (per trait)
@@ -2805,6 +2936,10 @@ def _build_document(data: DownloadReportRequest) -> Document:
     # ── Correlation section (optional) ───────────────────────────────────────
     if data.correlation is not None:
         _add_correlation_section(doc, data.correlation)
+
+    # ── Path Analysis section (optional) ──────────────────────────────────────
+    if data.path_analysis is not None:
+        add_path_analysis_section(doc, data.path_analysis.model_dump())
 
     # ── Per-trait sections ────────────────────────────────────────────────────
     logger.info(

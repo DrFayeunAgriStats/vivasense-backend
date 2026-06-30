@@ -14,7 +14,7 @@ import {
 import { Download, Loader2, Play, AlertTriangle, GitBranch } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { runPathAnalysis, buildPathAnalysisPayload } from "@/lib/advancedAnalysisApi";
-import { exportWordReport } from "@/lib/geneticsUploadApi";
+import { exportWordReport } from "@/services/geneticsUploadApi";
 import type { DatasetContext } from "@/types/geneticsUpload";
 import type { PathAnalysisResponse, PathAnalysisMethod, PathDiagramEdge } from "@/types/advancedAnalysis";
 import {
