@@ -889,12 +889,12 @@ def _add_correlation_section(doc: Document, corr: CorrelationResponse) -> None:
         (traits[i], traits[j])
         for i in range(n)
         for j in range(i + 1, n)
-        if corr.r_matrix
-        and corr.r_matrix[i][j] is not None
-        and corr.r_matrix[i][j] <= -0.70
-        and corr.p_matrix
-        and corr.p_matrix[i][j] is not None
-        and corr.p_matrix[i][j] < 0.05
+        if _ref_stats.r_matrix
+        and _ref_stats.r_matrix[i][j] is not None
+        and _ref_stats.r_matrix[i][j] <= -0.70
+        and _ref_stats.p_matrix
+        and _ref_stats.p_matrix[i][j] is not None
+        and _ref_stats.p_matrix[i][j] < 0.05
     ]
     if strong_neg:
         pairs_str = ", ".join(f"{a} & {b}" for a, b in strong_neg[:5])
