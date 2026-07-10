@@ -226,6 +226,7 @@ ALLOWED_ORIGINS = [
     "https://www.vivasensestat.com",
     "https://vivasensestat.com",
     "http://localhost:5173",
+    "http://localhost:5174",
     "http://localhost:3000",
     "http://localhost:8080",
 ]
