@@ -105,6 +105,10 @@ Allowed origins are set for production and local development. Update via env if 
 """
 ALLOWED_ORIGINS = [
     "https://www.fieldtoinsightacademy.com.ng",
+    "https://www.vivasensestat.com",
+    "https://vivasensestat.com",
+    "https://vivasense-standalone-d0siguh9g-fayeun-lawerences-projects.vercel.app",
+    "https://vivasense-standalone.vercel.app",
     "http://localhost:5173",
     "http://localhost:3000",
 ]

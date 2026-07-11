@@ -37,6 +37,10 @@ app.add_middleware(
     allow_origins=[
         "https://fieldtoinsightacademy.com.ng",
         "https://www.fieldtoinsightacademy.com.ng",
+        "https://www.vivasensestat.com",
+        "https://vivasensestat.com",
+        "https://vivasense-standalone-d0siguh9g-fayeun-lawerences-projects.vercel.app",
+        "https://vivasense-standalone.vercel.app",
         "http://localhost:3000",   # for local testing
         "http://localhost:5173",   # Vite dev server
     ],
