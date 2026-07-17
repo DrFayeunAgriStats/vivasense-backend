@@ -41,6 +41,8 @@ from genetics_export import (
     _add_correlation_section,
     _add_design_statement,
     _add_footer,
+    _detect_mean_sep_method,
+    _pl,
     _add_heading,
     _add_interaction_means_section,
     _add_interaction_plot_to_doc,
@@ -496,7 +498,7 @@ async def export_anova_word(data: AnovaExportRequest):
 
         doc = _new_document(
             "VivaSense ANOVA Analysis Report",
-            f"{mode_label}  ·  {n_traits} trait(s)  ·  {n_success} analysed successfully",
+            f"{mode_label}  ·  {_pl(n_traits, 'trait')}  ·  {n_success} analysed successfully",
         )
 
         if data.failed_traits:
@@ -661,7 +663,7 @@ async def export_anova_word(data: AnovaExportRequest):
             # ── 7. Scope note ──────────────────────────────────────────────────
             _scope_paragraph(doc)
 
-        _add_footer(doc)
+        _add_footer(doc, _detect_mean_sep_method(data))
         return _docx_response(doc, "vivasense_anova_report.docx")
 
     except Exception as exc:
@@ -700,7 +702,7 @@ async def export_genetic_parameters_word(data: GeneticParametersExportRequest):
 
         doc = _new_document(
             "VivaSense Genetic Parameters Report",
-            f"{mode_label}  ·  {n_traits} trait(s)  ·  {n_success} analysed successfully",
+            f"{mode_label}  ·  {_pl(n_traits, 'trait')}  ·  {n_success} analysed successfully",
         )
 
         if data.failed_traits:
@@ -787,7 +789,7 @@ async def export_genetic_parameters_word(data: GeneticParametersExportRequest):
             # ── 8. Scope note ──────────────────────────────────────────────────
             _scope_paragraph(doc)
 
-        _add_footer(doc)
+        _add_footer(doc, _detect_mean_sep_method(data))
         return _docx_response(doc, "vivasense_genetic_parameters_report.docx")
 
     except Exception as exc:
@@ -819,8 +821,8 @@ async def export_correlation_word(data: CorrelationExportRequest):
         n_traits = len(data.trait_names)
         doc = _new_document(
             "VivaSense Trait Correlation Report",
-            f"{data.method.capitalize()} correlation  ·  {n_traits} trait(s)  ·  "
-            f"{data.phenotypic.n_observations} genotype mean(s)",
+            f"{data.method.capitalize()} correlation  ·  {_pl(n_traits, 'trait')}  ·  "
+            f"{_pl(data.phenotypic.n_observations, 'genotype mean')}",
         )
 
         corr = CorrelationResponse(
@@ -929,7 +931,7 @@ async def export_heatmap_report(data: HeatmapExportRequest):
         n_traits = len(data.labels)
         doc = _new_document(
             "VivaSense Correlation Heatmap Report",
-            f"{data.method.capitalize()} correlation heatmap  ·  {n_traits} trait(s)",
+            f"{data.method.capitalize()} correlation heatmap  ·  {_pl(n_traits, 'trait')}",
         )
 
         doc.add_page_break()
@@ -1122,7 +1124,7 @@ async def export_descriptive_stats_word(data: DescriptiveResponse):
     try:
         doc = _new_document(
             "VivaSense Descriptive Statistics Report",
-            f"{len(data.summary_table)} trait(s) analysed",
+            f"{_pl(len(data.summary_table), 'trait')} analysed",
         )
 
         # ── 1. Executive Summary ──────────────────────────────────────────────

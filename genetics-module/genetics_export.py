@@ -2312,6 +2312,12 @@ def _add_assumption_tests_section(doc: Document, assumption_tests: Dict[str, Any
         else:
             _add_body(doc, "Assumption diagnostics were not available for this trait.", italic=True)
 
+        # Split-plot: disclose that assumption tests use pooled residuals and that
+        # the two error strata carry separate distributional assumptions (FIX 5).
+        stratification_note = assumption_tests.get("stratification_note")
+        if stratification_note:
+            _add_body(doc, f"Note: {stratification_note}", italic=True)
+
         outlier_detection = assumption_tests.get("outlier_detection")
         if isinstance(outlier_detection, dict):
             _add_heading(doc, "Outlier and Influence Screening", level=3)
@@ -2843,17 +2849,82 @@ def export_traits_to_word(
 # FOOTER
 # ============================================================================
 
-def _add_footer(doc: Document) -> None:
+# Platform citation — printed as the final paragraph of EVERY VivaSense report.
+_VIVASENSE_CITATION = (
+    "Suggested citation: Fayeun, L. S. (2026). VivaSense Stat (Version 1.0.0) "
+    "[Computer software]. Field to Insight Academy. Zenodo. "
+    "https://doi.org/10.5281/zenodo.20328141"
+)
+
+
+def _detect_mean_sep_method(data: Any) -> Optional[str]:
+    """Return the mean-separation method(s) actually used across all trait results.
+
+    Reads the authoritative ``test`` label emitted by the R engine (e.g.
+    "Fisher LSD", "Tukey HSD") rather than assuming one method.  Handles both
+    report shapes: ANOVA-export trait results expose the separation objects
+    directly, genetics-export trait results nest them under
+    ``analysis_result.result``.
+
+    Returns "Fisher LSD" / "Tukey HSD" when a single method was used, the
+    generic "mean separation" when several were mixed, or None when no mean
+    separation appears in the report (e.g. correlation/regression exports).
+    """
+    attrs = (
+        "mean_separation",
+        "main_plot_mean_separation",
+        "mean_separation_b",
+        "interaction_separation",
+    )
+    methods: set = set()
+    for tr in (getattr(data, "trait_results", None) or {}).values():
+        candidates = [tr]
+        ar = getattr(tr, "analysis_result", None)
+        if ar is not None:
+            res = getattr(ar, "result", None)
+            if res is not None:
+                candidates.append(res)
+        for obj in candidates:
+            for attr in attrs:
+                ms = getattr(obj, attr, None)
+                test = getattr(ms, "test", None) if ms is not None else None
+                if test:
+                    methods.add(str(test))
+    # Only mean-separation methods drive the label; ignore descriptive markers.
+    methods.discard("Cell Means")
+    if not methods:
+        return None
+    if methods == {"Fisher LSD"}:
+        return "Fisher LSD"
+    if methods == {"Tukey HSD"}:
+        return "Tukey HSD"
+    return "mean separation"
+
+
+def _add_footer(doc: Document, mean_sep_method: Optional[str] = None) -> None:
+    # Platform citation as the final paragraph in the document body (every report).
+    cite = doc.add_paragraph()
+    cite.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    cite_run = cite.add_run(_VIVASENSE_CITATION)
+    cite_run.font.size = Pt(8)
+    cite_run.font.italic = True
+    cite_run.font.color.rgb = RGBColor(0x60, 0x60, 0x60)
+    cite_run.font.name = "Calibri"
+
+    # Page footer — name the actual mean-separation method (never hardcode Tukey).
+    engine_line = (
+        f"VivaSense Analysis Engine v1.0  ·  "
+        f"Generated {datetime.date.today().strftime('%d %B %Y')}  ·  "
+        "Statistical analysis powered by R"
+    )
+    if mean_sep_method:
+        engine_line += f" (ANOVA + {mean_sep_method})"
     for section in doc.sections:
         footer = section.footer
         p = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
         p.clear()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = p.add_run(
-            f"VivaSense Analysis Engine v1.0  ·  "
-            f"Generated {datetime.date.today().strftime('%d %B %Y')}  ·  "
-            "Statistical analysis powered by R (ANOVA + Tukey HSD)"
-        )
+        run = p.add_run(engine_line)
         run.font.size = Pt(8)
         run.font.color.rgb = RGBColor(0x80, 0x80, 0x80)
         run.font.name = "Calibri"
@@ -2862,6 +2933,41 @@ def _add_footer(doc: Document) -> None:
 # ============================================================================
 # DOCUMENT BUILDER
 # ============================================================================
+
+def _pl(n: Optional[int], singular: str, plural: Optional[str] = None) -> str:
+    """Pluralise a count: _pl(1,'block')->'1 block', _pl(3,'block')->'3 blocks'.
+
+    Resolves the '(s)' template markers that were leaking into reports.
+    """
+    plural = plural or (singular + "s")
+    return f"{n} {singular}" if n == 1 else f"{n} {plural}"
+
+
+def _split_plot_structure(data: Any) -> Optional[Dict[str, Any]]:
+    """Return split-plot factor structure for the report header, or None.
+
+    Derived from the per-trait results (the DatasetSummary does not carry factor
+    structure).  A report is split-plot when a trait exposes a main-plot mean
+    separation.  Labels come from the treatment_label the R engine remapped to
+    the user's actual column names; level counts from the separation tables.
+    """
+    for tr in (getattr(data, "trait_results", None) or {}).values():
+        ar = getattr(tr, "analysis_result", None)
+        result = getattr(ar, "result", None) if ar is not None else None
+        if result is None:
+            result = getattr(tr, "result", None) or tr
+        mp = getattr(result, "main_plot_mean_separation", None)
+        if mp is None:
+            continue  # not a split-plot trait
+        sp = getattr(result, "mean_separation", None)
+        return {
+            "mp_label": getattr(mp, "treatment_label", None) or "Main-plot factor",
+            "sp_label": getattr(sp, "treatment_label", None) or "Sub-plot factor",
+            "n_main": len(getattr(mp, "genotype", None) or []),
+            "n_sub": len(getattr(sp, "genotype", None) or []),
+        }
+    return None
+
 
 def _build_document(data: DownloadReportRequest) -> Document:
     doc = Document()
@@ -2887,13 +2993,27 @@ def _build_document(data: DownloadReportRequest) -> Document:
 
     ds = data.dataset_summary
     mode_label = "Multi-environment" if ds.mode == "multi" else "Single-environment"
-    env_part = f"  ·  {ds.n_environments} environments" if ds.n_environments else ""
-    _unit = "treatments" if _is_agronomy else "genotypes"
-    _entry_part = f"  ·  {ds.n_genotypes} {_unit}" if ds.n_genotypes is not None else ""
+    env_part = f"  ·  {_pl(ds.n_environments, 'environment')}" if ds.n_environments else ""
+
+    # Split-plot: describe the factor structure (main-plot × sub-plot) instead of
+    # a genotype count — the design has no single 'genotype' factor, and the
+    # main-plot factor count was previously mislabelled as 'genotypes'.
+    _sp = _split_plot_structure(data)
+    if _sp:
+        _entry_part = (
+            f"  ·  {_sp['mp_label']} ({_sp['n_main']} levels)"
+            f" × {_sp['sp_label']} ({_sp['n_sub']} levels)"
+        )
+    else:
+        _unit = "treatments" if _is_agronomy else "genotypes"
+        _entry_part = (
+            f"  ·  {_pl(ds.n_genotypes, _unit[:-1], _unit)}"
+            if ds.n_genotypes is not None else ""
+        )
 
     sub = doc.add_paragraph(
         f"{mode_label}{_entry_part}  ·  "
-        f"{ds.n_reps} replications{env_part}  ·  {ds.n_traits} traits"
+        f"{_pl(ds.n_reps, 'replication')}{env_part}  ·  {_pl(ds.n_traits, 'trait')}"
     )
     sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
     if sub.runs:
@@ -2952,7 +3072,7 @@ def _build_document(data: DownloadReportRequest) -> Document:
     # ── One-time writing support section (all traits) ───────────────────────
     _add_writing_support_guide(doc, data)
 
-    _add_footer(doc)
+    _add_footer(doc, _detect_mean_sep_method(data))
     return doc
 
 

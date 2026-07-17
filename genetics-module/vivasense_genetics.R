@@ -798,7 +798,7 @@ compute_single_environment <- function(data, trait_name = "Trait",
     # Add separate informational note about influential observations
     if (n_influential_obs > 0) {
       reviewer_summary <- paste(reviewer_summary,
-        sprintf("Note: %d observation(s) flagged as influential (high leverage) and may warrant review.", n_influential_obs))
+        sprintf("Note: %d observation(s) flagged as influential (Cook's D > threshold) and may warrant review.", n_influential_obs))
     }
 
     out <- list(overall = list(
@@ -827,6 +827,21 @@ compute_single_environment <- function(data, trait_name = "Trait",
       no_influential_outliers = n_influential_obs == 0,
       summary = reviewer_summary
     )
+    # Split-plot: assumption tests run on POOLED residuals; disclose that the two
+    # error strata (whole-plot A, sub-plot B) have separate distributional
+    # assumptions and that Error A has very few df, so stratum-specific normality
+    # testing has low power.  Rendered by the export layer when present.
+    if (has_splitplot) {
+      out$stratification_note <- sprintf(
+        paste0(
+          "Assumption tests are based on pooled model residuals. In a split-plot ",
+          "design, Error A (whole-plot) and Error B (sub-plot) residuals have ",
+          "separate distributional assumptions. With only %d Error A degree(s) of ",
+          "freedom, stratum-specific normality testing has very low power."
+        ),
+        df_error_A
+      )
+    }
     if (length(out) <= 1) NULL else out
 
   }, error = function(e) {
@@ -989,12 +1004,16 @@ compute_single_environment <- function(data, trait_name = "Trait",
     message(sprintf("[SPLITPLOT] Formatted main_plot_mean_sep is.null: %s", is.null(main_plot_mean_sep)))
 
     # Sub-plot mean separation (Error B)
-    # Mirror the main-plot path: fit a simple aov() on the FULL raw data and call
-    # LSD.test in model mode with Error B injected.  Data-frame mode was fragile
-    # because its $groups structure differs subtly from model mode, and aggregating
-    # to cell means used r̄ = n_main instead of the correct r̄ = n_reps × n_main.
-    # With all r*a observations per sub_plot level, LSD.test uses r̄ = r*a, giving
-    # SE = sqrt(MS_ErrorB / (r*a)) — the correct formula for sub-plot marginal means.
+    # CRITICAL: LSD.test MUST run in DATA-FRAME mode (numeric y + trt factor) so
+    # the injected Error B (DFerror/MSerror) is actually honoured.  In MODEL mode
+    # agricolae silently OVERRIDES the DFerror/MSerror arguments with the supplied
+    # model's own residual — a prior version passed aov(trait_value ~ sub_plot +
+    # rep), whose residual pools the whole-plot (main-plot) variation into error.
+    # That inflated the sub-plot SE ~15x (e.g. 0.21 instead of 0.014) and collapsed
+    # genuinely distinct sub-plot means into the same letter group — a results-
+    # altering error.  With b*r observations per sub_plot level, data-frame mode
+    # uses r̄ = a*r and gives SE = sqrt(MS_ErrorB / (a*r)) with the a(r-1)(b-1)
+    # Error B degrees of freedom — the correct sub-plot marginal mean separation.
     sub_sep_raw <- tryCatch({
       if (is.na(df_error_B) || is.na(ms_error_B) || ms_error_B <= 0) {
         message(sprintf("[WARN] Error B invalid (df=%s ms=%s) — skipping sub-plot LSD",
@@ -1007,10 +1026,9 @@ compute_single_environment <- function(data, trait_name = "Trait",
           rep         = as.character(data$rep)
         )
         sp_all <- sp_all[!is.na(sp_all$trait_value), , drop = FALSE]
-        sp_sub_model <- aov(trait_value ~ sub_plot + rep, data = sp_all)
-        message(sprintf("[SPLITPLOT] Sub-plot LSD.test (model mode): df_B=%d ms_B=%f n=%d",
+        message(sprintf("[SPLITPLOT] Sub-plot LSD.test (data-frame mode, Error B): df_B=%d ms_B=%f n=%d",
                         df_error_B, ms_error_B, nrow(sp_all)))
-        LSD.test(sp_sub_model, "sub_plot",
+        LSD.test(y = sp_all$trait_value, trt = sp_all$sub_plot,
                  DFerror = df_error_B, MSerror = ms_error_B,
                  group = TRUE, console = FALSE)
       }

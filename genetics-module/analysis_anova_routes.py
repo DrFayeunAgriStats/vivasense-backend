@@ -198,7 +198,8 @@ def _generate_split_plot_interpretation(
         f"{SP} and the {MP} × {SP} interaction."
     ]
     if n_reps:
-        overview.append(f"The experiment comprised {n_reps} complete block(s).")
+        _block_word = "block" if n_reps == 1 else "blocks"
+        overview.append(f"The experiment comprised {n_reps} complete {_block_word}.")
     if summary.get("grand_mean") is not None:
         overview.append(
             f"The overall grand mean for {trait} across all treatment combinations "
