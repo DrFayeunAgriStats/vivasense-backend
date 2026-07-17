@@ -798,7 +798,8 @@ compute_single_environment <- function(data, trait_name = "Trait",
     # Add separate informational note about influential observations
     if (n_influential_obs > 0) {
       reviewer_summary <- paste(reviewer_summary,
-        sprintf("Note: %d observation(s) flagged as influential (Cook's D > threshold) and may warrant review.", n_influential_obs))
+        sprintf("Note: %d observation%s flagged as influential (Cook's D > threshold) and may warrant review.",
+                n_influential_obs, if (n_influential_obs == 1) "" else "s"))
     }
 
     out <- list(overall = list(
@@ -836,10 +837,10 @@ compute_single_environment <- function(data, trait_name = "Trait",
         paste0(
           "Assumption tests are based on pooled model residuals. In a split-plot ",
           "design, Error A (whole-plot) and Error B (sub-plot) residuals have ",
-          "separate distributional assumptions. With only %d Error A degree(s) of ",
+          "separate distributional assumptions. With only %d Error A degree%s of ",
           "freedom, stratum-specific normality testing has very low power."
         ),
-        df_error_A
+        df_error_A, if (isTRUE(df_error_A == 1)) "" else "s"
       )
     }
     if (length(out) <= 1) NULL else out

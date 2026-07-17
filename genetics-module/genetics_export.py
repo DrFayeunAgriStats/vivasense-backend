@@ -1063,17 +1063,17 @@ def _add_design_statement(
         _sp = _fmt_factor_label(sp_label, "the subplot factor")
         stmt = (
             f"{label} analysis was performed for {trait_name} with {_mp} assigned to main plots "
-            f"and {_sp} assigned to subplots within {n_reps or '—'} replication(s)."
+            f"and {_sp} assigned to subplots within {_pl(n_reps, 'replication') if n_reps else '— replications'}."
         )
     elif design_type in {"factorial_rcbd", "factorial_crd"}:
         stmt = (
             f"{label} analysis was performed for {trait_name} "
-            f"with {n_reps or '—'} replication(s)."
+            f"with {_pl(n_reps, 'replication') if n_reps else '— replications'}."
         )
     else:
         stmt = (
             f"{label} analysis was performed for {trait_name} "
-            f"with {n_reps or '—'} replication(s)."
+            f"with {_pl(n_reps, 'replication') if n_reps else '— replications'}."
         )
 
     p = doc.add_paragraph(stmt)
@@ -2118,7 +2118,7 @@ def _add_writing_support_guide(doc: Document, data: DownloadReportRequest) -> No
             _add_body(
                 doc,
                 f"A split-plot RCBD analysis for {row.trait} was conducted with {_MP} assigned to "
-                f"main plots and {_SP} assigned to subplots within {_n_rep} replication(s). "
+                f"main plots and {_SP} assigned to subplots within {_pl(_n_rep, 'replication')}. "
                 f"The {_MP} × {_SP} interaction was {_int_word}.",
             )
             # Main effects sentences
@@ -2221,7 +2221,7 @@ def _add_writing_support_guide(doc: Document, data: DownloadReportRequest) -> No
                 )
             else:
                 starter_means = (
-                    f"Mean separation ({result.mean_separation.test}) placed {top_genotype} among genotype(s) "
+                    f"Mean separation ({result.mean_separation.test}) placed {top_genotype} among genotypes "
                     f"with the highest observed mean in group '{top_group}'."
                 )
             _add_body(doc, starter_means)

@@ -386,7 +386,7 @@ def _build_split_plot_caution(result: Dict[str, Any]) -> Optional[str]:
     if n_reps is not None and n_reps < 3:
         notes.append(
             f"⚠ Low-replication note: This experiment uses only {n_reps} replicate "
-            "block(s). With few blocks, the whole-plot error has limited degrees of "
+            f"{'block' if n_reps == 1 else 'blocks'}. With few blocks, the whole-plot error has limited degrees of "
             "freedom, reducing power to detect main-plot factor differences. "
             "Interpret the whole-plot F-test cautiously."
         )
