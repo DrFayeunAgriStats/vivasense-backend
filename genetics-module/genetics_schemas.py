@@ -110,6 +110,9 @@ class GeneticsResult(BaseModel):
     # can render them without schema changes each time the engine adds new fields.
     descriptive_stats: Optional[Dict[str, Any]] = None
     assumption_tests: Optional[Dict[str, Any]] = None
+    # Assumption-driven transformation branch (raw + transformed models, Box-Cox
+    # lambda, back-transformed means, disclosure text). Present for CRD/RCBD.
+    transformation_analysis: Optional[Dict[str, Any]] = None
     diagnostic_observations: Optional[List[Dict[str, Any]]] = None
     diagnostic_plots: Optional[Dict[str, Any]] = None
     residuals: Optional[List[float]] = None

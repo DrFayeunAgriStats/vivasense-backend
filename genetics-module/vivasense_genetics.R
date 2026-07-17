@@ -225,6 +225,261 @@ compute_genetic_advance <- function(h2, sigma_p, i = 1.40) {
 }
 
 # ============================================================================
+# ASSUMPTION-DRIVEN TRANSFORMATION PIPELINE  (Phase 1: CRD / RCBD)
+# Single-call design: the raw model and — only if assumptions are violated —
+# the transformed model are computed together and returned in one payload.
+# No second backend round-trip. Requires MASS (namespace-qualified below).
+# ============================================================================
+
+# Median-centered Levene's (Brown-Forsythe) — no car dependency, so it runs
+# identically on every deployment. Homogeneity is tested UNCONDITIONALLY, never
+# gated by the normality result (that pre-testing distorts the error rate).
+.levene_median <- function(y, group) {
+  group <- as.factor(group)
+  ok <- is.finite(y) & !is.na(group)
+  y <- y[ok]; group <- droplevels(group[ok])
+  if (nlevels(group) < 2 || length(y) < 3) return(NULL)
+  med <- tapply(y, group, median, na.rm = TRUE)
+  z   <- abs(y - as.numeric(med[as.character(group)]))
+  fit <- tryCatch(stats::aov(z ~ group), error = function(e) NULL)
+  if (is.null(fit)) return(NULL)
+  s <- summary(fit)[[1]]
+  list(test = "Levene (median-centered)",
+       statistic = as.numeric(s[1, "F value"]),
+       p_value   = as.numeric(s[1, "Pr(>F)"]))
+}
+
+.shapiro_p <- function(resid_vec) {
+  r <- resid_vec[is.finite(resid_vec)]
+  if (length(r) < 3 || length(r) > 5000) return(list(statistic = NA_real_, p_value = NA_real_))
+  sw <- tryCatch(shapiro.test(r), error = function(e) NULL)
+  if (is.null(sw)) return(list(statistic = NA_real_, p_value = NA_real_))
+  list(statistic = as.numeric(sw$statistic), p_value = as.numeric(sw$p.value))
+}
+
+# Build forward + back-transform closures. shift = additive offset applied
+# before transform (zeros/negatives); scale = divisor (arcsine percentage -> proportion).
+.make_transform <- function(id, lambda = NA_real_, shift = 0, scale = 1) {
+  list(
+    id = id, lambda = lambda, shift = shift, scale = scale,
+    fwd = function(x) {
+      xs <- (x + shift) / scale
+      switch(id,
+        none            = x,
+        square_root     = sqrt(x + shift),
+        log             = log(x + shift),
+        reciprocal_sqrt = 1 / sqrt(x + shift),
+        reciprocal      = 1 / (x + shift),
+        arcsine         = asin(sqrt(xs)),
+        boxcox          = ((x + shift)^lambda - 1) / lambda)
+    },
+    back = function(z) {
+      switch(id,
+        none            = z,
+        square_root     = z^2 - shift,
+        log             = exp(z) - shift,
+        reciprocal_sqrt = 1 / (z^2) - shift,
+        reciprocal      = 1 / z - shift,
+        arcsine         = (sin(z)^2) * scale - shift,
+        boxcox          = (lambda * z + 1)^(1 / lambda) - shift)
+    }
+  )
+}
+
+# Map a Box-Cox lambda MLE to the nearest standard transform (snap within +/-0.25,
+# else use the raw power transform at the exact lambda).
+.map_lambda <- function(lambda, y) {
+  has_nonpos <- any(y <= 0, na.rm = TRUE)
+  low_counts <- has_nonpos || (min(y, na.rm = TRUE) < 1)
+  std <- c(none = 1, square_root = 0.5, log = 0, reciprocal_sqrt = -0.5, reciprocal = -1)
+  nearest <- names(std)[which.min(abs(std - lambda))]
+  if (abs(std[[nearest]] - lambda) > 0.25) nearest <- "boxcox"
+  if (nearest == "square_root") return(.make_transform("square_root", shift = if (low_counts) 0.5 else 0))
+  if (nearest == "log")         return(.make_transform("log", shift = if (has_nonpos || min(y, na.rm = TRUE) < 1) 1 else 0))
+  if (nearest == "reciprocal_sqrt") return(.make_transform("reciprocal_sqrt", shift = if (has_nonpos) 1 - min(y, na.rm = TRUE) else 0))
+  if (nearest == "reciprocal")      return(.make_transform("reciprocal", shift = if (has_nonpos) 1 - min(y, na.rm = TRUE) else 0))
+  if (nearest == "none")            return(.make_transform("none"))
+  .make_transform("boxcox", lambda = lambda, shift = if (has_nonpos) 1 - min(y, na.rm = TRUE) else 0)
+}
+
+# Proportion/percentage response -> arcsine as the disclosed classical default.
+.detect_proportion <- function(y) {
+  yy <- y[is.finite(y)]
+  if (length(yy) == 0) return(NULL)
+  mn <- min(yy); mx <- max(yy)
+  if (mn >= 0 && mx <= 1)              return(.make_transform("arcsine", scale = 1))
+  if (mn >= 0 && mx <= 100 && mx > 1)  return(.make_transform("arcsine", scale = 100))
+  NULL
+}
+
+.fit_design <- function(resp, geno, rep, crd_mode) {
+  d <- data.frame(y = resp, genotype = factor(geno))
+  if (!crd_mode) d$rep <- factor(rep)
+  fml <- if (crd_mode) y ~ genotype else y ~ rep + genotype
+  stats::aov(fml, data = d)
+}
+
+# Per-genotype means on transformed scale + back-transformed point & 95% CI.
+.group_means_backtransformed <- function(resp_t, geno, tf, df_error, ms_error) {
+  geno <- factor(geno); lv <- levels(geno)
+  n_g  <- tapply(resp_t, geno, function(v) sum(is.finite(v)))
+  m_t  <- tapply(resp_t, geno, mean, na.rm = TRUE)
+  se_t <- sqrt(ms_error / as.numeric(n_g))
+  tcrit <- stats::qt(0.975, df_error)
+  lo_t <- as.numeric(m_t) - tcrit * se_t
+  hi_t <- as.numeric(m_t) + tcrit * se_t
+  m_o  <- vapply(as.numeric(m_t), tf$back, numeric(1))
+  lo_o <- vapply(lo_t, tf$back, numeric(1))
+  hi_o <- vapply(hi_t, tf$back, numeric(1))
+  swap <- lo_o > hi_o  # monotone-decreasing transforms flip the bounds
+  if (any(swap, na.rm = TRUE)) { tmp <- lo_o[swap]; lo_o[swap] <- hi_o[swap]; hi_o[swap] <- tmp }
+  list(genotype = lv, mean_transformed = as.numeric(m_t), se_transformed = se_t,
+       mean_original = m_o, ci_lower_original = lo_o, ci_upper_original = hi_o)
+}
+
+.anova_columnar <- function(model) {
+  df <- as.data.frame(anova(model))
+  list(source = rownames(df), df = as.integer(df[["Df"]]),
+       ss = as.numeric(df[["Sum Sq"]]), ms = as.numeric(df[["Mean Sq"]]),
+       f_value = as.numeric(df[["F value"]]), p_value = as.numeric(df[["Pr(>F)"]]))
+}
+
+.viol_phrase <- function(norm_ok, homo_ok) {
+  bits <- c()
+  if (!norm_ok) bits <- c(bits, "non-normal residuals")
+  if (!homo_ok) bits <- c(bits, "heterogeneous variances")
+  if (length(bits) == 0) "assumption concerns" else paste(bits, collapse = " and ")
+}
+
+# MAIN: self-contained. Fits the raw model, tests assumptions, and — only if
+# violated — runs the Box-Cox transformation branch. Returns the full
+# transformation_analysis structure consumed by the API/frontend/export.
+compute_anova_transformation <- function(data, trait_name = "trait", crd_mode = FALSE,
+                                         alpha = 0.05) {
+  y    <- as.numeric(data$trait_value)
+  geno <- data$genotype
+  rep  <- if (!crd_mode) data$rep else NULL
+
+  raw_model <- tryCatch(.fit_design(y, geno, rep, crd_mode), error = function(e) NULL)
+  if (is.null(raw_model)) return(list(triggered = FALSE, error = "raw model failed"))
+  raw_sw <- .shapiro_p(as.numeric(residuals(raw_model)))
+  raw_lv <- .levene_median(y, geno)
+  raw_lv_p <- if (is.null(raw_lv)) NA_real_ else raw_lv$p_value
+  norm_ok <- isTRUE(raw_sw$p_value > alpha)
+  homo_ok <- isTRUE(raw_lv_p > alpha)
+  assumptions_ok <- norm_ok && homo_ok
+
+  raw_diagnostics <- list(
+    shapiro = raw_sw,
+    levene  = if (is.null(raw_lv)) list(statistic = NA_real_, p_value = NA_real_) else raw_lv,
+    assumptions_met = assumptions_ok
+  )
+
+  if (assumptions_ok) {
+    return(list(
+      triggered = FALSE,
+      raw_diagnostics = raw_diagnostics,
+      disclosure_text = sprintf(
+        "Residual diagnostics met ANOVA assumptions (Shapiro-Wilk W = %.3f, p = %.3f; Levene p = %.3f); no transformation was required.",
+        raw_sw$statistic, raw_sw$p_value, raw_lv_p)
+    ))
+  }
+
+  prop_tf <- .detect_proportion(y)
+  is_prop <- !is.null(prop_tf)
+  boxcox_lambda <- NA_real_; boxcox_ci <- c(NA_real_, NA_real_)
+  if (is_prop) {
+    tf <- prop_tf
+    rationale <- sprintf("Response is on a %s scale; arcsine square-root applied as the classical default (beta regression / GLM is a modern alternative, not run automatically).",
+                         if (tf$scale == 100) "percentage (0-100)" else "proportion (0-1)")
+  } else {
+    bc_shift <- if (any(y <= 0, na.rm = TRUE)) 1 - min(y, na.rm = TRUE) else 0
+    bc_df <- data.frame(.y = y + bc_shift, genotype = factor(geno))
+    bc_fml <- if (crd_mode) .y ~ genotype else { bc_df$rep <- factor(rep); .y ~ rep + genotype }
+    bc <- tryCatch(MASS::boxcox(bc_fml, data = bc_df, lambda = seq(-2, 2, 0.05), plotit = FALSE),
+                   error = function(e) NULL)
+    if (is.null(bc)) return(list(triggered = FALSE, raw_diagnostics = raw_diagnostics, error = "Box-Cox failed"))
+    boxcox_lambda <- bc$x[which.max(bc$y)]
+    thresh <- max(bc$y) - stats::qchisq(0.95, 1) / 2
+    in_ci <- bc$x[bc$y >= thresh]
+    boxcox_ci <- c(min(in_ci), max(in_ci))
+    tf <- .map_lambda(boxcox_lambda, y)
+    rationale <- sprintf("Box-Cox lambda estimate (%.2f, 95%% CI %.2f to %.2f) closest to %s.",
+                         boxcox_lambda, boxcox_ci[1], boxcox_ci[2],
+                         if (tf$id == "boxcox") sprintf("no standard value; exact power transform (lambda=%.2f) applied", boxcox_lambda) else tf$id)
+    if (tf$shift > 0) rationale <- paste0(rationale, sprintf(" Response contains low/zero values; a +%.3g offset was applied.", tf$shift))
+  }
+
+  resp_t <- tf$fwd(y)
+  if (any(!is.finite(resp_t))) return(list(triggered = FALSE, raw_diagnostics = raw_diagnostics, error = "Transform produced non-finite values"))
+  model_t <- .fit_design(resp_t, geno, rep, crd_mode)
+  resid_t <- as.numeric(residuals(model_t))
+  sw_t <- .shapiro_p(resid_t)
+  lv_t <- .levene_median(resp_t, geno)
+  lv_t_p <- if (is.null(lv_t)) NA_real_ else lv_t$p_value
+
+  at_t <- summary(model_t)[[1]]
+  df_err_t <- at_t["Residuals", "Df"]
+  ms_err_t <- at_t["Residuals", "Mean Sq"]
+  means <- .group_means_backtransformed(resp_t, geno, tf, df_err_t, ms_err_t)
+  transformed_met <- isTRUE(sw_t$p_value > alpha) && isTRUE(lv_t_p > alpha)
+
+  transform_label <- switch(tf$id,
+    square_root = "square_root", log = "log", reciprocal = "reciprocal",
+    reciprocal_sqrt = "reciprocal_sqrt", arcsine = "arcsine", boxcox = "box_cox", "none")
+  formula_used <- switch(tf$id,
+    square_root = if (tf$shift > 0) sprintf("sqrt(x + %.3g)", tf$shift) else "sqrt(x)",
+    log = if (tf$shift > 0) sprintf("log(x + %.3g)", tf$shift) else "log(x)",
+    reciprocal_sqrt = "1/sqrt(x)", reciprocal = "1/x",
+    arcsine = if (tf$scale == 100) "asin(sqrt(x/100))" else "asin(sqrt(x))",
+    boxcox = sprintf("(x^%.3f - 1)/%.3f", tf$lambda, tf$lambda), "x")
+  pretty_name <- switch(tf$id,
+    square_root = "square-root", log = "log", reciprocal = "reciprocal",
+    reciprocal_sqrt = "reciprocal square-root", arcsine = "arcsine square-root",
+    boxcox = "Box-Cox power", "no")
+  viol <- .viol_phrase(norm_ok, homo_ok)
+
+  disclosure_text <- sprintf(
+    paste0("Shapiro-Wilk indicated %s (W = %.3f, p = %.3f) and Levene's test indicated %s ",
+           "variances (p = %.3f). A %s transformation (%s) was applied based on a Box-Cox ",
+           "estimate of lambda = %s. Post-transformation diagnostics %s (Shapiro p = %.3f, Levene p = %.3f). ",
+           "Means are presented on the original scale after back-transformation; confidence intervals were ",
+           "back-transformed independently and are asymmetric on the original scale, and the standard error ",
+           "shown is on the transformed scale."),
+    if (!norm_ok) "non-normal residuals" else "acceptable normality", raw_sw$statistic, raw_sw$p_value,
+    if (!homo_ok) "heterogeneous" else "homogeneous", raw_lv_p,
+    pretty_name, formula_used,
+    if (is.na(boxcox_lambda)) "n/a (proportion data)" else sprintf("%.2f", boxcox_lambda),
+    if (transformed_met) "confirmed improved fit" else "still indicated some departure",
+    sw_t$p_value, lv_t_p)
+
+  raw_override_disclosure <- sprintf(
+    paste0("Residual diagnostics indicated %s (Shapiro-Wilk W = %.3f, p = %.3f; Levene p = %.3f); ",
+           "a %s transformation was suggested but the untransformed results are reported at the ",
+           "user's discretion. Interpret F-tests with appropriate caution."),
+    viol, raw_sw$statistic, raw_sw$p_value, raw_lv_p, pretty_name)
+
+  list(
+    triggered = TRUE,
+    raw_diagnostics = raw_diagnostics,
+    is_proportion = is_prop,
+    boxcox_lambda = if (is.na(boxcox_lambda)) NULL else boxcox_lambda,
+    boxcox_ci = if (any(is.na(boxcox_ci))) NULL else as.numeric(boxcox_ci),
+    recommended_transform = transform_label,
+    formula_used = formula_used,
+    rationale = rationale,
+    transformed_anova_table = .anova_columnar(model_t),
+    transformed_shapiro = sw_t,
+    transformed_levene = if (is.null(lv_t)) list(statistic = NA_real_, p_value = NA_real_) else lv_t,
+    transformed_assumptions_met = transformed_met,
+    means_original_scale = means,
+    ci_note = "Confidence intervals were back-transformed independently and are asymmetric on the original scale; the standard error shown is on the transformed scale.",
+    disclosure_text = disclosure_text,
+    raw_override_disclosure = raw_override_disclosure
+  )
+}
+
+# ============================================================================
 # LAYER 1: COMPUTATION LAYER
 # Core mathematical and statistical functions
 # ============================================================================
@@ -1121,6 +1376,19 @@ compute_single_environment <- function(data, trait_name = "Trait",
     if (has_factor) "factorial_rcbd" else "rcbd"
   }
 
+  # Assumption-driven transformation. Phase 1 covers single-treatment-factor
+  # designs (CRD / RCBD) where back-transformed treatment means are well defined;
+  # factorial and split-plot are handled in a later phase.
+  transformation_analysis_out <- if (!has_splitplot && !has_factor && has_genotype) {
+    tryCatch(
+      compute_anova_transformation(data, trait_name = trait_name, crd_mode = crd_mode),
+      error = function(e) {
+        message(sprintf("[WARN] Transformation analysis failed for %s: %s", trait_name, conditionMessage(e)))
+        NULL
+      }
+    )
+  } else NULL
+
   list(
     environment_mode           = "single_environment",
     design                     = design_label,
@@ -1157,7 +1425,8 @@ compute_single_environment <- function(data, trait_name = "Trait",
       flagged_observations = flagged_observations
     ),
     ms_genotype                = ms_genotype,
-    ms_error                   = ms_error
+    ms_error                   = ms_error,
+    transformation_analysis    = transformation_analysis_out
   )
 }
 

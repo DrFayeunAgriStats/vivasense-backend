@@ -186,6 +186,7 @@ class AnovaTraitResult(BaseModel):
     environment_significant: Optional[bool] = None
     gxe_significant: Optional[bool] = None
     assumption_tests: Optional[Dict[str, Any]] = None
+    transformation_analysis: Optional[Dict[str, Any]] = None
     diagnostic_observations: Optional[List[Dict[str, Any]]] = None
     diagnostic_plots: Optional[Dict[str, Any]] = None
     residuals: Optional[List[float]] = None
