@@ -497,9 +497,26 @@ compute_single_environment <- function(data, trait_name = "Trait",
   anova_table <- sanitize_anova_f_values(anova_table)
 
   # ── Observation-Level Diagnostics From Fitted ANOVA Model ─────────────────
+  # For split-plot the fitted object is an aovlist (Error(rep/main_plot)).  Its
+  # strata are named "(Intercept)", "rep", "rep:main_plot", "Within" — the
+  # display label "Error: Within" is NOT an element name, so model[["Error:
+  # Within"]] silently returns NULL and residuals()/fitted() come back empty,
+  # which the trimming below padded into a full vector of NAs (breaking the
+  # response schema).  Even the correct element model[["Within"]] yields only
+  # (n - whole-plot df) projected residuals that cannot be paired 1:1 with
+  # observations.  Instead fit the equivalent fixed-effects model with the
+  # whole-plot error (rep:main_plot) absorbed as a fixed term: residuals(),
+  # fitted(), rstandard() and cooks.distance() then return one value per
+  # observation at the sub-plot error scale — exactly what the diagnostic
+  # plots need.
   diag_model <- tryCatch({
-    if (has_splitplot) model[["Error: Within"]] else model
-  }, error = function(e) model)
+    if (has_splitplot) {
+      lm(trait_value ~ rep + main_plot + rep:main_plot + sub_plot + main_plot:sub_plot,
+         data = data)
+    } else {
+      model
+    }
+  }, error = function(e) if (has_splitplot) NULL else model)
 
   diag_frame <- tryCatch(model.frame(diag_model), error = function(e) NULL)
 
@@ -542,11 +559,16 @@ compute_single_environment <- function(data, trait_name = "Trait",
   message(sprintf("[DEBUG] diag_n=%d, available_lengths=%s", diag_n, paste(available_lengths, collapse=",")))
 
   if (diag_n > 0) {
-    observed_full <- observed_full[seq_len(diag_n)]
-    fitted_full <- fitted_full[seq_len(diag_n)]
-    resid_full <- resid_full[seq_len(diag_n)]
-    standardized_resid_full <- standardized_resid_full[seq_len(diag_n)]
-    cooks_distance_full <- cooks_distance_full[seq_len(diag_n)]
+    # Trim to the common length, but never PAD: an array shorter than diag_n
+    # (e.g. length 0 from a model that could not produce residuals) must become
+    # NULL, not a vector silently padded out with NAs — NA elements would fail
+    # the List[float] response schema downstream.
+    trim_or_null <- function(x, n) if (length(x) >= n) x[seq_len(n)] else NULL
+    observed_full <- trim_or_null(observed_full, diag_n)
+    fitted_full <- trim_or_null(fitted_full, diag_n)
+    resid_full <- trim_or_null(resid_full, diag_n)
+    standardized_resid_full <- trim_or_null(standardized_resid_full, diag_n)
+    cooks_distance_full <- trim_or_null(cooks_distance_full, diag_n)
     message(sprintf("[DEBUG] Diagnostic arrays trimmed to length %d", diag_n))
   } else {
     message("[DEBUG] diag_n=0, all diagnostic arrays set to NULL")
@@ -670,7 +692,7 @@ compute_single_environment <- function(data, trait_name = "Trait",
     # Split-plot: use within-stratum (Error B) residuals for Shapiro-Wilk
     resid_vec <- if (!is.null(resid_full)) resid_full else {
       tryCatch(
-        if (has_splitplot) residuals(model[["Error: Within"]]) else residuals(model),
+        if (has_splitplot) residuals(model[["Within"]]) else residuals(model),
         error = function(e) residuals(model)
       )
     }
