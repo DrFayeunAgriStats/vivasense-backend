@@ -92,6 +92,9 @@ class DownloadReportRequest(UploadAnalysisResponse):
     module: str = "genetic_parameters"
     correlation: Optional[CorrelationResponse] = None
     path_analysis: Optional[PathAnalysisResponse] = None
+    # Which branch of the assumption-driven transformation the user selected:
+    # "transformed" (default when triggered) or "raw" (kept raw despite a flag).
+    transformation_choice: Optional[str] = None
 
 
 # ─── Tukey-group colour palette ───────────────────────────────────────────────
@@ -2804,6 +2807,15 @@ def export_traits_to_word(
                 _add_assumption_tests_section(doc, result.assumption_tests)
                 doc.add_paragraph()
 
+            # ── 5b. Assumption-driven transformation (CRD/RCBD) ───────────────
+            _ta = getattr(result, "transformation_analysis", None)
+            if _ta:
+                _add_transformation_section(
+                    doc, _ta,
+                    choice=getattr(results, "transformation_choice", None),
+                )
+                doc.add_paragraph()
+
             # ── 6. Genetic Parameters (skipped for ANOVA module and agronomy domain) ──
             _is_agronomy_domain = not is_plant_breeding_domain(domain)
             if not is_anova and not _is_agronomy_domain:
@@ -2933,6 +2945,87 @@ def _add_footer(doc: Document, mean_sep_method: Optional[str] = None) -> None:
 # ============================================================================
 # DOCUMENT BUILDER
 # ============================================================================
+
+def _add_transformation_section(doc: Document, ta: Dict[str, Any],
+                                choice: Optional[str] = None) -> None:
+    """Assumption-driven transformation (Phase 1: CRD/RCBD).
+
+    `ta` is result.transformation_analysis from the R engine. `choice` is "raw"
+    when the user kept the untransformed results despite a flagged violation
+    (drives the caution disclosure), else the transformed branch is presented.
+    """
+    if not isinstance(ta, dict):
+        return
+
+    def _idx(lst, i):
+        return lst[i] if isinstance(lst, list) and i < len(lst) else None
+
+    _add_heading(doc, "Assumption Diagnostics & Data Transformation", level=2)
+    raw = ta.get("raw_diagnostics") or {}
+    raw_sw = raw.get("shapiro") or {}
+    raw_lv = raw.get("levene") or {}
+
+    if not ta.get("triggered"):
+        # Clean case — one clear sentence, no transformed clutter.
+        _add_body(doc, ta.get("disclosure_text")
+                  or "Residual diagnostics met the ANOVA assumptions; no transformation was required.")
+        return
+
+    tf = str(ta.get("recommended_transform", "—")).replace("_", " ")
+    formula = ta.get("formula_used", "—")
+    lam = ta.get("boxcox_lambda")
+    ci = ta.get("boxcox_ci") or []
+    if lam is not None:
+        lam_txt = f"Box-Cox λ = {lam:.2f}" + (f" (95% CI {ci[0]:.2f} to {ci[1]:.2f})" if len(ci) == 2 else "")
+    else:
+        lam_txt = "arcsine (proportion/percentage data)"
+    _add_body(doc, f"Recommended transformation: {tf}  ·  {formula}  ·  {lam_txt}", bold=True)
+    if ta.get("rationale"):
+        _add_body(doc, ta["rationale"])
+
+    t_sw = ta.get("transformed_shapiro") or {}
+    t_lv = ta.get("transformed_levene") or {}
+    _add_stat_table(
+        doc,
+        ["Diagnostic", "Raw model", "Transformed model"],
+        [
+            ["Shapiro-Wilk p", _fmt_p(raw_sw.get("p_value")), _fmt_p(t_sw.get("p_value"))],
+            ["Levene p", _fmt_p(raw_lv.get("p_value")), _fmt_p(t_lv.get("p_value"))],
+            ["Assumptions met", "Yes" if raw.get("assumptions_met") else "No",
+             "Yes" if ta.get("transformed_assumptions_met") else "No"],
+        ],
+    )
+
+    means = ta.get("means_original_scale") or {}
+    genos = means.get("genotype") or []
+    if genos:
+        rows = []
+        for i, g in enumerate(genos):
+            rows.append([
+                str(g),
+                _fmt(_idx(means.get("mean_transformed"), i)),
+                _fmt(_idx(means.get("mean_original"), i)),
+                _fmt(_idx(means.get("ci_lower_original"), i)),
+                _fmt(_idx(means.get("ci_upper_original"), i)),
+            ])
+        doc.add_paragraph()
+        _add_body(doc, "Treatment means back-transformed to the original scale:", bold=True)
+        _add_stat_table(
+            doc,
+            ["Treatment", "Mean (transformed)", "Mean (original)", "95% CI lower", "95% CI upper"],
+            rows, numeric_cols={1, 2, 3, 4},
+        )
+    if ta.get("ci_note"):
+        _add_body(doc, ta["ci_note"], italic=True)
+
+    # Methods-section disclosure — reflects the chosen branch. When the user
+    # keeps raw despite a flagged violation, the report says so explicitly.
+    doc.add_paragraph()
+    if choice == "raw":
+        _add_body(doc, ta.get("raw_override_disclosure") or ta.get("disclosure_text") or "", italic=True)
+    else:
+        _add_body(doc, ta.get("disclosure_text") or "", italic=True)
+
 
 def _pl(n: Optional[int], singular: str, plural: Optional[str] = None) -> str:
     """Pluralise a count: _pl(1,'block')->'1 block', _pl(3,'block')->'3 blocks'.
