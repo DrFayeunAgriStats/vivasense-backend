@@ -341,7 +341,7 @@ def rewrite_significance_claim(
     norm_sev = classify_assumption_severity(normality_p, alpha=alpha,
                                             n=n_observations, w_statistic=shapiro_w)
     homo_sev = classify_assumption_severity(homogeneity_p, alpha=alpha)
-    violated = [name for name, sev in
+    violated = [(name, sev) for name, sev in
                 (("the normality assumption", norm_sev), ("the homogeneity-of-variance assumption", homo_sev))
                 if sev in ("mild", "moderate", "strong")]
 
@@ -351,12 +351,25 @@ def rewrite_significance_claim(
 
     if claim.endswith("."):
         claim = claim[:-1]
-    joined = violated[0] if len(violated) == 1 else " and ".join(violated)
-    caveat = (
-        f"; however, residual diagnostics indicate that {joined} "
-        f"{'was' if len(violated) == 1 else 'were'} not supported, so this result "
-        f"should be interpreted with caution"
-    )
+    names = [name for name, _ in violated]
+    joined = names[0] if len(names) == 1 else " and ".join(names)
+    was_were = "was" if len(names) == 1 else "were"
+    worst = _worst(*[sev for _, sev in violated])
+
+    # Language scales with the worst violated-assumption severity.
+    if worst == "strong":
+        intro = f"residual diagnostics indicate a clear violation of {joined}"
+        caution = ("so these results should be interpreted with considerable caution "
+                   "and treated as provisional")
+    elif worst == "moderate":
+        intro = f"residual diagnostics indicate that {joined} {was_were} not supported"
+        caution = "so this result should be interpreted with caution"
+    else:  # mild
+        intro = f"residual diagnostics indicate a slight departure from {joined}"
+        caution = ("so this result should be interpreted with modest caution, "
+                   "though it remains broadly reliable")
+
+    caveat = f"; however, {intro}, {caution}"
     if transformed_applied:
         caveat += (
             ", and a variance-stabilising transformation was applied whose "
