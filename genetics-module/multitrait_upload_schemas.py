@@ -249,3 +249,11 @@ class UploadAnalysisResponse(BaseModel):
         description="Analysis module: 'anova' | 'genetic_parameters' | 'correlation'. "
                     "Controls which sections appear in the Word export.",
     )
+    # SRF Evidence Level (§4.4). A VivaSense analysis computed from the user's
+    # uploaded raw dataset is always Level A. Carried on the payload so
+    # programmatic/API consumers see the same evidence class the report footer
+    # names. A property of the analysis run, not the platform.
+    evidence_level: str = Field(
+        default="A",
+        description="SRF Evidence Level: A (raw-data analysis) | B | C | D | E.",
+    )
