@@ -52,6 +52,8 @@ from interpretation_policy import (
     evidence_level_line,
     compute_reliability,
     classify_directionality,
+    rewrite_significance_claim,
+    enforce_institutional_language,
 )
 import result_cache
 from genetics_interpretation import (
@@ -2015,6 +2017,7 @@ def _add_interpretation_section(
             if interpretation_text:
                 logger.info("Generated ANOVA interpretation on-the-fly: %d characters", len(interpretation_text))
 
+        interpretation_text = _apply_interpretation_policy(interpretation_text, trait_name, result)
         if interpretation_text:
             _add_heading(doc, "Statistical Interpretation", level=3)
             _add_body(doc, interpretation_text)
@@ -2043,6 +2046,7 @@ def _add_interpretation_section(
         )
         logger.info("Generated genetics interpretation: %d characters", len(interpretation_text))
 
+        interpretation_text = _apply_interpretation_policy(interpretation_text, trait_name, result)
         if interpretation_text:
             _add_heading(doc, "Statistical Interpretation", level=3)
             _add_body(doc, interpretation_text)
@@ -3040,6 +3044,40 @@ def _add_transformation_section(doc: Document, ta: Dict[str, Any],
         _add_body(doc, ta.get("raw_override_disclosure") or ta.get("disclosure_text") or "", italic=True)
     else:
         _add_body(doc, ta.get("disclosure_text") or "", italic=True)
+
+
+def _apply_interpretation_policy(text: Optional[str], trait_name: str, result: Any) -> Optional[str]:
+    """SRF Layer 2a/3 pass over generated interpretation prose.
+
+    (1) Institutional language (§5.2, §5.8): objective-aware wording — never
+        "best/worst" for context_dependent/descriptive traits — and downgrade
+        overstated magnitude adjectives.
+    (2) Integrated assumption caveat (§3.3): when residual diagnostics were
+        violated, weave a caution clause INTO the interpretation narrative rather
+        than leaving the significance claim un-caveated. Skipped if the text
+        already discusses assumptions/caution to avoid duplication.
+    """
+    if not text:
+        return text
+    direction = classify_directionality(trait_name)
+    text = enforce_institutional_language(text, direction)
+
+    at = getattr(result, "assumption_tests", None)
+    if isinstance(at, dict):
+        norm_p = (at.get("normality") or {}).get("p_value")
+        homo_p = (at.get("homogeneity") or {}).get("p_value")
+        ta = getattr(result, "transformation_analysis", None)
+        transformed = bool(isinstance(ta, dict) and ta.get("triggered"))
+        low = text.lower()
+        if "caution" not in low and "assumption" not in low:
+            base = "The ANOVA results above are reported"
+            woven = rewrite_significance_claim(
+                base, normality_p=norm_p, homogeneity_p=homo_p,
+                transformed_applied=transformed,
+            )
+            if woven != base:
+                text = text.rstrip() + " " + woven
+    return text
 
 
 def _add_reliability_badge(doc: Document, result: Any) -> None:
