@@ -48,6 +48,11 @@ from genetics_schemas import AnovaTable, MeanSeparation, InteractionMeans, Genet
 from multitrait_upload_schemas import UploadAnalysisResponse, SummaryTableRow, TraitResult
 from module_schemas import PathAnalysisResponse
 from trait_relationships_schemas import CorrelationResponse
+from interpretation_policy import (
+    evidence_level_line,
+    compute_reliability,
+    classify_directionality,
+)
 import result_cache
 from genetics_interpretation import (
     generate_genetics_interpretation,
@@ -2726,6 +2731,7 @@ def export_traits_to_word(
         try:
             # ── 1. Executive Summary ─────────────────────────────────────────
             _add_executive_summary(doc, trait, result, is_anova=is_anova, domain=domain)
+            _add_reliability_badge(doc, result)
             doc.add_paragraph()
 
             # ── 2. Descriptive Statistics ────────────────────────────────────
@@ -2923,6 +2929,15 @@ def _add_footer(doc: Document, mean_sep_method: Optional[str] = None) -> None:
     cite_run.font.color.rgb = RGBColor(0x60, 0x60, 0x60)
     cite_run.font.name = "Calibri"
 
+    # SRF Evidence Level (§4.4) — every report footer names its evidence class.
+    # VivaSense-generated analyses on user data are always Level A.
+    ev = doc.add_paragraph()
+    ev.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    ev_run = ev.add_run(evidence_level_line())
+    ev_run.font.size = Pt(8)
+    ev_run.font.color.rgb = RGBColor(0x60, 0x60, 0x60)
+    ev_run.font.name = "Calibri"
+
     # Page footer — name the actual mean-separation method (never hardcode Tukey).
     engine_line = (
         f"VivaSense Analysis Engine v1.0  ·  "
@@ -3025,6 +3040,33 @@ def _add_transformation_section(doc: Document, ta: Dict[str, Any],
         _add_body(doc, ta.get("raw_override_disclosure") or ta.get("disclosure_text") or "", italic=True)
     else:
         _add_body(doc, ta.get("disclosure_text") or "", italic=True)
+
+
+def _add_reliability_badge(doc: Document, result: Any) -> None:
+    """SRF Reliability composite (§4.3) rendered as an Executive-Summary badge.
+
+    Reads Layer-1 assumption/influence facts only; the level + per-check reasons
+    come from interpretation_policy.compute_reliability (Layer 2). Renders nothing
+    when the analysis carries no assumption facts (e.g. designs without them).
+    """
+    at = getattr(result, "assumption_tests", None)
+    if not isinstance(at, dict):
+        return
+    norm = at.get("normality") or {}
+    homo = at.get("homogeneity") or {}
+    od = at.get("outlier_detection") or {}
+    rel = compute_reliability(
+        normality_p=norm.get("p_value"),
+        homogeneity_p=homo.get("p_value"),
+        n_influential=od.get("n_influential_observations"),
+        is_balanced=None,
+    )
+    if not rel["reasons"]:
+        return
+    _add_body(doc, f"Reliability: {rel['level']}", bold=True)
+    _mark = {"pass": "✓", "warn": "⚠", "fail": "✗"}
+    for r in rel["reasons"]:
+        doc.add_paragraph(f"{_mark.get(r['status'], '•')} {r['text']}", style="List Bullet")
 
 
 def _pl(n: Optional[int], singular: str, plural: Optional[str] = None) -> str:
