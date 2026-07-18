@@ -3046,6 +3046,19 @@ def _add_transformation_section(doc: Document, ta: Dict[str, Any],
         _add_body(doc, ta.get("disclosure_text") or "", italic=True)
 
 
+def _n_obs(result: Any) -> Optional[int]:
+    """Observation count for the marginal-normality severity band. Residual length
+    is the most direct source; falls back to n_genotypes * n_reps."""
+    resid = getattr(result, "residuals", None)
+    if isinstance(resid, list) and resid:
+        return len(resid)
+    ng = getattr(result, "n_genotypes", None)
+    nr = getattr(result, "n_reps", None)
+    if isinstance(ng, int) and isinstance(nr, int):
+        return ng * nr
+    return None
+
+
 def _apply_interpretation_policy(text: Optional[str], trait_name: str, result: Any) -> Optional[str]:
     """SRF Layer 2a/3 pass over generated interpretation prose.
 
@@ -3074,6 +3087,8 @@ def _apply_interpretation_policy(text: Optional[str], trait_name: str, result: A
             woven = rewrite_significance_claim(
                 base, normality_p=norm_p, homogeneity_p=homo_p,
                 transformed_applied=transformed,
+                n_observations=_n_obs(result),
+                shapiro_w=(at.get("normality") or {}).get("statistic"),
             )
             if woven != base:
                 text = text.rstrip() + " " + woven
@@ -3098,6 +3113,8 @@ def _add_reliability_badge(doc: Document, result: Any) -> None:
         homogeneity_p=homo.get("p_value"),
         n_influential=od.get("n_influential_observations"),
         is_balanced=None,
+        n_observations=_n_obs(result),
+        shapiro_w=norm.get("statistic"),
     )
     if not rel["reasons"]:
         return

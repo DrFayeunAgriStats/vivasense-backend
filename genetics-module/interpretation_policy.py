@@ -24,57 +24,85 @@ from typing import Any, Dict, List, Optional
 # maximize | minimize | context_dependent | descriptive_only
 # ============================================================================
 
-# Curated seed list. Community-contributable later (§6.4). Keys are normalised
-# (lower-case, spaces/hyphens -> underscores).
+# Seed vocabulary for Nigerian cowpea / maize / rice / vegetable breeding,
+# proposed by the biometrics lead (Dr Fayeun) 2026-07-18. Keys are normalised
+# (lower-case, spaces/hyphens -> underscores). Community-contributable, subject
+# to biometrics-lead review (§6.4).
+#
+# OPEN QUESTIONS still under co-author (Dr Adunola) review — kept at the
+# conservative value below until resolved:
+#   * 100/1000-seed weight: set 'maximize' (larger seed generally favoured), but
+#     some markets favour smaller seed — may become context_dependent per crop.
+#   * plant_height: set 'context_dependent' (cowpea/sorghum often prefer shorter
+#     for lodging; maize often taller) — a crop-conditional resolution is future work.
 TRAIT_DIRECTIONALITY: Dict[str, str] = {
-    # higher is better
+    # ── maximize: yield & yield components ─────────────────────────────────
     "yield": "maximize",
+    "yield_kg_ha": "maximize",
     "grain_yield": "maximize",
-    "seed_yield": "maximize",
-    "biomass": "maximize",
-    "hundred_seed_weight": "maximize",
-    "thousand_grain_weight": "maximize",
-    "number_of_pods": "maximize",
-    "number_of_seeds": "maximize",
-    "number_of_tillers": "maximize",
-    "protein_content": "maximize",
-    "oil_content": "maximize",
-    "germination_percentage": "maximize",
-    "emergence": "maximize",
-    "vigour": "maximize",
-    "survival": "maximize",
-    # lower is better
-    "disease_severity": "minimize",
-    "disease_incidence": "minimize",
-    "lodging": "minimize",
-    "lodging_percentage": "minimize",
-    "pest_damage": "minimize",
-    "shattering": "minimize",
-    "sterility": "minimize",
-    "days_to_wilt": "minimize",
-    # direction depends on objective
+    "grain_yield_kg_ha": "maximize",
+    "grain_yield_t_ha": "maximize",
+    "pod_yield_kg_ha": "maximize",
+    "seed_yield_kg_ha": "maximize",
+    "biomass_kg_ha": "maximize",
+    "dry_matter_kg_ha": "maximize",
+    "fodder_yield": "maximize",
+    "pods_per_plant": "maximize",
+    "seeds_per_pod": "maximize",
+    "panicles_per_plant": "maximize",
+    "tillers_per_plant": "maximize",
+    "harvest_index": "maximize",
+    # seed weight — see OPEN QUESTIONS above
+    "100_seed_weight": "maximize",
+    "1000_grain_weight": "maximize",
+    "test_weight": "maximize",
+    # quality
+    "protein_content_pct": "maximize",
+    "oil_content_pct": "maximize",
+    # ── minimize: stresses, losses, storability ────────────────────────────
+    "disease_severity_score": "minimize",
+    "rust_score": "minimize",
+    "blast_score": "minimize",
+    "striga_count": "minimize",
+    "aphid_damage": "minimize",
+    "bruchid_damage": "minimize",
+    "lodging_score": "minimize",
+    "shattering_score": "minimize",
+    "moisture_content_pct": "minimize",
+    # ── context_dependent: phenology, stature, physiology ──────────────────
     "days_to_flowering": "context_dependent",
+    "days_to_50pct_flowering": "context_dependent",
     "days_to_maturity": "context_dependent",
-    "days_to_50_flowering": "context_dependent",
-    "plant_height": "context_dependent",
-    "maturity": "context_dependent",
+    "days_to_pod_fill": "context_dependent",
+    "plant_height_cm": "context_dependent",   # see OPEN QUESTIONS above
+    "leaf_area_index": "context_dependent",
+    "chlorophyll_content_spad": "context_dependent",
+    "canopy_temperature": "context_dependent",
+    # ── descriptive_only: categorical / aesthetic ─────────────────────────
+    "seed_colour_score": "descriptive_only",
+    "flower_colour": "descriptive_only",
+    "growth_habit_score": "descriptive_only",
+    "pod_colour": "descriptive_only",
 }
 
 # Keyword heuristics, applied in priority order when a trait is not in the table.
 _MINIMIZE_KW = (
     "disease", "severity", "incidence", "infection", "lodging", "pest", "damage",
     "sterility", "shatter", "blight", "rust", "smut", "rot", "aphid", "borer",
-    "wilt", "necrosis", "defect",
+    "wilt", "necrosis", "defect", "striga", "bruchid", "weevil", "infestation",
 )
 _CONTEXT_KW = (
     "days_to", "day_to", "flowering", "maturity", "duration", "time_to",
-    "earliness", "height", "cycle",
+    "earliness", "height", "cycle", "canopy_temperature",
 )
+# NB: 'score'/'rating' deliberately excluded — too ambiguous (a disease score is
+# minimize, a vigour score maximize). Unlisted '*_score' traits fall through to
+# descriptive_only rather than being mislabelled maximize.
 _MAXIMIZE_KW = (
     "yield", "weight", "biomass", "vigour", "vigor", "germination", "emergence",
     "tiller", "pod", "grain", "seed", "protein", "oil", "content", "count",
     "number", "size", "length", "width", "branch", "leaf_area", "chlorophyll",
-    "survival", "score", "rating",
+    "survival", "harvest_index",
 )
 
 DIRECTIONS = ("maximize", "minimize", "context_dependent", "descriptive_only")
@@ -128,11 +156,23 @@ def directional_phrase(direction: str) -> Dict[str, str]:
 
 def classify_assumption_severity(p_value: Optional[float],
                                  passed: Optional[bool] = None,
-                                 alpha: float = 0.05) -> str:
-    """none | mild | moderate | strong from a test p-value.
+                                 alpha: float = 0.05,
+                                 n: Optional[int] = None,
+                                 w_statistic: Optional[float] = None) -> str:
+    """none | mild | moderate | strong from a test p-value (CRD directive v2 bands).
 
-    A pass (p >= alpha) is 'none'. Below alpha, severity deepens with distance:
-    mild [0.01, alpha), moderate [0.001, 0.01), strong (< 0.001).
+      p >= alpha                         -> none
+      p < 0.001                          -> strong
+      0.001 <= p < 0.01                  -> moderate
+      0.01  <= p < alpha (0.05):
+          mild   if n >= 50 and W >= 0.95   (over-powered test, trivial departure)
+          else moderate                     (default: treat a marginal violation
+                                             cautiously when the sample is small or
+                                             the Shapiro W is not high)
+
+    n and W refine only the marginal [0.01, alpha) band and only apply to
+    normality (Shapiro W). Homogeneity (Levene, no W) falls to the 'else moderate'
+    branch in that band, which is the intended conservative behaviour.
     """
     if p_value is None:
         return "none"
@@ -142,11 +182,14 @@ def classify_assumption_severity(p_value: Optional[float],
         return "none"
     if p >= alpha:
         return "none"
-    if p >= 0.01:
-        return "mild"
-    if p >= 0.001:
+    if p < 0.001:
+        return "strong"
+    if p < 0.01:
         return "moderate"
-    return "strong"
+    # 0.01 <= p < alpha
+    if n is not None and w_statistic is not None and n >= 50 and w_statistic >= 0.95:
+        return "mild"
+    return "moderate"
 
 
 _SEVERITY_ORDER = {"none": 0, "mild": 1, "moderate": 2, "strong": 3}
@@ -167,15 +210,21 @@ def compute_reliability(
     n_influential: Optional[int] = None,
     is_balanced: Optional[bool] = None,
     alpha: float = 0.05,
+    n_observations: Optional[int] = None,
+    shapiro_w: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Composite reliability from Layer-1 facts -> {level, reasons}.
 
     level: High | Moderate | Low. reasons: per-check {status: pass|warn|fail, text}.
     Mapping: any 'strong' failure -> Low; any 'moderate'/'mild' failure or
     influence/imbalance warning -> Moderate; otherwise High.
+
+    n_observations + shapiro_w refine the marginal-normality band (see
+    classify_assumption_severity). They apply to normality only.
     """
     reasons: List[Dict[str, str]] = []
-    norm_sev = classify_assumption_severity(normality_p, alpha=alpha)
+    norm_sev = classify_assumption_severity(normality_p, alpha=alpha,
+                                            n=n_observations, w_statistic=shapiro_w)
     homo_sev = classify_assumption_severity(homogeneity_p, alpha=alpha)
 
     if normality_p is not None:
@@ -279,6 +328,8 @@ def rewrite_significance_claim(
     homogeneity_p: Optional[float] = None,
     transformed_applied: bool = False,
     alpha: float = 0.05,
+    n_observations: Optional[int] = None,
+    shapiro_w: Optional[float] = None,
 ) -> str:
     """§3.3 — integrate assumption caveats INTO the significance sentence rather
     than prepending a warning block. Returns the (possibly rewritten) sentence.
@@ -287,7 +338,8 @@ def rewrite_significance_claim(
     'however, ...' clause naming the specific violated assumption(s) and the
     interpret-with-caution guidance, and notes when a transformation restored fit.
     """
-    norm_sev = classify_assumption_severity(normality_p, alpha=alpha)
+    norm_sev = classify_assumption_severity(normality_p, alpha=alpha,
+                                            n=n_observations, w_statistic=shapiro_w)
     homo_sev = classify_assumption_severity(homogeneity_p, alpha=alpha)
     violated = [name for name, sev in
                 (("the normality assumption", norm_sev), ("the homogeneity-of-variance assumption", homo_sev))
