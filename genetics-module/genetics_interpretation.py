@@ -498,11 +498,22 @@ def generate_genetics_interpretation_sections(
     - Risk flags (GxE, small n, etc.)
     
     NO freeform generation. NO template placeholders. NO bypassed validators.
-    
+
     Returns:
         GeneticsInterpretationSections with all required fields populated
     """
-    
+
+    # ── Structural single-environment guard ──────────────────────────────
+    # With < 2 environments there is no estimable Environment or G×E effect.
+    # Neutralise every environment/GxE input at the entry point so that NO
+    # downstream branch — significance risk flags, variance-relationship text,
+    # etc. — can emit a cross-environment claim. This makes the invalid state
+    # unreachable rather than suppressing it conditionally per branch.
+    if _is_single_environment_analysis(analysis_type):
+        environment_significant = False
+        gxe_significant = False
+        anova_f_env = anova_p_env = anova_f_gxe = anova_p_gxe = None
+
     h2_class = _classify_heritability(h2)
     gam_class = _classify_gam(gam)
     
@@ -743,6 +754,15 @@ def generate_genetics_interpretation(
     Returns:
         (interpretation_text, implication_text)
     """
+    # ── Structural single-environment guard ──────────────────────────────
+    # See generate_genetics_interpretation_sections: with < 2 environments the
+    # Environment / G×E branches (agronomy path lines below AND the plant-breeding
+    # path) must be unreachable. Neutralise the inputs once, here, at the entry.
+    if _is_single_environment_analysis(analysis_type):
+        environment_significant = False
+        gxe_significant = False
+        anova_f_env = anova_p_env = anova_f_gxe = anova_p_gxe = None
+
     if not is_plant_breeding_domain(domain):
         interpretation_parts = [
             f"Treatment response for '{trait_name}' was evaluated under the tested conditions."

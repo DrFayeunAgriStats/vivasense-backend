@@ -933,12 +933,27 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
         if request.environment_column
         else None
     )
+
+    # ── Effective-mode guard ─────────────────────────────────────────────────
+    # A "multi" request whose environment column resolves to < 2 levels cannot
+    # support Environment / GxE estimation. Downgrade to single-environment so
+    # the R engine never fits those terms, and record a warning for the client.
+    effective_mode = request.mode
+    env_downgrade_warning: Optional[str] = None
+    if request.mode == "multi" and n_environments is not None and n_environments < 2:
+        effective_mode = "single"
+        env_downgrade_warning = (
+            f"Only {n_environments} environment level detected in "
+            f"'{request.environment_column}'; analysis proceeded as single-environment. "
+            "Environment and GxE statistics are not estimable and were omitted."
+        )
+
     dataset_summary = DatasetSummary(
         n_genotypes=n_genotypes,
         n_reps=n_reps,
         n_environments=n_environments,
         n_traits=len(request.trait_columns),
-        mode=request.mode,
+        mode=effective_mode,
     )
 
     summary_table: List[SummaryTableRow] = []
@@ -946,7 +961,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
     failed_traits: List[str] = []
     anova_type_warning: Optional[str] = None
 
-    env_col_for_mode = request.environment_column if request.mode == "multi" else None
+    env_col_for_mode = request.environment_column if effective_mode == "multi" else None
     # factor_column is only applicable in single-env mode
     factor_col = getattr(request, "factor_column", None) if request.mode == "single" else None
     numeric_factor_columns = [
@@ -972,7 +987,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
     MAX_CONCURRENT_R_PROCESSES = 4
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_R_PROCESSES)
 
-    crd_mode = rep_column is None and request.mode == "single" and request.design_type not in ("split_plot_rcbd", "factorial")
+    crd_mode = rep_column is None and effective_mode == "single" and request.design_type not in ("split_plot_rcbd", "factorial")
 
     async def analyze_single_trait(trait: str):
         async with semaphore:
@@ -1016,7 +1031,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                 result_dict = await asyncio.to_thread(
                     r_engine.run_analysis,
                     data=observations,
-                    mode=request.mode,
+                    mode=effective_mode,
                     trait_name=trait,
                     random_environment=request.random_environment,
                     crd_mode=crd_mode,
@@ -1120,12 +1135,19 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                 )
 
                 # Attach analysis_context so the frontend can read is_single_environment,
-                # environment_count, and design_type without relying on the new pipeline.
+                # environment_count, and design_type. These reflect the EFFECTIVE mode
+                # (after any single-environment downgrade), not the requested mode, so
+                # they can never contradict each other.
+                _is_single_env = effective_mode == "single"
                 result_dict["analysis_context"] = {
-                    "is_single_environment": request.mode == "single",
+                    "is_single_environment": _is_single_env,
                     "environment_count": n_environments if n_environments is not None else 1,
-                    "design_type": request.design_type or request.mode,
+                    "design_type": "single" if _is_single_env else (request.design_type or effective_mode),
                 }
+
+                # Prepend the downgrade notice to this trait's data warnings.
+                if env_downgrade_warning:
+                    balance_warnings = [env_downgrade_warning, *balance_warnings]
 
                 # Validate the dict against the real GeneticsResponse schema.
                 validated = GeneticsResponse(**result_dict)

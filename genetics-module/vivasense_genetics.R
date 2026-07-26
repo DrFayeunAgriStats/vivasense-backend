@@ -1178,7 +1178,12 @@ compute_single_environment <- function(data, trait_name = "Trait",
     variance_components_out <- list(
       sigma2_genotype   = sigma2_genotype,
       sigma2_error      = sigma2_error,
-      sigma2_phenotypic = sigma2_phenotypic
+      sigma2_phenotypic = sigma2_phenotypic,
+      # Single-environment basis: no sigma2_ge term exists in the model, so the
+      # heritability denominator drops it entirely (not zeroed). Reported here so
+      # downstream layers can distinguish this from the multi-env fixed/random
+      # environment models.
+      heritability_basis = "single_environment_model"
     )
     heritability_out <- list(
       h2_broad_sense       = h2,
@@ -1876,7 +1881,33 @@ genetics_analysis <- function(data,
 
   selection_intensity <- normalize_selection_intensity(selection_intensity)
 
-  # Validate input data
+  # ── Guard: multi-environment estimation requires >= 2 environment levels ──
+  # A single-level "environment" factor has 0 degrees of freedom for the
+  # Environment main effect and no estimable Genotype x Environment term.
+  # Fitting the multi-env model on such data yields aliased/spurious Environment
+  # and G×E statistics (or a hard model failure). Downgrade to single-environment
+  # estimation BEFORE any model fitting so those terms are never computed and
+  # sigma2_ge / anova_f_env / anova_f_gxe cannot appear in the output.
+  single_env_downgrade <- NULL
+  if (mode == "multi") {
+    n_env_levels <- tryCatch(
+      nlevels(factor(data$environment)),
+      error = function(e) 0L
+    )
+    if (is.na(n_env_levels) || n_env_levels < 2L) {
+      n_env_levels <- as.integer(ifelse(is.na(n_env_levels), 0L, n_env_levels))
+      single_env_downgrade <- sprintf(
+        paste0("Only %d environment level detected; Environment and G×E ",
+               "effects are not estimable. Analysis proceeded as single-environment."),
+        n_env_levels
+      )
+      message(sprintf("[GUARD] multi-env requested but %d environment level(s) present; downgrading to single-environment for '%s'.",
+                      n_env_levels, trait_name))
+      mode <- "single"
+    }
+  }
+
+  # Validate input data (against the effective mode after any downgrade)
   data_validation <- validate_input_data(data, env_mode = mode,
                                          crd_mode = crd_mode)
 
@@ -1935,12 +1966,19 @@ genetics_analysis <- function(data,
 
   # Validate variance components
   warnings_vc <- validate_variance_components(result)
-  
-  # Return structured output
+
+  # Surface any single-environment downgrade so the presentation layer can warn.
+  data_validation_warnings <- data_validation$warnings
+  if (!is.null(single_env_downgrade)) {
+    data_validation_warnings$single_environment_downgrade <- single_env_downgrade
+  }
+
+  # Return structured output. `mode` reflects the EFFECTIVE mode actually used
+  # (a multi request on single-level data is reported here as "single").
   list(
     status = "SUCCESS",
     mode = mode,
-    data_validation = data_validation$warnings,
+    data_validation = data_validation_warnings,
     variance_warnings = warnings_vc$warnings,
     result = result,
     interpretation = NULL

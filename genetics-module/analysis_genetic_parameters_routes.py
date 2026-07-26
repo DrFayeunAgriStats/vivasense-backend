@@ -275,15 +275,48 @@ async def analysis_genetic_parameters(request: ModuleRequest):
         )
 
     mode          = ctx["mode"]
+    design_type   = ctx.get("design_type")
+
+    # ── Determine the ACTUAL number of environment levels from the data ──────
+    # The token's mode ("multi"/"single") reflects only that an environment
+    # column was mapped — not that it has >= 2 levels. Measure it directly so a
+    # single-level "environment" can never drive Environment / GxE estimation.
+    _env_col_name = ctx.get("environment_column")
+    if mode == "multi" and _env_col_name and _env_col_name in df.columns:
+        environment_count = int(df[_env_col_name].nunique())
+    else:
+        environment_count = 1
+    is_single_environment = environment_count < 2
+
+    env_downgrade_warning: Optional[str] = None
+    if mode == "multi" and is_single_environment:
+        env_downgrade_warning = (
+            f"Only {environment_count} environment level detected in "
+            f"'{_env_col_name}'; analysis proceeded as single-environment. "
+            "Environment and GxE statistics are not estimable and were omitted."
+        )
+        mode = "single"   # effective mode used for the rest of this request
+
+    # design_type reported to the client must reflect the mode actually used,
+    # closing the "mode=multi vs is_single_environment=true" contradiction.
+    context_design_type = "single" if is_single_environment else (design_type or mode)
+
     env_col       = ctx["environment_column"] if mode == "multi" else None
     geno_col      = ctx["genotype_column"]
     rep_col       = ctx["rep_column"]          # may be None for CRD datasets
     factor_col    = ctx.get("factor_column") if mode == "single" else None
     main_plot_col = ctx.get("main_plot_column")
     sub_plot_col  = ctx.get("sub_plot_column")
-    design_type   = ctx.get("design_type")
     random_env    = ctx["random_environment"]
     crd_mode      = (rep_col is None) and (mode == "single")
+
+    def _make_analysis_context() -> AnalysisContext:
+        """Honest analysis context — measured environment_count, not a constant."""
+        return AnalysisContext(
+            is_single_environment=is_single_environment,
+            environment_count=environment_count,
+            design_type=context_design_type,
+        )
 
     has_genetic_factor = bool(geno_col and str(geno_col).strip())
     genotype_oriented = _is_genotype_oriented_experiment(ctx)
@@ -305,11 +338,7 @@ async def analysis_genetic_parameters(request: ModuleRequest):
                 max=trait_descriptive_stats.get("max"),
                 range=trait_descriptive_stats.get("range"),
             )
-            analysis_ctx = AnalysisContext(
-                is_single_environment=True,
-                environment_count=1,
-                design_type=design_type
-            )
+            analysis_ctx = _make_analysis_context()
             trait_results[trait] = GeneticParametersTraitResult(
                 trait=trait,
                 status="success",
@@ -429,11 +458,20 @@ async def analysis_genetic_parameters(request: ModuleRequest):
             # Build interpretation text (now returns ANOVA flags too)
             interp_text, breeding_text, env_sig, gxe_sig, f_env, p_env, f_gxe, p_gxe = _build_gp_text(trait, res)
 
-            analysis_ctx = AnalysisContext(
-                is_single_environment=True,
-                environment_count=1,
-                design_type=design_type
-            )
+            # Single-environment guarantee: Environment / GxE effects are not
+            # estimable, so these fields must be null (not 0/False, which imply a
+            # test ran). The R engine already omits them after the downgrade;
+            # this enforces it defensively at the serialization boundary.
+            if is_single_environment:
+                env_sig = None
+                gxe_sig = None
+                f_env = p_env = f_gxe = p_gxe = None
+
+            analysis_ctx = _make_analysis_context()
+
+            # Prepend the downgrade notice to this trait's data warnings.
+            if env_downgrade_warning:
+                balance_warnings = [env_downgrade_warning, *balance_warnings]
 
             # Attach selection intensity label for reporting
             if gp:
@@ -483,11 +521,7 @@ async def analysis_genetic_parameters(request: ModuleRequest):
         if status == "failed":
             failed_traits.append(trait)
 
-    analysis_context = AnalysisContext(
-        is_single_environment=True,
-        environment_count=1,
-        design_type=design_type
-    )
+    analysis_context = _make_analysis_context()
 
     return GeneticParametersModuleResponse(
         dataset_token=request.dataset_token,
