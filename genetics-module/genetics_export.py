@@ -21,6 +21,7 @@ and generates a publication-ready .docx report containing:
 """
 
 import io
+import os
 import logging
 import math
 import datetime
@@ -3167,6 +3168,15 @@ def _build_document(data: DownloadReportRequest) -> Document:
         sec.bottom_margin = Inches(1.0)
         sec.left_margin   = Inches(1.25)
         sec.right_margin  = Inches(1.25)
+
+    # ── Brand logo ─────────────────────────────────────────────────────────────
+    # Centered above the title. Only `width` is set so python-docx scales the
+    # height proportionally — the lockup is never stretched to a fixed box.
+    _logo_path = os.path.join(os.path.dirname(__file__), "assets", "lockup-horizontal-standard-print.png")
+    if os.path.exists(_logo_path):
+        _logo_para = doc.add_paragraph()
+        _logo_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        _logo_para.add_run().add_picture(_logo_path, width=Inches(2.5))
 
     # ── Title ─────────────────────────────────────────────────────────────────
     report_domain = getattr(data, "domain", None) or "plant_breeding"
