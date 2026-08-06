@@ -1,3 +1,4 @@
+
 """
 VivaSense Genetics - Multi-Trait File Upload Endpoints
 
@@ -56,6 +57,37 @@ from genetics_interpretation import build_breeding_synthesis
 
 logger = logging.getLogger(__name__)
 
+
+
+def _assert_unique_sanitized_mapping(mapping: Dict[str, str]) -> None:
+    """
+    Ensure original->sanitised mapping is invertible for request column resolution.
+
+    If two different original headers sanitise to the same key, we cannot safely
+    resolve display/raw names back to a single dataframe column. In that case we
+    fail fast with a clear 400 so users can disambiguate upstream.
+    """
+    reverse: Dict[str, str] = {}
+    collisions: Dict[str, List[str]] = {}
+    for original, sanitised in mapping.items():
+        prev = reverse.get(sanitised)
+        if prev is not None and prev != original:
+            collisions.setdefault(sanitised, [prev]).append(original)
+        else:
+            reverse[sanitised] = original
+    if collisions:
+        details = ", ".join(
+            f"{sanitised} <- {sorted(set(origins))}"
+            for sanitised, origins in sorted(collisions.items())
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Ambiguous column names after sanitization. "
+                "Please rename duplicate/similar headers in the source file and retry. "
+                f"Collisions: {details}"
+            ),
+        )
 
 
 class UTF8JSONResponse(JSONResponse):
@@ -874,9 +906,42 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
         raise HTTPException(status_code=400, detail="Invalid base64 content") from exc
 
     try:
-        df, _ = read_file(file_bytes, request.file_type)
+        df, mapping = read_file(file_bytes, request.file_type)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    _assert_unique_sanitized_mapping(mapping)
+
+    # Resolve request-provided raw/display names to the sanitized dataframe headers.
+    # read_file() sanitizes df.columns; request payloads may still carry original labels.
+    original_to_sanitized = {str(k): str(v) for k, v in mapping.items()}
+
+    def _resolve(col: Optional[str]) -> Optional[str]:
+        if col is None:
+            return None
+        s = str(col).strip()
+        if not s:
+            return None
+        if s in df.columns:
+            return s
+        return original_to_sanitized.get(s, s)
+
+    request.genotype_column = _resolve(request.genotype_column)
+    request.rep_column = _resolve(request.rep_column)
+    request.environment_column = _resolve(request.environment_column)
+    request.factor_column = _resolve(getattr(request, "factor_column", None))
+    request.factor_a_column = _resolve(getattr(request, "factor_a_column", None))
+    request.factor_b_column = _resolve(getattr(request, "factor_b_column", None))
+    request.main_plot_column = _resolve(request.main_plot_column)
+    request.sub_plot_column = _resolve(request.sub_plot_column)
+    request.trait_columns = [
+        rc for c in request.trait_columns
+        if (rc := _resolve(c))
+    ]
+    request.numeric_factor_columns = [
+        rc for c in getattr(request, "numeric_factor_columns", [])
+        if (rc := _resolve(c))
+    ]
 
     logger.info("analyze-upload dataframe shape: %s", df.shape)
     logger.info("analyze-upload columns: %s", list(df.columns))
