@@ -35,6 +35,7 @@ from module_schemas import AnovaModuleResponse, AnovaTraitResult, ModuleRequest,
 import dataset_cache
 from analysis_utils import compute_descriptive_stats, compute_per_genotype_stats, classify_precision_level
 from academic_interpretation import detect_analysis_domain
+from column_utils import format_label
 import math
 
 logger = logging.getLogger(__name__)
@@ -373,7 +374,7 @@ def _generate_split_plot_interpretation(
         and main_plot_mean_separation.genotype
     ):
         try:
-            top_mp      = main_plot_mean_separation.genotype[0]
+            top_mp      = format_label(main_plot_mean_separation.genotype[0])
             top_mp_mean = main_plot_mean_separation.mean[0]
             top_mp_grp  = main_plot_mean_separation.group[0] if main_plot_mean_separation.group else "—"
             sep_parts.append(
@@ -390,7 +391,7 @@ def _generate_split_plot_interpretation(
         and mean_separation.genotype
     ):
         try:
-            top_sub      = mean_separation.genotype[0]
+            top_sub      = format_label(mean_separation.genotype[0])
             top_sub_mean = mean_separation.mean[0]
             top_sub_grp  = mean_separation.group[0] if mean_separation.group else "—"
             sep_parts.append(
@@ -733,7 +734,7 @@ def generate_anova_interpretation(
     ranking = []
     if mean_separation and hasattr(mean_separation, "genotype") and mean_separation.genotype:
         try:
-            top_genotype = mean_separation.genotype[0]
+            top_genotype = format_label(mean_separation.genotype[0])
             top_mean = mean_separation.mean[0]
             ranking.append(
                 f"Based on overall means, {top_genotype} exhibited the highest "

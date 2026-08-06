@@ -39,6 +39,7 @@ DEFAULT_SELECTION_INTENSITY = {
     "pct": 0.20, "i": 1.400, "label": "Top 20% (i = 1.400)"
 }
 import dataset_cache
+from column_utils import format_label
 from multitrait_upload_schemas import (
     DatasetSummary,
     DetectedColumn,
@@ -397,32 +398,35 @@ def build_observations(
             # Generic split-plot: role-based record with no genotype term.
             # R formula: trait_value ~ main_plot * sub_plot + Error(rep/main_plot)
             rec: Dict[str, Any] = {
-                "rep":         str(row[rep_col]),
-                "main_plot":   str(row[main_plot_col]),
-                "sub_plot":    str(row[sub_plot_col]),
+                "rep":         format_label(row[rep_col]),
+                "main_plot":   format_label(row[main_plot_col]),
+                "sub_plot":    format_label(row[sub_plot_col]),
                 "trait_value": float(row[trait_col]),
             }
             records.append(rec)
             continue
 
         # All other designs carry the observation-unit identifier.
+        # NB: `iterrows()` upcasts an all-numeric row to float64, so these must
+        # go through `format_label` or numeric IDs render as "13.0" everywhere
+        # downstream (mean-separation table, outlier table, narrative prose).
         rec = {
-            "genotype":    str(row[genotype_col]),
+            "genotype":    format_label(row[genotype_col]),
             "trait_value": float(row[trait_col]),
         }
         if crd_mode:
-            rec["rep"] = str(row["_synth_rep"])
+            rec["rep"] = format_label(row["_synth_rep"])
             rec["crd"] = True
             if eff_factor:
-                rec["factor"] = str(row[eff_factor])
+                rec["factor"] = format_label(row[eff_factor])
         else:
-            rec["rep"] = str(row[rep_col])
+            rec["rep"] = format_label(row[rep_col])
             if factor_col:
                 # Factorial RCBD: factor key signals R to use factorial model
-                rec["factor"] = str(row[factor_col])
+                rec["factor"] = format_label(row[factor_col])
             elif env_col:
                 # Multi-environment RCBD
-                rec["environment"] = str(row[env_col])
+                rec["environment"] = format_label(row[env_col])
         records.append(rec)
 
     return records

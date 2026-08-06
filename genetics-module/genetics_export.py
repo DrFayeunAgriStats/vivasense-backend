@@ -26,6 +26,7 @@ import logging
 import math
 import datetime
 import re
+from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -64,6 +65,7 @@ from genetics_interpretation import (
     _describe_gcv_pcv,
     _is_single_environment_analysis,
 )
+from column_utils import format_label
 from domain_guard import find_forbidden_breeding_terms, is_plant_breeding_domain
 from interpretation import InterpretationEngine
 
@@ -183,6 +185,39 @@ def _fmt(value, decimals: int = 3, thousands: bool = False) -> str:
         return format(value, fmt_spec)
     except (TypeError, ValueError):
         return str(value)
+
+
+def _r_num(value: Any) -> Optional[float]:
+    """Coerce a scalar coming off the R engine's JSON into a float, or None.
+
+    The R engine serialises with `jsonlite::toJSON(..., auto_unbox = TRUE)`, and
+    jsonlite renders an R `NULL` as an empty JSON *object* — `{}` — not as
+    `null`. So an "absent" numeric field arrives here as an empty dict, which is
+    not None and therefore survives a plain `is not None` guard before blowing up
+    inside a numeric format spec (`TypeError: unsupported format string passed to
+    dict.__format__`).
+
+    Anything that is not a finite real number — dict, list, None, NaN, inf, or a
+    non-numeric string — collapses to None so callers can branch on "no value"
+    instead of formatting a container.
+    """
+    if value is None or isinstance(value, (dict, list, tuple, set, bool)):
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if (math.isnan(f) or math.isinf(f)) else f
+
+
+def _r_num_pair(value: Any) -> Optional[List[float]]:
+    """Coerce an R-JSON two-element numeric interval (e.g. a Box-Cox CI) to a
+    [lo, hi] float pair, or None when it is absent/malformed. Guards the same
+    NULL -> {} case as `_r_num`, plus partially-NA intervals."""
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None
+    lo, hi = _r_num(value[0]), _r_num(value[1])
+    return None if lo is None or hi is None else [lo, hi]
 
 
 def _clean_cv_percent(value: Optional[float]) -> Optional[float]:
@@ -757,13 +792,13 @@ def _build_breeding_input_for_export(data: UploadAnalysisResponse) -> List[Dict[
             order = sorted(range(len(ms.genotype)), key=lambda i: means[i], reverse=True)
             rank_map = {idx: rank + 1 for rank, idx in enumerate(order)}
             if order:
-                top_genotype = str(ms.genotype[order[0]])
+                top_genotype = format_label(ms.genotype[order[0]])
 
             for idx, geno in enumerate(ms.genotype):
                 mean_val = ms.mean[idx] if idx < len(ms.mean) else None
                 grp = ms.group[idx] if idx < len(ms.group) else None
                 genotype_means.append({
-                    "genotype": str(geno),
+                    "genotype": format_label(geno),
                     "mean": float(mean_val) if mean_val is not None else None,
                     "rank": int(rank_map.get(idx, len(ms.genotype))),
                     "group": str(grp) if grp is not None else "",
@@ -1342,7 +1377,7 @@ def _add_mean_separation_section(
         se_val = ms.se[i] if i < len(ms.se) else None
         rows_data.append([
             str(i + 1),
-            geno,
+            format_label(geno),
             _fmt(ms.mean[i]),
             _fmt(se_val),
             ms.group[i] if i < len(ms.group) else "—",
@@ -1351,7 +1386,7 @@ def _add_mean_separation_section(
     doc.add_paragraph()
 
     top_letter = ms.group[0] if ms.group else "a"
-    top_genos = [ms.genotype[i] for i, g in enumerate(ms.group) if g == top_letter]
+    top_genos = [format_label(ms.genotype[i]) for i, g in enumerate(ms.group) if g == top_letter]
     _entry_word = factor_name.capitalize() if factor_name else ("Treatment(s)" if is_agronomy else "Genotype(s)")
     _top_phrase = f"{_entry_word} with the highest observed mean in group '{top_letter}': "
     _add_body(
@@ -1365,7 +1400,7 @@ def _add_mean_separation_section(
 
     chart_bytes = _generate_mean_separation_chart(
         trait_name=trait_name,
-        genotypes=ms.genotype,
+        genotypes=[format_label(g) for g in ms.genotype],
         means=ms.mean,
         ses=ms.se,
         groups=ms.group,
@@ -1965,7 +2000,7 @@ def _add_interpretation_section(
             p_val = at.p_value[idx] if idx < len(at.p_value) else None
             sig = _sig_label(p_val) if p_val is not None else ""
             ms = result.mean_separation
-            top = ms.genotype[0] if ms and ms.genotype else None
+            top = format_label(ms.genotype[0]) if ms and ms.genotype else None
             if sig in ("***", "**"):
                 practical_text = (
                     f"Treatment differences were highly significant. "
@@ -2215,7 +2250,7 @@ def _add_writing_support_guide(doc: Document, data: DownloadReportRequest) -> No
             _add_body(doc, starter_selection)
 
         if result.mean_separation and result.mean_separation.genotype:
-            top_genotype = result.mean_separation.genotype[0]
+            top_genotype = format_label(result.mean_separation.genotype[0])
             top_group = result.mean_separation.group[0] if result.mean_separation.group else "a"
             if _is_split_plot:
                 from analysis_anova_routes import _fmt_factor_label as _ffl
@@ -2356,9 +2391,9 @@ def _add_assumption_tests_section(doc: Document, assumption_tests: Dict[str, Any
                     if not isinstance(row, dict):
                         continue
                     flagged_rows.append([
-                        str(row.get("observation", "—")),
-                        str(row.get("treatment", "—")),
-                        str(row.get("block", "—")),
+                        format_label(row.get("observation", "—")),
+                        format_label(row.get("treatment", "—")),
+                        format_label(row.get("block", "—")),
                         _fmt(row.get("standardized_residual"), 3, thousands=False),
                         _fmt(row.get("cooks_distance"), 4, thousands=False),
                         "Yes" if bool(row.get("influential")) else "No",
@@ -2608,6 +2643,36 @@ def _anova_to_records(at: AnovaTable) -> List[Dict[str, str]]:
     return records
 
 
+@contextmanager
+def _section_guard(doc: Document, trait: str, label: str):
+    """Isolate one report section so its failure cannot delete sibling sections.
+
+    Previously a single try/except wrapped every section for a trait, so one
+    raising renderer abandoned all *later* sections silently — e.g. a crash in
+    the transformation subsection took "Interpretation & Recommendations" with
+    it, leaving the researcher no narrative and no indication anything was
+    missing.
+
+    Each guarded section now fails independently and leaves a visible, honest
+    marker in the document, so a partial report is never mistaken for a complete
+    one. The traceback still goes to the log at error level.
+    """
+    try:
+        yield
+    except Exception as exc:
+        logger.error(
+            "export_traits_to_word: section '%s' failed for trait '%s': %s",
+            label, trait, exc, exc_info=True,
+        )
+        _add_body(
+            doc,
+            f"[{label}: this section could not be generated for this trait "
+            f"({type(exc).__name__}). The remainder of the report is unaffected. "
+            f"Please report this to VivaSense support.]",
+            italic=True,
+        )
+
+
 def _mean_sep_to_records(ms: MeanSeparation) -> List[Dict[str, str]]:
     """Convert MeanSeparation (parallel arrays) to a list of dicts for _add_table_to_doc."""
     records = []
@@ -2617,7 +2682,7 @@ def _mean_sep_to_records(ms: MeanSeparation) -> List[Dict[str, str]]:
         grp    = ms.group[i] if i < len(ms.group) else "—"
         records.append({
             "Rank":     str(i + 1),
-            "Genotype": geno,
+            "Genotype": format_label(geno),
             "Mean":     _fmt(mean_v),
             "SE":       _fmt(se_v),
             "Group":    grp,
@@ -2733,128 +2798,149 @@ def export_traits_to_word(
                 doc.add_paragraph(f"• {w}", style="List Bullet")
             doc.add_paragraph()
 
+        # Cross-section context. Hoisted out of the per-section guards below so
+        # that a section which fails cannot leave a later one with an undefined
+        # name — the guard swallows the error, but the next section still runs.
+        _is_split_plot = getattr(result, "main_plot_mean_separation", None) is not None
+        _is_factorial  = getattr(result, "mean_separation_b", None) is not None
+        _int_means     = getattr(result, "interaction_means", None)
         try:
-            # ── 1. Executive Summary ─────────────────────────────────────────
-            _add_executive_summary(doc, trait, result, is_anova=is_anova, domain=domain)
-            _add_reliability_badge(doc, result)
-            doc.add_paragraph()
-
-            # ── 2. Descriptive Statistics ────────────────────────────────────
-            _add_descriptive_stats(doc, result, domain=domain)
-            doc.add_paragraph()
-
-            # ── 3. ANOVA ─────────────────────────────────────────────────────
-            if result.anova_table:
-                _add_anova_section(doc, result.anova_table, domain=domain)
-            else:
-                _add_heading(doc, "Analysis of Variance (ANOVA)", level=2)
-                _add_body(doc, "ANOVA table not available for this trait.", italic=True)
-            doc.add_paragraph()
-
-            # ── 3b. Key Findings (split-plot / factorial only) ────────────────
-            _is_split_plot = getattr(result, "main_plot_mean_separation", None) is not None
-            _is_factorial   = getattr(result, "mean_separation_b", None) is not None
-            if _is_split_plot or _is_factorial:
-                _mp_lbl_kf = getattr(
-                    getattr(result, "main_plot_mean_separation", None), "treatment_label", None
-                )
-                _sp_lbl_kf = getattr(result.mean_separation, "treatment_label", None) if result.mean_separation else None
-                _add_key_findings(doc, result, trait, mp_label=_mp_lbl_kf, sp_label=_sp_lbl_kf)
-                doc.add_paragraph()
-
-            # ── 4. Mean Separation (table + bar chart) ────────────────────────
             from analysis_anova_routes import is_interaction_significant
             _int_sig = bool(is_interaction_significant(result.anova_table)) if result.anova_table else False
-            if result.mean_separation:
-                _add_mean_separation_section(
-                    doc, trait, result.mean_separation, domain=domain,
-                    factor_name=result.mean_separation.treatment_label,
-                    interaction_significant=_int_sig,
-                )
-            elif not _is_split_plot:
-                _add_heading(doc, "Mean Separation", level=2)
-                _add_body(
-                    doc,
-                    "Mean separation not available — insufficient degrees of "
-                    "freedom or singular model.",
-                    italic=True,
-                )
-            if result.mean_separation_b:
+        except Exception:
+            logger.warning(
+                "export_traits_to_word: interaction-significance check failed for trait '%s'; "
+                "assuming not significant", trait, exc_info=True,
+            )
+            _int_sig = False
+
+        try:
+            # ── 1. Executive Summary ─────────────────────────────────────────
+            with _section_guard(doc, trait, "Executive Summary"):
+                _add_executive_summary(doc, trait, result, is_anova=is_anova, domain=domain)
+                _add_reliability_badge(doc, result)
                 doc.add_paragraph()
-                _add_mean_separation_section(
-                    doc, trait, result.mean_separation_b, domain=domain,
-                    factor_name=result.mean_separation_b.treatment_label,
-                    interaction_significant=_int_sig,
-                )
-            if getattr(result, "main_plot_mean_separation", None):
+
+            # ── 2. Descriptive Statistics ────────────────────────────────────
+            with _section_guard(doc, trait, "Descriptive Statistics"):
+                _add_descriptive_stats(doc, result, domain=domain)
                 doc.add_paragraph()
-                _add_mean_separation_section(
-                    doc, trait, result.main_plot_mean_separation, domain=domain,
-                    factor_name=getattr(result.main_plot_mean_separation, "treatment_label", None) or "Main-Plot Factor",
-                    interaction_significant=_int_sig,
-                )
-            if result.interaction_separation:
+
+            # ── 3. ANOVA ─────────────────────────────────────────────────────
+            with _section_guard(doc, trait, "Analysis of Variance (ANOVA)"):
+                if result.anova_table:
+                    _add_anova_section(doc, result.anova_table, domain=domain)
+                else:
+                    _add_heading(doc, "Analysis of Variance (ANOVA)", level=2)
+                    _add_body(doc, "ANOVA table not available for this trait.", italic=True)
                 doc.add_paragraph()
-                _add_interaction_separation_section(doc, trait, result.interaction_separation, domain=domain)
+
+            # ── 3b. Key Findings (split-plot / factorial only) ────────────────
+            with _section_guard(doc, trait, "Key Findings"):
+                if _is_split_plot or _is_factorial:
+                    _mp_lbl_kf = getattr(
+                        getattr(result, "main_plot_mean_separation", None), "treatment_label", None
+                    )
+                    _sp_lbl_kf = getattr(result.mean_separation, "treatment_label", None) if result.mean_separation else None
+                    _add_key_findings(doc, result, trait, mp_label=_mp_lbl_kf, sp_label=_sp_lbl_kf)
+                    doc.add_paragraph()
+
+            # ── 4. Mean Separation (table + bar chart) ────────────────────────
+            with _section_guard(doc, trait, "Mean Separation"):
+                if result.mean_separation:
+                    _add_mean_separation_section(
+                        doc, trait, result.mean_separation, domain=domain,
+                        factor_name=result.mean_separation.treatment_label,
+                        interaction_significant=_int_sig,
+                    )
+                elif not _is_split_plot:
+                    _add_heading(doc, "Mean Separation", level=2)
+                    _add_body(
+                        doc,
+                        "Mean separation not available — insufficient degrees of "
+                        "freedom or singular model.",
+                        italic=True,
+                    )
+                if result.mean_separation_b:
+                    doc.add_paragraph()
+                    _add_mean_separation_section(
+                        doc, trait, result.mean_separation_b, domain=domain,
+                        factor_name=result.mean_separation_b.treatment_label,
+                        interaction_significant=_int_sig,
+                    )
+                if getattr(result, "main_plot_mean_separation", None):
+                    doc.add_paragraph()
+                    _add_mean_separation_section(
+                        doc, trait, result.main_plot_mean_separation, domain=domain,
+                        factor_name=getattr(result.main_plot_mean_separation, "treatment_label", None) or "Main-Plot Factor",
+                        interaction_significant=_int_sig,
+                    )
+                if result.interaction_separation:
+                    doc.add_paragraph()
+                    _add_interaction_separation_section(doc, trait, result.interaction_separation, domain=domain)
 
             # ── 4b. Split-plot interaction means table + line plot ─────────────
-            _int_means = getattr(result, "interaction_means", None)
-            if _is_split_plot and _int_means:
-                _mp_lbl = getattr(result.main_plot_mean_separation, "treatment_label", None) or "Main-Plot Factor" if getattr(result, "main_plot_mean_separation", None) else "Main-Plot Factor"
-                _sp_lbl = getattr(result.mean_separation, "treatment_label", None) or "Subplot Factor" if result.mean_separation else "Subplot Factor"
+            with _section_guard(doc, trait, "Interaction Means"):
+                if _is_split_plot and _int_means:
+                    _mp_lbl = getattr(result.main_plot_mean_separation, "treatment_label", None) or "Main-Plot Factor" if getattr(result, "main_plot_mean_separation", None) else "Main-Plot Factor"
+                    _sp_lbl = getattr(result.mean_separation, "treatment_label", None) or "Subplot Factor" if result.mean_separation else "Subplot Factor"
+                    doc.add_paragraph()
+                    _add_interaction_means_section(
+                        doc, _int_means,
+                        mp_label=_mp_lbl, sp_label=_sp_lbl,
+                        trait_name=trait, is_significant=bool(_int_sig),
+                        sp_mean_separation=result.mean_separation,
+                    )
+                    doc.add_paragraph()
+                    _add_interaction_plot_to_doc(doc, _int_means, trait, _mp_lbl, _sp_lbl)
                 doc.add_paragraph()
-                _add_interaction_means_section(
-                    doc, _int_means,
-                    mp_label=_mp_lbl, sp_label=_sp_lbl,
-                    trait_name=trait, is_significant=bool(_int_sig),
-                    sp_mean_separation=result.mean_separation,
-                )
-                doc.add_paragraph()
-                _add_interaction_plot_to_doc(doc, _int_means, trait, _mp_lbl, _sp_lbl)
-            doc.add_paragraph()
 
             # ── 5. Assumption Tests (optional) ────────────────────────────────
-            if result.assumption_tests:
-                _add_assumption_tests_section(doc, result.assumption_tests)
-                doc.add_paragraph()
+            with _section_guard(doc, trait, "Assumption Tests"):
+                if result.assumption_tests:
+                    _add_assumption_tests_section(doc, result.assumption_tests)
+                    doc.add_paragraph()
 
             # ── 5b. Assumption-driven transformation (CRD/RCBD) ───────────────
-            _ta = getattr(result, "transformation_analysis", None)
-            if _ta:
-                _add_transformation_section(
-                    doc, _ta,
-                    choice=getattr(results, "transformation_choice", None),
-                )
-                doc.add_paragraph()
+            with _section_guard(doc, trait, "Assumption Diagnostics & Data Transformation"):
+                _ta = getattr(result, "transformation_analysis", None)
+                if _ta:
+                    _add_transformation_section(
+                        doc, _ta,
+                        choice=getattr(results, "transformation_choice", None),
+                    )
+                    doc.add_paragraph()
 
             # ── 6. Genetic Parameters (skipped for ANOVA module and agronomy domain) ──
-            _is_agronomy_domain = not is_plant_breeding_domain(domain)
-            if not is_anova and not _is_agronomy_domain:
-                _add_genetic_parameters_section(
-                    doc,
-                    result,
-                    domain=domain,
-                )
-                doc.add_paragraph()
+            with _section_guard(doc, trait, "Genetic Parameters"):
+                _is_agronomy_domain = not is_plant_breeding_domain(domain)
+                if not is_anova and not _is_agronomy_domain:
+                    _add_genetic_parameters_section(
+                        doc,
+                        result,
+                        domain=domain,
+                    )
+                    doc.add_paragraph()
 
             # ── 7. Interpretation and domain-appropriate recommendations ─────
-            # Log interpretation details before rendering
-            tr_interp_len = len(getattr(tr, 'interpretation', '') or '')
-            ar_interp_len = len(getattr(ar, 'interpretation', '') or '')
-            tr_breeding_len = len(getattr(tr, 'breeding_implication', '') or '')
-            logger.info(
-                "Interpretation logging for trait '%s' (ANOVA): tr.interpretation=%d chars, ar.interpretation=%d chars, tr.breeding_implication=%d chars",
-                trait, tr_interp_len, ar_interp_len, tr_breeding_len
-            )
-            _add_interpretation_section(
-                doc,
-                ar,
-                result,
-                trait,
-                tr,
-                is_anova=is_anova,
-                 domain=domain,
-            )
+            with _section_guard(doc, trait, "Interpretation & Recommendations"):
+                # Log interpretation details before rendering
+                tr_interp_len = len(getattr(tr, 'interpretation', '') or '')
+                ar_interp_len = len(getattr(ar, 'interpretation', '') or '')
+                tr_breeding_len = len(getattr(tr, 'breeding_implication', '') or '')
+                logger.info(
+                    "Interpretation logging for trait '%s' (ANOVA): tr.interpretation=%d chars, ar.interpretation=%d chars, tr.breeding_implication=%d chars",
+                    trait, tr_interp_len, ar_interp_len, tr_breeding_len
+                )
+                _add_interpretation_section(
+                    doc,
+                    ar,
+                    result,
+                    trait,
+                    tr,
+                    is_anova=is_anova,
+                    domain=domain,
+                )
 
         except Exception as exc:
             logger.error(
@@ -2993,12 +3079,18 @@ def _add_transformation_section(doc: Document, ta: Dict[str, Any],
 
     tf = str(ta.get("recommended_transform", "—")).replace("_", " ")
     formula = ta.get("formula_used", "—")
-    lam = ta.get("boxcox_lambda")
-    ci = ta.get("boxcox_ci") or []
+    # NB: an absent lambda arrives from the R engine as `{}` rather than null
+    # (see `_r_num`), so coerce before formatting rather than testing `is not None`.
+    lam = _r_num(ta.get("boxcox_lambda"))
+    ci = _r_num_pair(ta.get("boxcox_ci"))
     if lam is not None:
-        lam_txt = f"Box-Cox λ = {lam:.2f}" + (f" (95% CI {ci[0]:.2f} to {ci[1]:.2f})" if len(ci) == 2 else "")
-    else:
+        lam_txt = f"Box-Cox λ = {lam:.2f}" + (f" (95% CI {ci[0]:.2f} to {ci[1]:.2f})" if ci else "")
+    elif bool(ta.get("is_proportion")) or str(ta.get("recommended_transform", "")) == "arcsine":
         lam_txt = "arcsine (proportion/percentage data)"
+    else:
+        # Transformation ran but no lambda came back — say so instead of
+        # implying an arcsine/proportion basis that was never estimated.
+        lam_txt = "Box-Cox λ could not be estimated"
     _add_body(doc, f"Recommended transformation: {tf}  ·  {formula}  ·  {lam_txt}", bold=True)
     if ta.get("rationale"):
         _add_body(doc, ta["rationale"])
@@ -3022,7 +3114,7 @@ def _add_transformation_section(doc: Document, ta: Dict[str, Any],
         rows = []
         for i, g in enumerate(genos):
             rows.append([
-                str(g),
+                format_label(g),
                 _fmt(_idx(means.get("mean_transformed"), i)),
                 _fmt(_idx(means.get("mean_original"), i)),
                 _fmt(_idx(means.get("ci_lower_original"), i)),
