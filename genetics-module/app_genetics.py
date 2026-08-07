@@ -16,6 +16,14 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
 from typing import List, Optional, Dict, Any
 from genetics_schemas import GeneticsResult, GeneticsResponse
+from pilot_access import (
+    DESIGN_AWARE_ANOVA_FIELDS,  # noqa: F401  (re-exported for existing importers)
+    FREE_ANOVA_DESIGN_TYPES,  # noqa: F401  (re-exported for existing importers)
+    payload_has_design_aware_anova_shape as _payload_has_design_aware_anova_shape,
+    payload_has_multi_environment_shape as _payload_has_multi_environment_shape,
+    pilot_gate_middleware,
+    pilot_gate_status,
+)
 import subprocess
 import json
 import tempfile
@@ -162,6 +170,11 @@ PRO_GATED_PATHS = {
     "/academic/interpret",
 }
 
+# FREE_ANOVA_DESIGN_TYPES, DESIGN_AWARE_ANOVA_FIELDS and the two payload-shape
+# helpers now live in pilot_access.py (imported above) so the free/pro mode gate
+# and the pilot-access gate classify payloads identically and cannot drift.
+# The mode gate's behaviour below is unchanged.
+
 
 def _is_pro_gated_path(path: str) -> bool:
     return path in PRO_GATED_PATHS
@@ -172,30 +185,28 @@ async def _is_pro_analyze_upload_request(request: Request) -> bool:
         return False
 
     module_query = (request.query_params.get("module") or "").strip().lower()
-    body_module = ""
-    body_mode = ""
-    body_env_col = None
+    payload: Dict[str, Any] = {}
 
     try:
         raw = await request.body()
         if raw:
             parsed = json.loads(raw)
             if isinstance(parsed, dict):
-                body_module = str(parsed.get("module") or "").strip().lower()
-                body_mode = str(parsed.get("mode") or "").strip().lower()
-                body_env_col = parsed.get("environment_column")
+                payload = parsed
     except Exception:
         pass
 
     # Body module takes priority; fallback to query; endpoint default is genetic_parameters.
+    body_module = str(payload.get("module") or "").strip().lower()
     actual_module = body_module or module_query or "genetic_parameters"
 
     if actual_module == "genetic_parameters":
         return True
 
     if actual_module == "anova":
-        has_environment_factor = isinstance(body_env_col, str) and body_env_col.strip() != ""
-        return body_mode == "multi" or has_environment_factor
+        if _payload_has_design_aware_anova_shape(payload) and not _payload_has_multi_environment_shape(payload):
+            return False
+        return True
 
     return False
 
@@ -217,6 +228,26 @@ async def vivasense_mode_gate(request: Request, call_next):
                 },
             )
     return await call_next(request)
+
+
+# --- Pilot-access gate -------------------------------------------------------
+# Layered next to the free/pro gate above, never replacing it. This gate keys
+# off the VIVASENSE_PILOT_ALLOWLIST server-side allowlist rather than
+# profiles.plan, so it keeps working while every account holds plan='pro' for
+# the 90-day pilot offer. See pilot_access.py for the trust model.
+app.middleware("http")(pilot_gate_middleware)
+
+_pilot_enforcing, _pilot_allowlist_size = pilot_gate_status()
+if _pilot_enforcing:
+    logger.info(
+        "Pilot-access gate ENFORCING (%d allowlisted identities)", _pilot_allowlist_size
+    )
+else:
+    logger.warning(
+        "Pilot-access gate DISABLED: %s is unset or empty, so the Genetics-only "
+        "surface is open to every user. Set it to enable pilot gating.",
+        "VIVASENSE_PILOT_ALLOWLIST",
+    )
 
 
 # --- CORS middleware must be added BEFORE any routers or other middleware ---

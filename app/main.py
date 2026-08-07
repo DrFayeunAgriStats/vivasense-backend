@@ -43,9 +43,48 @@ PRO_GATED_PATHS = {
     "/academic/interpret",
 }
 
+FREE_ANOVA_DESIGN_TYPES = {
+    "crd",
+    "rcbd",
+    "factorial",
+    "factorial_rcbd",
+    "split_plot_rcbd",
+}
+
+DESIGN_AWARE_ANOVA_FIELDS = (
+    "design_type",
+    "treatment_column",
+    "factor_column",
+    "factor_a_column",
+    "factor_b_column",
+    "factor_c_column",
+    "main_plot_column",
+    "sub_plot_column",
+)
+
 
 def _is_pro_gated_path(path: str) -> bool:
     return path in PRO_GATED_PATHS
+
+
+def _payload_has_multi_environment_shape(payload: dict) -> bool:
+    body_mode = str(payload.get("mode") or "").strip().lower()
+    body_env_col = payload.get("environment_column")
+    has_environment_factor = isinstance(body_env_col, str) and body_env_col.strip() != ""
+    return body_mode == "multi" or has_environment_factor
+
+
+def _payload_has_design_aware_anova_shape(payload: dict) -> bool:
+    design_type = str(payload.get("design_type") or "").strip().lower()
+    if design_type in FREE_ANOVA_DESIGN_TYPES:
+        return True
+
+    for field_name in DESIGN_AWARE_ANOVA_FIELDS:
+        field_value = payload.get(field_name)
+        if isinstance(field_value, str) and field_value.strip() != "":
+            return True
+
+    return False
 
 
 async def _is_pro_analyze_upload_request(request: Request) -> bool:
@@ -53,30 +92,28 @@ async def _is_pro_analyze_upload_request(request: Request) -> bool:
         return False
 
     module_query = (request.query_params.get("module") or "").strip().lower()
-    body_module = ""
-    body_mode = ""
-    body_env_col = None
+    payload: dict = {}
 
     try:
         raw = await request.body()
         if raw:
             parsed = json.loads(raw)
             if isinstance(parsed, dict):
-                body_module = str(parsed.get("module") or "").strip().lower()
-                body_mode = str(parsed.get("mode") or "").strip().lower()
-                body_env_col = parsed.get("environment_column")
+                payload = parsed
     except Exception:
         pass
 
     # Body module takes priority; fallback to query; endpoint default is genetic_parameters.
+    body_module = str(payload.get("module") or "").strip().lower()
     actual_module = body_module or module_query or "genetic_parameters"
 
     if actual_module == "genetic_parameters":
         return True
 
     if actual_module == "anova":
-        has_environment_factor = isinstance(body_env_col, str) and body_env_col.strip() != ""
-        return body_mode == "multi" or has_environment_factor
+        if _payload_has_design_aware_anova_shape(payload) and not _payload_has_multi_environment_shape(payload):
+            return False
+        return True
 
     return False
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { setVivaSenseMode } from "@/lib/vivasenseGating";
+import { setVivaSenseUser } from "@/services/featureMode";
 
 interface VivaSenseAuthGuardProps {
   children: React.ReactNode;
@@ -91,9 +92,12 @@ export default function VivaSenseAuthGuard({ children }: VivaSenseAuthGuardProps
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (session?.user) {
+        // Identity for the backend pilot-access gate — independent of plan/mode.
+        setVivaSenseUser(session.user.email ?? session.user.id);
         await checkAccess(session.user.id);
       } else {
         setVivaSenseMode("free");
+        setVivaSenseUser(null);
         redirectToAuth();
       }
       setLoading(false);
@@ -103,9 +107,11 @@ export default function VivaSenseAuthGuard({ children }: VivaSenseAuthGuardProps
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user) {
+        setVivaSenseUser(session.user.email ?? session.user.id);
         void checkAccess(session.user.id).then(() => setLoading(false));
       } else {
         setVivaSenseMode("free");
+        setVivaSenseUser(null);
         setAuthenticated(false);
         redirectToAuth();
       }
