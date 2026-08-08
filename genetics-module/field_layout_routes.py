@@ -13,7 +13,12 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from field_layout_generator import DESIGN_REGISTRY, generate_field_layout
+from field_layout_generator import (
+    DESIGN_REGISTRY,
+    LATTICE_MAX_BLOCK_SIZE,
+    classify_lattice_block_size,
+    generate_field_layout,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +73,24 @@ async def list_designs():
             }
             for key, config in DESIGN_REGISTRY.items()
         ]
+    }
+
+
+@router.get("/field-layout/lattice-block-sizes")
+async def list_lattice_block_sizes(max_block_size: int = LATTICE_MAX_BLOCK_SIZE):
+    """Classify every balanced-lattice block size up to ``max_block_size``.
+
+    Clients render their block-size selector from this, so the list of what is
+    available — and the reason anything is unavailable — has a single source of
+    truth in the engine rather than a separately hardcoded copy in each UI.
+
+    Each entry carries ``status`` (``supported`` | ``not_implemented`` |
+    ``no_construction``) and, for the latter two, a user-facing ``message``.
+    """
+    upper = max(2, min(int(max_block_size), 100))
+    return {
+        "max_block_size": upper,
+        "block_sizes": [classify_lattice_block_size(k) for k in range(2, upper + 1)],
     }
 
 

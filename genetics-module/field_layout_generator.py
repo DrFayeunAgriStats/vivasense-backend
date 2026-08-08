@@ -223,6 +223,147 @@ def _is_prime(value: int) -> bool:
     return True
 
 
+# ─── Balanced-lattice block-size classification ──────────────────────────────
+#
+# A classical balanced lattice needs k-1 mutually orthogonal Latin squares.
+# Those exist exactly when k is a prime power. This constructor builds the
+# affine plane with integer arithmetic mod k (see generate_balanced_lattice),
+# which forms a field only when k is *prime* — so prime powers such as 4, 8, 9
+# and 16 are mathematically valid designs that this implementation cannot yet
+# build. Distinguishing those from genuinely impossible block sizes is what the
+# three categories below are for.
+#
+# Classification drives *messaging and client capability listing only*.
+# Generation remains prime-only; GF(p^e) arithmetic is deliberately deferred.
+
+LATTICE_SUPPORTED = "supported"
+LATTICE_NOT_IMPLEMENTED = "not_implemented"
+LATTICE_NO_CONSTRUCTION = "no_construction"
+
+# Largest block size advertised to clients. Every prime at or below this has
+# been structurally verified: k+1 replications, k blocks of k plots each, every
+# replication a complete replicate, and every treatment pair concurrent in
+# exactly one block (lambda = 1).
+LATTICE_MAX_BLOCK_SIZE = 23
+
+
+def _prime_power_base(value: int) -> Optional[int]:
+    """Return p when ``value == p ** e`` for a prime p and e >= 1, else None."""
+    if value < 2:
+        return None
+    for candidate in range(2, value + 1):
+        if value % candidate == 0:
+            remainder = value
+            while remainder % candidate == 0:
+                remainder //= candidate
+            return candidate if remainder == 1 else None
+    return None
+
+
+def supported_lattice_block_sizes(maximum: int = LATTICE_MAX_BLOCK_SIZE) -> List[int]:
+    """Block sizes this constructor can actually build, ascending."""
+    return [k for k in range(2, maximum + 1) if _is_prime(k)]
+
+
+def _describe_block_size(block_size: int) -> str:
+    """Name a block size together with its treatment count.
+
+    Both numbers are always spelled out because a block size and a treatment
+    count are easy to confuse: block size 25 means 625 treatments, whereas the
+    design a researcher calls "25 treatments" is block size 5.
+    """
+    return f"{block_size} ({block_size * block_size} treatments)"
+
+
+def _nearest_supported_phrase(block_size: int) -> str:
+    """Human phrase naming the closest usable block sizes either side of k."""
+    supported = supported_lattice_block_sizes()
+    below = [k for k in supported if k < block_size]
+    above = [k for k in supported if k > block_size]
+    if below and above:
+        return (
+            f"The nearest available block sizes are {_describe_block_size(below[-1])} "
+            f"and {_describe_block_size(above[0])}."
+        )
+    if below:
+        return f"The largest available block size is {_describe_block_size(below[-1])}."
+    return f"The smallest available block size is {_describe_block_size(above[0])}."
+
+
+def _treatment_count_confusion_hint(block_size: int) -> str:
+    """Disambiguating sentence when ``block_size`` is itself a valid treatment count.
+
+    Someone asking for block size 25 may have meant a 25-treatment design, which
+    is block size 5. Only emitted when the square root is genuinely usable.
+    """
+    root = int(math.isqrt(block_size))
+    if root * root != block_size or not _is_prime(root):
+        return ""
+    return (
+        f" If you meant a design with {block_size} treatments rather than {block_size} "
+        f"plots per block, use block size {root} instead."
+    )
+
+
+def classify_lattice_block_size(block_size: int) -> Dict[str, Any]:
+    """Classify a balanced-lattice block size into one of three categories.
+
+    Returns a dict with ``block_size``, ``treatments``, ``replications``,
+    ``status`` (one of the LATTICE_* constants) and a user-facing ``message``.
+    ``message`` is empty for supported sizes.
+    """
+    result: Dict[str, Any] = {
+        "block_size": block_size,
+        "treatments": block_size * block_size,
+        "replications": block_size + 1,
+        "status": LATTICE_SUPPORTED,
+        "message": "",
+    }
+
+    if block_size < 2:
+        result["status"] = LATTICE_NO_CONSTRUCTION
+        result["message"] = (
+            f"Block size must be at least 2. {_nearest_supported_phrase(block_size)}"
+        )
+        return result
+
+    if _is_prime(block_size):
+        return result
+
+    base = _prime_power_base(block_size)
+    if base is not None:
+        # Mathematically valid (prime power) but needs GF(p^e) arithmetic.
+        result["status"] = LATTICE_NOT_IMPLEMENTED
+        result["message"] = (
+            f"A balanced lattice with block size {block_size} "
+            f"({block_size * block_size} treatments; {block_size} = "
+            f"{base}^{round(math.log(block_size, base))}) is a valid design, but "
+            f"building it requires Galois field GF({block_size}) arithmetic, which VivaSense does "
+            f"not yet implement. Only prime block sizes are currently supported. "
+            f"{_nearest_supported_phrase(block_size)}"
+            f"{_treatment_count_confusion_hint(block_size)}"
+        )
+        return result
+
+    result["status"] = LATTICE_NO_CONSTRUCTION
+    if block_size == 6:
+        result["message"] = (
+            "No balanced lattice exists for block size 6 (36 treatments). This is a proven "
+            "impossibility, not a limitation of VivaSense: Tarry (1900) showed that no pair of "
+            "orthogonal Latin squares of order 6 exists, so the 5 mutually orthogonal Latin "
+            "squares this design would require cannot exist. "
+            f"{_nearest_supported_phrase(block_size)}"
+        )
+    else:
+        result["message"] = (
+            f"No standard balanced-lattice construction is available for block size {block_size} "
+            f"({block_size * block_size} treatments). A classical balanced lattice requires the "
+            "block size to be a prime power (2, 3, 4, 5, 7, 8, 9, 11, 13, ...), and "
+            f"{block_size} is not one. {_nearest_supported_phrase(block_size)}"
+        )
+    return result
+
+
 def _shape_summary(request: Dict[str, Any], title: str, n_plots: int, n_treatments: int) -> Dict[str, Any]:
     return {
         "title": title,
@@ -1048,11 +1189,9 @@ def validate_balanced_lattice(request: Dict[str, Any]) -> None:
             f"With {t} treatments, block_size={block_size}, so replications must be {required_reps}."
         )
 
-    if not _is_prime(block_size):
-        raise ValueError(
-            "This balanced lattice constructor requires a prime block size so a true pairwise-balanced "
-            f"affine-plane layout can be formed. Received block_size={block_size}."
-        )
+    classification = classify_lattice_block_size(block_size)
+    if classification["status"] != LATTICE_SUPPORTED:
+        raise ValueError(classification["message"])
     _require_common_numeric_fields(request)
 
 
@@ -1078,11 +1217,9 @@ def generate_balanced_lattice(request: Dict[str, Any], rng: random.Random) -> Ge
     k = int(math.sqrt(t))
     color_index = _build_color_index(treatments)
 
-    if not _is_prime(k):
-        raise ValueError(
-            "True balanced lattice construction is implemented here for prime block sizes only. "
-            f"Received block_size={k}."
-        )
+    classification = classify_lattice_block_size(k)
+    if classification["status"] != LATTICE_SUPPORTED:
+        raise ValueError(classification["message"])
 
     treatment_lookup = {
         (x, y): treatments[x * k + y]
