@@ -98,6 +98,17 @@ class UploadAnalysisRequest(BaseModel):
         ),
     )
     environment_column: Optional[str] = None
+    environment_factor_columns: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Ordered columns whose interaction defines the environment, e.g. "
+            "['Location', 'Year'] for a trial run at 3 locations over 3 years "
+            "(9 environments). Used ONLY when environment_column is absent — an "
+            "explicitly supplied environment column always takes precedence and "
+            "is never overwritten. A list rather than a fixed Location/Year pair "
+            "so season / management regime can be added later without an API change."
+        ),
+    )
     factor_column: Optional[str] = Field(
         default=None,
         description=(

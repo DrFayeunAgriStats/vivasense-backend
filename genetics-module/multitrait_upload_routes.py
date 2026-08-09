@@ -41,6 +41,10 @@ DEFAULT_SELECTION_INTENSITY = {
 }
 import dataset_cache
 from column_utils import format_label
+from environment_structure import (
+    SOURCE_CONSTRUCTED,
+    resolve_environment_structure,
+)
 from multitrait_upload_schemas import (
     DatasetSummary,
     DetectedColumn,
@@ -946,6 +950,29 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
         rc for c in getattr(request, "numeric_factor_columns", [])
         if (rc := _resolve(c))
     ]
+    request.environment_factor_columns = [
+        rc for c in getattr(request, "environment_factor_columns", [])
+        if (rc := _resolve(c))
+    ]
+
+    # ── Experimental-structure reconstruction ────────────────────────────────
+    # Establish what the environment actually is BEFORE any column validation or
+    # model selection. A supplied environment column always wins; Location x Year
+    # is constructed only in its absence. Replication is re-expressed as nested
+    # within environment when the uploaded labels were globally unique.
+    # See environment_structure.py for the governing rationale.
+    env_structure = resolve_environment_structure(
+        df,
+        environment_column=request.environment_column,
+        environment_factor_columns=request.environment_factor_columns,
+        rep_column=request.rep_column,
+    )
+    if env_structure.source == SOURCE_CONSTRUCTED:
+        request.environment_column = env_structure.environment_column
+    if env_structure.rep_column:
+        request.rep_column = env_structure.rep_column
+    if env_structure.notes:
+        logger.info("analyze-upload structure: %s", " | ".join(env_structure.notes))
 
     logger.info("analyze-upload dataframe shape: %s", df.shape)
     logger.info("analyze-upload columns: %s", list(df.columns))
@@ -1217,6 +1244,12 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                 # Prepend the downgrade notice to this trait's data warnings.
                 if env_downgrade_warning:
                     balance_warnings = [env_downgrade_warning, *balance_warnings]
+
+                # State the reconstructed experimental structure explicitly. A
+                # constructed environment or re-nested replication must never be
+                # something the researcher discovers only from the numbers.
+                if env_structure.notes:
+                    balance_warnings = [*env_structure.notes, *balance_warnings]
 
                 # Validate the dict against the real GeneticsResponse schema.
                 validated = GeneticsResponse(**result_dict)
