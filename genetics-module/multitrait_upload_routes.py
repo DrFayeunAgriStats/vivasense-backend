@@ -49,6 +49,7 @@ from multitrait_upload_schemas import (
     DatasetSummary,
     DetectedColumn,
     DetectedColumns,
+    ExperimentalStructure,
     SummaryTableRow,
     TraitResult,
     UploadAnalysisRequest,
@@ -1050,6 +1051,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
         n_environments=n_environments,
         n_traits=len(request.trait_columns),
         mode=effective_mode,
+        requested_mode=request.mode,
     )
 
     summary_table: List[SummaryTableRow] = []
@@ -1315,8 +1317,14 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
         "categorical_columns": categorical_columns,
         "main_plot_column":   request.main_plot_column,
         "sub_plot_column":    request.sub_plot_column,
-        "mode":               request.mode,
-        "design_type":        request.design_type or request.mode,
+        # Record what analysis ACTUALLY ran under, not what was asked for. A
+        # multi-environment request downgraded for want of environment levels
+        # was previously stored — and later exported — as "multi", describing a
+        # structure the computation never used. requested_mode keeps the ask.
+        "mode":               effective_mode,
+        "requested_mode":     request.mode,
+        "design_type":        request.design_type or effective_mode,
+        "requested_design_type": request.design_type or request.mode,
         "random_environment": request.random_environment,
         "selection_intensity": request.selection_intensity,
     })
@@ -1326,13 +1334,17 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
         summary_table=summary_table,
         trait_results=trait_results,
         dataset_summary=dataset_summary,
+        experimental_structure=ExperimentalStructure(**env_structure.as_dict()),
         failed_traits=failed_traits,
         anova_type_warning=anova_type_warning,
         dataset_token=dataset_token,
         module=actual_module,
+        # Synthesis must describe the analysis that ran. Keying this off
+        # request.mode labelled downgraded runs "multi_environment" in the
+        # breeding narrative and in the exported report.
         breeding_summary=build_breeding_synthesis(
-            _build_breeding_input(summary_table, trait_results, mode=request.mode),
-            analysis_type="multi_environment" if request.mode == "multi" else "single_environment",
+            _build_breeding_input(summary_table, trait_results, mode=effective_mode),
+            analysis_type="multi_environment" if effective_mode == "multi" else "single_environment",
         ),
     )
 

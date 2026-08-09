@@ -206,13 +206,62 @@ class SummaryTableRow(BaseModel):
     error: Optional[str] = None
 
 
+class ExperimentalStructure(BaseModel):
+    """PROVENANCE, NOT VALIDATION — the structure the pipeline reconstructed.
+
+    This records what the pipeline currently reconstructed from the submitted
+    mapping. It is NOT scientific confirmation that the reconstruction is
+    correct, and it must never be read as such.
+
+    A wrong mapping faithfully recorded is still wrong. If a researcher maps
+    Year alone as the environment for a trial that is actually Location x Year,
+    this field will report source='supplied', n_environments=3 — an accurate
+    record of a scientifically incorrect structure. Nothing here checks the
+    reconstruction against the experiment that was actually conducted;
+    structural confirmation is a separate, unimplemented step.
+
+    Read it to answer "what did the pipeline do?", never "was the pipeline
+    right?".
+
+    Mirrors EnvironmentStructure.as_dict() from environment_structure.py. Until
+    this was serialised, the reconstruction was visible to the client only as
+    prose folded into per-trait warnings — a researcher could not tell from the
+    payload whether Environment was supplied or constructed, which factors built
+    it, or whether replication had been re-expressed as nested.
+
+    Additive and optional: every field defaults, so clients that ignore it are
+    unaffected.
+    """
+    environment_column: Optional[str] = None
+    #: "supplied" (researcher gave one), "constructed" (built from factors),
+    #: or "none" (single-environment data).
+    source: Optional[str] = None
+    #: Ordered factor columns combined to build the environment, when constructed.
+    factor_columns: List[str] = Field(default_factory=list)
+    n_environments: Optional[int] = None
+    #: Column the model used for replication — the researcher's own, or a
+    #: derived within-environment ordinal.
+    rep_column: Optional[str] = None
+    original_rep_column: Optional[str] = None
+    #: True when rep labels were re-expressed as within-environment ordinals.
+    rep_renumbered: bool = False
+    reps_per_environment: Optional[int] = None
+    #: Human-readable notes describing every structural decision taken.
+    notes: List[str] = Field(default_factory=list)
+
+
 class DatasetSummary(BaseModel):
     """Overall dataset statistics (computed from the uploaded file, not per-trait)."""
     n_genotypes: Optional[int] = None
     n_reps: int
     n_environments: Optional[int] = None
     n_traits: int
+    #: The mode analysis actually ran under. May differ from requested_mode when
+    #: a multi-environment request was downgraded for want of environment levels.
     mode: str
+    #: The mode the client asked for. Present so a downgrade is legible from the
+    #: payload rather than inferable only from a warning string.
+    requested_mode: Optional[str] = None
 
 
 class UploadAnalysisResponse(BaseModel):
@@ -231,6 +280,18 @@ class UploadAnalysisResponse(BaseModel):
     summary_table: List[SummaryTableRow]
     trait_results: Dict[str, TraitResult]
     dataset_summary: DatasetSummary
+    experimental_structure: Optional[ExperimentalStructure] = Field(
+        default=None,
+        description=(
+            "PROVENANCE, NOT VALIDATION. Records the structure the pipeline "
+            "reconstructed — environment provenance (supplied vs constructed), "
+            "the factor columns combined to build it, and whether replication "
+            "was re-expressed as nested within environment. This is NOT "
+            "confirmation that the reconstruction is scientifically correct: a "
+            "wrong mapping faithfully recorded is still wrong. Structural "
+            "confirmation is a separate step and is not implemented."
+        ),
+    )
     failed_traits: List[str] = Field(default_factory=list)
     anova_type_warning: Optional[str] = Field(
         default=None,
