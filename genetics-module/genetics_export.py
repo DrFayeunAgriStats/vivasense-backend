@@ -122,7 +122,21 @@ _ANOVA_LABELS: Dict[str, str] = {
     "rep": "Replication",
     "genotype": "Genotype",
     "environment": "Environment",
-    "environment:rep": "Rep(Environment)",
+    "environment:rep": "Replication(Environment)",
+    # "environment:genotype" is what the R engine actually emits for the
+    # combined-ANOVA interaction — term order follows the model formula in
+    # compute_multi_environment(), and no other path emits a G×E ANOVA row.
+    "environment:genotype": "Environment × Genotype",
+    # LEGACY ALIAS — same G×E effect, opposite key ordering, currently
+    # unreachable. It is NOT a different effect and NOT a different code path:
+    # every consumer in this codebase already treats the two orderings as
+    # synonyms (see the alias lists in analysis_anova_routes.py,
+    # analysis_genetic_parameters_routes.py, multitrait_upload_routes.py and
+    # _anova_env_effect_stats below). Kept only as a defensive fallback should
+    # formula parsing ever reorder the term. Consequence of leaving it: the same
+    # effect would render under two different names. Deliberately left unchanged
+    # here — retiring it, or pointing it at "Environment × Genotype", is a
+    # separate presentation decision.
     "genotype:environment": "G×E Interaction",
     "Residuals": "Error",
 }

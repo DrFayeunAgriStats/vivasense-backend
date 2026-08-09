@@ -37,7 +37,8 @@ const ANOVA_LABELS: Record<string, string> = {
   rep: "Replication",
   genotype: "Genotype",
   environment: "Environment",
-  "environment:rep": "Rep(Environment)",
+  "environment:rep": "Replication(Environment)",
+  "environment:genotype": "Environment × Genotype",
   "genotype:environment": "G×E Interaction",
   Residuals: "Error",
 };

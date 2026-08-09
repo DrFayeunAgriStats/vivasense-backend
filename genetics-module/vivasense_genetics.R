@@ -21,7 +21,21 @@ safe_f_ratio <- function(ms_effect, ms_error, min_error_ms = 1e-10) {
   return(ms_effect / ms_error)
 }
 
-sanitize_anova_f_values <- function(anova_table) {
+#' Stamp F-values and p-values onto an ANOVA table using the correct error
+#' stratum for each term.
+#'
+#' @param anova_table data frame with Df / Mean Sq / F value / Pr(>F) columns.
+#' @param stratum_denominators optional NAMED character vector mapping an effect
+#'   row name to the row name of the error term it must be tested against, e.g.
+#'   c(environment = "environment:rep").  Use this for effects that sit at a
+#'   coarser stratum than the pooled residual — a whole-plot factor in a
+#'   split-plot, or Environment in a combined MET analysis, where the correct
+#'   denominator is Rep(Environment) rather than the finer within-environment
+#'   residual.  Terms not named here keep the existing behaviour: main_plot is
+#'   tested against Error A, everything else against the pooled residual.
+#'   Default NULL leaves behaviour identical to before this argument existed.
+#'
+sanitize_anova_f_values <- function(anova_table, stratum_denominators = NULL) {
   if (is.null(anova_table) || !is.data.frame(anova_table)) {
     return(anova_table)
   }
@@ -83,16 +97,41 @@ sanitize_anova_f_values <- function(anova_table) {
       next
     }
 
-    # main_plot is tested against Error A (whole-plot error);
-    # all other terms (sub_plot, interactions) are tested against Error B
-    if (identical(term, "main_plot")) {
+    # Explicit stratum mapping wins: the caller has established which error row
+    # this effect must be tested against.  If the named row is absent or
+    # unusable, blank the test rather than silently falling back to the pooled
+    # residual — an F-test against the wrong (finer) error term overstates
+    # significance, which is precisely what this mapping exists to prevent.
+    mapped_denom <- if (!is.null(stratum_denominators) &&
+                        term %in% names(stratum_denominators)) {
+      stratum_denominators[[term]]
+    } else {
+      NA_character_
+    }
+
+    if (!is.na(mapped_denom)) {
+      if (!(mapped_denom %in% rn)) {
+        message(sprintf(
+          "[WARN] denominator stratum '%s' for term '%s' not found in ANOVA table — F test omitted",
+          mapped_denom, term))
+        anova_table[term, "F value"] <- NA_real_
+        if ("Pr(>F)" %in% names(anova_table)) {
+          anova_table[term, "Pr(>F)"] <- NA_real_
+        }
+        next
+      }
+      denom_ms <- suppressWarnings(as.numeric(anova_table[mapped_denom, "Mean Sq"]))
+      denom_df <- suppressWarnings(as.integer(anova_table[mapped_denom, "Df"]))
+    } else if (identical(term, "main_plot")) {
+      # main_plot is tested against Error A (whole-plot error)
       denom_ms <- wp_error_ms
       denom_df <- wp_error_df
     } else {
+      # all other terms (sub_plot, interactions) are tested against Error B
       denom_ms <- residual_ms
       denom_df <- residual_df
     }
-    
+
     f_val <- safe_f_ratio(ms_effect, denom_ms)
     anova_table[term, "F value"] <- f_val
     
@@ -1498,7 +1537,24 @@ compute_multi_environment <- function(data, trait_name = "Trait",
     }
     ge_term <- ge_term[1]   # use first match
 
-    list(ok = TRUE, anova_table = anova_table, ge_term = ge_term)
+    # Locate Rep(Environment) the same way, for the same reason.  This term is
+    # the whole-environment error stratum: it carries the replicate-to-replicate
+    # variation that Environment must be judged against.
+    rep_env_term <- rownames(anova_table)[
+      grepl("environment", rownames(anova_table), fixed = TRUE) &
+      grepl("rep",         rownames(anova_table), fixed = TRUE) &
+      !grepl("genotype",   rownames(anova_table), fixed = TRUE)
+    ]
+    if (length(rep_env_term) == 0) {
+      stop(paste(
+        "ANOVA table missing Rep(Environment) term. Available terms:",
+        paste(rownames(anova_table), collapse = ", ")
+      ))
+    }
+    rep_env_term <- rep_env_term[1]
+
+    list(ok = TRUE, anova_table = anova_table,
+         ge_term = ge_term, rep_env_term = rep_env_term)
 
   }, error = function(e) {
     message(sprintf("[ERROR] Trait %s — model failed: %s", trait_name, conditionMessage(e)))
@@ -1509,16 +1565,32 @@ compute_multi_environment <- function(data, trait_name = "Trait",
     stop(model_result$message)   # propagates to genetics_analysis tryCatch
   }
 
-  anova_table <- model_result$anova_table
-  ge_term     <- model_result$ge_term
+  anova_table  <- model_result$anova_table
+  ge_term      <- model_result$ge_term
+  rep_env_term <- model_result$rep_env_term
 
   # Extract mean squares
   ms_genotype <- anova_table["genotype", "Mean Sq"]
   ms_ge       <- anova_table[ge_term,    "Mean Sq"]
   ms_error    <- anova_table["Residuals","Mean Sq"]
 
-  anova_table <- sanitize_anova_f_values(anova_table)
-  
+  # Error strata for the combined (RCBD, reps nested in environment) analysis:
+  #
+  #   Environment       → Rep(Environment)   [whole-environment stratum]
+  #   Genotype          → Residual
+  #   Environment×Geno  → Residual
+  #   Rep(Environment)  → Residual
+  #
+  # Environment is the only term at the coarser stratum.  Testing it against the
+  # pooled within-environment residual treats replicate variation as if it were
+  # plot noise and inflates F sharply.  This mapping is established for THIS
+  # structure (RCBD with replication nested in environment); other MET designs
+  # may need different denominators and must be handled explicitly.
+  anova_table <- sanitize_anova_f_values(
+    anova_table,
+    stratum_denominators = stats::setNames(rep_env_term, "environment")
+  )
+
   # Variance components (fixed genotype, fixed environment, fixed reps)
   sigma2_error <- ms_error
   
