@@ -1045,6 +1045,32 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
             "Environment and GxE statistics are not estimable and were omitted."
         )
 
+    # ── Replication required for multi-environment analysis ──────────────────
+    # Independent of any client-side check. Replication is legitimately optional
+    # for CRD, which declares no blocking structure. A multi-environment run is
+    # a different case: the combined model fits environment:rep, so the
+    # replication structure within each environment must be identified before
+    # the trial can be described at all.
+    #
+    # Without this, an empty rep_column silently drops out of build_observations
+    # (keep_cols filters falsy names), the R engine receives records with no rep
+    # column, and compute_multi_environment fails with an error that says
+    # nothing about the missing field. Gated on effective_mode so a request
+    # already downgraded to single-environment is unaffected.
+    #
+    # Validation only — no statistical computation, model specification or
+    # environment construction is touched here.
+    if effective_mode == "multi" and rep_column is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Replication column is required for multi-environment analysis. "
+                "The combined analysis estimates replication nested within "
+                "environment, so the replication/block column must be identified. "
+                "Map it and resubmit, or run the dataset as single-environment."
+            ),
+        )
+
     dataset_summary = DatasetSummary(
         n_genotypes=n_genotypes,
         n_reps=n_reps,
