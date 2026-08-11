@@ -984,6 +984,34 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
     if not rep_column or rep_column.strip() == "":
         rep_column = None
 
+    # ── Third treatment factor is not supported ──────────────────────────────
+    # factor_c_column has always been accepted by the schema and read by
+    # nothing. The R engine's factorial models top out at two treatment factors
+    # (trait_value ~ genotype * factor, with factor_a mapped to the genotype
+    # role and factor_b to the factor role), so a supplied third factor was
+    # silently discarded and the researcher received a complete-looking
+    # two-factor ANOVA of an experiment they did not run.
+    #
+    # Rejecting an unsupported input needs no scientific decision, so it is
+    # separated from the three-factor capability work (which is blocked on
+    # sign-off). Fires on presence alone — deliberately before the
+    # column-existence check below, so the answer does not depend on whether
+    # the named column happens to exist.
+    #
+    # Validation only: no model, formula or downstream behaviour is touched,
+    # and a request without a third factor is completely unaffected.
+    _factor_c = getattr(request, "factor_c_column", None)
+    if _factor_c and str(_factor_c).strip():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Three-factor factorial analysis isn't supported yet. VivaSense "
+                "currently analyzes up to two treatment factors (Factor A × Factor B). "
+                f"Remove the third factor selection ('{str(_factor_c).strip()}') to "
+                "proceed with a two-factor analysis, or wait for three-factor support."
+            ),
+        )
+
     # Validate that all named columns actually exist (genotype and rep are optional for some designs)
     required_cols = [c for c in [request.genotype_column] if c is not None and str(c).strip() != ""]
     if rep_column:
