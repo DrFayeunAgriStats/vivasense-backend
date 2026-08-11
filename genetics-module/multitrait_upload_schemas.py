@@ -130,7 +130,15 @@ class UploadAnalysisRequest(BaseModel):
     )
     factor_c_column: Optional[str] = Field(
         default=None,
-        description="Optional third treatment factor for factorial designs (currently ignored in analysis).",
+        description=(
+            "Optional third treatment factor for factorial designs. When present "
+            "the model becomes a full A×B×C factorial — every main effect, all "
+            "three two-way interactions and the three-way term. Requires "
+            "design_type='factorial' with factor_a_column and factor_b_column "
+            "also mapped, every A×B×C combination present in the data, and at "
+            "least 3 observations per combination; requests failing any of these "
+            "are rejected rather than reduced to a two-factor analysis."
+        ),
     )
     numeric_factor_columns: List[str] = Field(
         default_factory=list,

@@ -337,6 +337,7 @@ def build_observations(
     design_type: Optional[str] = None,
     main_plot_col: Optional[str] = None,
     sub_plot_col: Optional[str] = None,
+    factor_c_col: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Reshape a wide DataFrame into the flat observation-record format expected
@@ -407,6 +408,11 @@ def build_observations(
                 # Factorial RCBD
                 keep_cols = [genotype_col, rep_col, factor_col, trait_col]
 
+        # Third treatment factor joins whichever factorial shape was selected.
+        # Only meaningful alongside the first two — enforced upstream.
+        if factor_c_col and eff_factor:
+            keep_cols = keep_cols + [factor_c_col]
+
     # Remove empty/None column names before subsetting (e.g., blank rep_column in CRD payloads)
     keep_cols = [c for c in keep_cols if c and c.strip()]
     subset = df[keep_cols].copy()
@@ -464,6 +470,10 @@ def build_observations(
             elif env_col:
                 # Multi-environment RCBD
                 rec["environment"] = format_label(row[env_col])
+        # Third treatment factor. Its presence is what tells the R engine to
+        # extend the factorial formula to genotype * factor * factor_c.
+        if factor_c_col and rec.get("factor") is not None:
+            rec["factor_c"] = format_label(row[factor_c_col])
         records.append(rec)
 
     return records
@@ -483,6 +493,7 @@ def check_balance(
     design_type: Optional[str] = None,
     main_plot_col: Optional[str] = None,
     sub_plot_col: Optional[str] = None,
+    factor_c_col: Optional[str] = None,
 ) -> List[str]:
     """
     Return human-readable warnings for unbalanced or incomplete experimental
@@ -509,7 +520,41 @@ def check_balance(
     n_genotypes = sub[genotype_col].nunique() if genotype_col else 0
     crd_mode = rep_col is None
 
-    if factor_col and not crd_mode:
+    if factor_col and factor_c_col:
+        # Three-factor factorial — the blocking-structure counterpart to the
+        # replication check in analyze_upload. Completeness is evaluated over
+        # the FULL A×B×C cell set, not the A×B pairs the two-factor branch
+        # below inspects: an A×B grid can look complete while a third factor's
+        # levels are missing from some of its cells.
+        #
+        # Trait-specific, unlike the hard gate upstream: a cell can be complete
+        # in the raw upload and still empty for one trait after non-numeric
+        # values are dropped, and that is worth surfacing per trait.
+        n_a = sub[genotype_col].nunique() if genotype_col else 0
+        n_b = sub[factor_col].nunique()
+        n_c = sub[factor_c_col].nunique()
+        expected_cells = n_a * n_b * n_c
+
+        abc_sizes = sub.groupby([genotype_col, factor_col, factor_c_col]).size()
+        observed_cells = int(abc_sizes.shape[0])
+        if observed_cells < expected_cells:
+            warnings.append(
+                f"Incomplete three-factor structure for this trait: "
+                f"{observed_cells} of {expected_cells} combinations present "
+                f"({n_a} × {n_b} × {n_c}). Interactions involving the absent "
+                "combinations are not estimable."
+            )
+
+        if observed_cells:
+            min_abc = int(abc_sizes.min())
+            max_abc = int(abc_sizes.max())
+            if min_abc != max_abc:
+                warnings.append(
+                    f"Unequal replication across three-factor cells for this trait "
+                    f"(min {min_abc}, max {max_abc} observations per combination)."
+                )
+
+    elif factor_col and not crd_mode:
         # Factorial RCBD — check balance within genotype×factor cells
         n_factors = sub[factor_col].nunique()
 
@@ -941,6 +986,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
     request.factor_column = _resolve(getattr(request, "factor_column", None))
     request.factor_a_column = _resolve(getattr(request, "factor_a_column", None))
     request.factor_b_column = _resolve(getattr(request, "factor_b_column", None))
+    request.factor_c_column = _resolve(getattr(request, "factor_c_column", None))
     request.main_plot_column = _resolve(request.main_plot_column)
     request.sub_plot_column = _resolve(request.sub_plot_column)
     request.trait_columns = [
@@ -984,33 +1030,38 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
     if not rep_column or rep_column.strip() == "":
         rep_column = None
 
-    # ── Third treatment factor is not supported ──────────────────────────────
-    # factor_c_column has always been accepted by the schema and read by
-    # nothing. The R engine's factorial models top out at two treatment factors
-    # (trait_value ~ genotype * factor, with factor_a mapped to the genotype
-    # role and factor_b to the factor role), so a supplied third factor was
-    # silently discarded and the researcher received a complete-looking
-    # two-factor ANOVA of an experiment they did not run.
+    # ── Third treatment factor: structural preconditions ─────────────────────
+    # RETIRES the previous blanket "three factors not supported" rejection.
+    # That guard fired on presence alone; leaving it in place would short-circuit
+    # every request before the three-factor model could ever run, making the
+    # capability unreachable. It is replaced by dataset-specific validation
+    # (complete cells + minimum replication) applied further below, once the
+    # dataframe is available.
     #
-    # Rejecting an unsupported input needs no scientific decision, so it is
-    # separated from the three-factor capability work (which is blocked on
-    # sign-off). Fires on presence alone — deliberately before the
-    # column-existence check below, so the answer does not depend on whether
-    # the named column happens to exist.
-    #
-    # Validation only: no model, formula or downstream behaviour is touched,
-    # and a request without a third factor is completely unaffected.
+    # A third factor is only interpretable alongside the first two, and only in
+    # a factorial design — the same constraint the R engine enforces.
     _factor_c = getattr(request, "factor_c_column", None)
-    if _factor_c and str(_factor_c).strip():
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Three-factor factorial analysis isn't supported yet. VivaSense "
-                "currently analyzes up to two treatment factors (Factor A × Factor B). "
-                f"Remove the third factor selection ('{str(_factor_c).strip()}') to "
-                "proceed with a two-factor analysis, or wait for three-factor support."
-            ),
-        )
+    _factor_c = str(_factor_c).strip() if _factor_c and str(_factor_c).strip() else None
+    if _factor_c:
+        if request.design_type != "factorial":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"A third treatment factor ('{_factor_c}') was supplied for a "
+                    f"'{request.design_type or 'unspecified'}' design. Three-factor "
+                    "analysis applies to factorial designs only. Choose the Factorial "
+                    "design, or remove the third factor."
+                ),
+            )
+        if not (request.factor_a_column and request.factor_b_column):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"A third treatment factor ('{_factor_c}') was supplied without both "
+                    "of the first two. Three-factor analysis requires Factor A, Factor B "
+                    "and Factor C to all be mapped."
+                ),
+            )
 
     # Validate that all named columns actually exist (genotype and rep are optional for some designs)
     required_cols = [c for c in [request.genotype_column] if c is not None and str(c).strip() != ""]
@@ -1020,7 +1071,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
     if request.environment_column:
         required_cols.append(request.environment_column)
     if request.design_type == "factorial":
-        for col in [request.factor_a_column, request.factor_b_column]:
+        for col in [request.factor_a_column, request.factor_b_column, _factor_c]:
             if col and col.strip():
                 required_cols.append(col)
     if request.design_type == "split_plot_rcbd":
@@ -1036,6 +1087,82 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
             status_code=400,
             detail=f"Columns not found in file: {missing}",
         )
+
+    # ── Three-factor structural requirements (FAC-04 / FAC-06) ───────────────
+    # A full A×B×C factorial estimates every main effect, all three two-way
+    # interactions and the three-way term. That requires every combination to be
+    # present and replicated; a missing cell makes the corresponding effects
+    # inestimable, and an unreplicated one leaves nothing to separate treatment
+    # variation from error.
+    #
+    # Failures are reported precisely and reject outright. The run is never
+    # quietly reduced to two factors — that would answer a different question
+    # than the researcher asked, which is the failure mode this whole guard
+    # exists to prevent.
+    #
+    # KNOWN LIMITATION, stated rather than papered over: the row count per cell
+    # is a STRUCTURAL PROXY for replication, not a verification of it. A flat
+    # uploaded table carries no experimental-unit metadata, so nothing here can
+    # distinguish three independent replicates from three subsamples of a single
+    # unit. Passing this check means the minimum structural requirement is met —
+    # it does not mean the replication is scientifically valid. That remains the
+    # researcher's judgement and is said so in the message below.
+    MIN_ROWS_PER_CELL = 3
+    if _factor_c:
+        fa, fb, fc = request.factor_a_column, request.factor_b_column, _factor_c
+        cell_sizes = df.groupby([fa, fb, fc], dropna=False).size()
+
+        expected = (
+            df[fa].nunique() * df[fb].nunique() * df[fc].nunique()
+        )
+        observed = int(cell_sizes.shape[0])
+
+        if observed < expected:
+            present = set(cell_sizes.index)
+            missing = [
+                f"{a} × {b} × {c}"
+                for a in sorted(df[fa].dropna().unique(), key=str)
+                for b in sorted(df[fb].dropna().unique(), key=str)
+                for c in sorted(df[fc].dropna().unique(), key=str)
+                if (a, b, c) not in present
+            ]
+            shown = ", ".join(missing[:10])
+            more = f" (and {len(missing) - 10} more)" if len(missing) > 10 else ""
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Incomplete three-factor design: {observed} of {expected} "
+                    f"{fa} × {fb} × {fc} combinations are present. "
+                    f"Missing: {shown}{more}. "
+                    "A full factorial needs every combination in order to estimate "
+                    "the three-way interaction and the two-way interactions that "
+                    "involve the missing levels. Supply the missing combinations, or "
+                    "analyse a subset that is complete."
+                ),
+            )
+
+        under = cell_sizes[cell_sizes < MIN_ROWS_PER_CELL]
+        if not under.empty:
+            listed = ", ".join(
+                f"{' × '.join(str(part) for part in idx)} (n={int(n)})"
+                for idx, n in list(under.items())[:10]
+            )
+            more = f" (and {len(under) - 10} more)" if len(under) > 10 else ""
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Insufficient replication for three-factor analysis: "
+                    f"{len(under)} of {observed} cells have fewer than "
+                    f"{MIN_ROWS_PER_CELL} observations. {listed}{more}. "
+                    "Every combination needs at least "
+                    f"{MIN_ROWS_PER_CELL} observations to estimate error separately "
+                    "from the treatment effects. Note this is a structural check on "
+                    "row counts only: VivaSense cannot tell independent replicates "
+                    "from repeated measurements of the same plot, so meeting it "
+                    "confirms the minimum structure, not that the replication is "
+                    "scientifically valid."
+                ),
+            )
 
     # Dataset-level summary (whole file, not per-trait)
     # For factorial designs factor_a acts as the primary grouping column when genotype is absent.
@@ -1162,6 +1289,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                     design_type=request.design_type,
                     main_plot_col=request.main_plot_column,
                     sub_plot_col=request.sub_plot_column,
+                    factor_c_col=_factor_c,
                 )
                 if balance_warnings:
                     for w in balance_warnings:
@@ -1177,6 +1305,7 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                     design_type=request.design_type,
                     main_plot_col=request.main_plot_column,
                     sub_plot_col=request.sub_plot_column,
+                    factor_c_col=_factor_c,
                 )
 
                 # Execute blocking R subprocess concurrently via ThreadPool

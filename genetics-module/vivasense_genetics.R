@@ -558,12 +558,45 @@ compute_single_environment <- function(data, trait_name = "Trait",
   # Split-plot RCBD:        trait_value ~ main_plot * sub_plot + Error(rep/main_plot)
   #   (rep is NOT a fixed term outside Error(); it enters only through the
   #    whole-plot error stratum.  genotype is NOT part of the generic formula.)
-  has_factor <- "factor" %in% colnames(data)
+  # 3-factor CRD:           trait_value ~ genotype * factor * factor_c
+  # 3-factor RCBD:          trait_value ~ rep + genotype * factor * factor_c
+  #
+  # Treatment factors are held as an ORDERED LIST rather than as hardcoded role
+  # pairs, so the formula, guards, mean separation and labelling are driven by
+  # its length instead of assuming exactly two. The role NAMES stay
+  # "genotype" / "factor" / "factor_c" rather than being renumbered, so a
+  # two-factor run produces byte-identical ANOVA row names, mean-separation keys
+  # and labels to before. Bounded at three by the request contract, which offers
+  # no fourth factor field.
+  has_factor   <- "factor"   %in% colnames(data)
+  has_factor_c <- "factor_c" %in% colnames(data)
+
   n_factor_levels <- if (has_factor) {
     data$factor <- factor(data$factor)
     nlevels(data$factor)
   } else {
     1L
+  }
+  n_factor_c_levels <- if (has_factor_c) {
+    data$factor_c <- factor(data$factor_c)
+    nlevels(data$factor_c)
+  } else {
+    1L
+  }
+
+  # Ordered treatment-factor roles actually present, in A, B, C order.
+  treatment_roles <- character(0)
+  if (has_genotype) treatment_roles <- c(treatment_roles, "genotype")
+  if (has_factor)   treatment_roles <- c(treatment_roles, "factor")
+  if (has_factor_c) treatment_roles <- c(treatment_roles, "factor_c")
+  n_treatment_factors <- length(treatment_roles)
+
+  # A third factor is only interpretable alongside the first two.
+  if (has_factor_c && !(has_genotype && has_factor)) {
+    stop(paste(
+      "A third treatment factor was supplied without both of the first two.",
+      "Three-factor analysis requires Factor A, Factor B and Factor C."
+    ))
   }
 
   # Guard: catch single-level factors before aov() to produce clear errors
@@ -585,6 +618,12 @@ compute_single_environment <- function(data, trait_name = "Trait",
       n_factor_levels
     ))
   }
+  if (has_factor_c && n_factor_c_levels < 2) {
+    stop(sprintf(
+      "Third factor column must have \u22652 levels for three-factor analysis. Got %d level(s). Check your data.",
+      n_factor_c_levels
+    ))
+  }
 
   if (has_splitplot) {
     data$main_plot <- factor(data$main_plot)
@@ -601,11 +640,15 @@ compute_single_environment <- function(data, trait_name = "Trait",
     n_reps <- round(mean(obs_per_geno))
 
     if (has_factor) {
+      # `a * b` and `a * b * c` both expand to main effects plus EVERY
+      # interaction among them — including the three-way when three factors are
+      # present. Full factorial by default; no term is dropped automatically.
+      treat_rhs <- paste(treatment_roles, collapse = " * ")
       message(sprintf(
-        "[INFO] Factorial CRD model for %s: trait_value ~ genotype * factor (%d factor levels)",
-        trait_name, n_factor_levels
+        "[INFO] Factorial CRD model for %s: trait_value ~ %s (%d treatment factors)",
+        trait_name, treat_rhs, n_treatment_factors
       ))
-      model <- aov(trait_value ~ genotype * factor, data = data)
+      model <- aov(as.formula(paste("trait_value ~", treat_rhs)), data = data)
     } else {
       message(sprintf(
         "[INFO] CRD model for %s: trait_value ~ genotype (n_reps inferred = %d)",
@@ -617,11 +660,16 @@ compute_single_environment <- function(data, trait_name = "Trait",
     # RCBD: rep is a fixed blocking factor
     n_reps <- nlevels(data$rep)
     if (has_factor) {
+      # rep stays an additive blocking main effect — unchanged by the arity of
+      # the treatment structure. It is NOT nested and carries no error stratum
+      # of its own (contrast split-plot's Error(rep/main_plot) and MET's
+      # environment:rep).
+      treat_rhs <- paste(treatment_roles, collapse = " * ")
       message(sprintf(
-        "[INFO] Factorial RCBD model for %s: trait_value ~ rep + genotype * factor (%d factor levels)",
-        trait_name, n_factor_levels
+        "[INFO] Factorial RCBD model for %s: trait_value ~ rep + %s (%d treatment factors)",
+        trait_name, treat_rhs, n_treatment_factors
       ))
-      model <- aov(trait_value ~ rep + genotype * factor, data = data)
+      model <- aov(as.formula(paste("trait_value ~ rep +", treat_rhs)), data = data)
     } else {
       model <- aov(trait_value ~ rep + genotype, data = data)
     }
@@ -1367,7 +1415,10 @@ compute_single_environment <- function(data, trait_name = "Trait",
     df_err   <- df_error_B
     mean_sep <- sub_plot_mean_sep
     mean_sep_b <- NULL
+    mean_sep_c <- NULL
     factorial_interaction_means <- NULL
+    two_way_interaction_means <- NULL
+    mean_separation_basis <- NULL
   } else {
     df_err   <- anova_table["Residuals", "Df"]
     mean_sep <- compute_mean_separation(model, trait_name,
@@ -1378,38 +1429,147 @@ compute_single_environment <- function(data, trait_name = "Trait",
                               df_error = df_err, ms_error = ms_error,
                               trt = "factor")
     } else NULL
-    factorial_interaction_means <- if (has_factor && has_genotype) {
+    mean_sep_c <- if (has_factor_c) {
+      compute_mean_separation(model, trait_name,
+                              df_error = df_err, ms_error = ms_error,
+                              trt = "factor_c")
+    } else NULL
+
+    # Locate a term's p-value by its ROLE SET, independent of the order R chose
+    # to write the interaction in ("a:b" vs "b:a").
+    .term_p <- function(at, roles) {
+      rn <- rownames(at)
+      target <- sort(roles)
+      for (i in seq_along(rn)) {
+        parts <- sort(trimws(strsplit(rn[i], ":", fixed = TRUE)[[1]]))
+        if (length(parts) == length(target) && all(parts == target)) {
+          return(suppressWarnings(as.numeric(at[i, "Pr(>F)"])))
+        }
+      }
+      NA_real_
+    }
+
+    # Cell means + Tukey grouping for an ARBITRARY set of roles.
+    #
+    # The label split is positional on ":" rather than the previous
+    # sub(":.*", "") / sub("^[^:]*:", "") pair, which assumed a rowname had
+    # exactly two pieces. On a three-way term ("G1:F1:C1") the old expressions
+    # returned "G1" and "F1:C1" — silently mis-attributing the third factor's
+    # level to the second factor. That made the old logic unusable for three
+    # factors, so it is fixed here rather than treated as a separate defect.
+    .cell_means_for <- function(roles) {
+      se_val <- tryCatch(sqrt(ms_error / n_reps), error = function(e) NA_real_)
       tryCatch({
-        int_sep  <- HSD.test(model, c("genotype", "factor"),
+        int_sep  <- HSD.test(model, roles,
                              DFerror = as.integer(df_err), MSerror = ms_error,
                              group = TRUE, console = FALSE)
         rn       <- rownames(int_sep$groups)
         mean_col <- setdiff(names(int_sep$groups), "groups")[1]
-        list(
-          genotype = sub(":.*",      "", rn),
-          factor   = sub("^[^:]*:", "", rn),
-          mean     = as.numeric(int_sep$groups[[mean_col]]),
-          se       = rep(tryCatch(sqrt(ms_error / n_reps), error = function(e) NA_real_), length(rn)),
-          group    = as.character(int_sep$groups$groups),
-          test     = "Tukey HSD",
-          alpha    = 0.05
-        )
+        parts    <- strsplit(rn, ":", fixed = TRUE)
+        out <- list()
+        for (k in seq_along(roles)) {
+          out[[roles[k]]] <- vapply(
+            parts,
+            function(p) if (length(p) >= k) trimws(p[[k]]) else NA_character_,
+            character(1)
+          )
+        }
+        out$mean  <- as.numeric(int_sep$groups[[mean_col]])
+        out$se    <- rep(se_val, length(rn))
+        out$group <- as.character(int_sep$groups$groups)
+        out$test  <- "Tukey HSD"
+        out$alpha <- 0.05
+        out
       }, error = function(e) {
         message(sprintf("[WARN] Interaction HSD failed for %s (%s) — using cell means",
                         trait_name, conditionMessage(e)))
-        cell <- aggregate(trait_value ~ genotype + factor, data = data, FUN = mean)
+        cell <- aggregate(as.formula(paste("trait_value ~", paste(roles, collapse = " + "))),
+                          data = data, FUN = mean)
         cell <- cell[order(-cell$trait_value), ]
-        list(
-          genotype = as.character(cell$genotype),
-          factor   = as.character(cell$factor),
-          mean     = cell$trait_value,
-          se       = rep(tryCatch(sqrt(ms_error / n_reps), error = function(e) NA_real_), nrow(cell)),
-          group    = rep("—", nrow(cell)),
-          test     = "Cell Means",
-          alpha    = 0.05
-        )
+        out <- list()
+        for (r in roles) out[[r]] <- as.character(cell[[r]])
+        out$mean  <- cell$trait_value
+        out$se    <- rep(se_val, nrow(cell))
+        out$group <- rep("—", nrow(cell))
+        out$test  <- "Cell Means"
+        out$alpha <- 0.05
+        out
       })
-    } else NULL
+    }
+
+    ALPHA_INT <- 0.05
+    two_way_interaction_means <- NULL
+    mean_separation_basis <- NULL
+
+    if (n_treatment_factors >= 3) {
+      # ── FAC-05 decision tree (three factors) ─────────────────────────────
+      # Marginal means are misleading in the presence of a higher-order
+      # interaction, so the highest significant order decides what is presented
+      # as the primary result.
+      p_abc <- .term_p(anova_table, treatment_roles)
+      if (!is.na(p_abc) && p_abc < ALPHA_INT) {
+        factorial_interaction_means <- .cell_means_for(treatment_roles)
+        mean_separation_basis <- list(
+          selected = "three_way",
+          significant_terms = paste(treatment_roles, collapse = ":"),
+          alpha = ALPHA_INT,
+          rationale = paste(
+            "The three-way interaction is significant, so each factor's effect",
+            "depends on the levels of both others. Simple effects are presented",
+            "as cell means conditioned on all three factors; marginal means for",
+            "individual factors would average over that dependence and mislead."
+          )
+        )
+      } else {
+        pairs <- list(c("genotype", "factor"),
+                      c("genotype", "factor_c"),
+                      c("factor",   "factor_c"))
+        sig_pairs <- Filter(function(rr) {
+          p <- .term_p(anova_table, rr)
+          !is.na(p) && p < ALPHA_INT
+        }, pairs)
+
+        if (length(sig_pairs) > 0) {
+          two_way_interaction_means <- setNames(
+            lapply(sig_pairs, .cell_means_for),
+            vapply(sig_pairs, paste, character(1), collapse = ":")
+          )
+          # Primary result is the first significant two-way, in A,B / A,C / B,C
+          # order; the rest travel alongside it.
+          factorial_interaction_means <- two_way_interaction_means[[1]]
+          mean_separation_basis <- list(
+            selected = "two_way",
+            significant_terms = paste(names(two_way_interaction_means), collapse = ", "),
+            alpha = ALPHA_INT,
+            rationale = paste(
+              "The three-way interaction is not significant, so interpretation",
+              "drops to the two-way level. Interaction means are presented for",
+              "every significant two-way term; marginal means for the factors",
+              "involved in them would average over a real dependence."
+            )
+          )
+        } else {
+          factorial_interaction_means <- NULL
+          mean_separation_basis <- list(
+            selected = "marginal",
+            significant_terms = "",
+            alpha = ALPHA_INT,
+            rationale = paste(
+              "No interaction among the three factors is significant, so each",
+              "factor's marginal means are interpretable on their own."
+            )
+          )
+        }
+      }
+    } else if (has_factor && has_genotype) {
+      # ── Two factors: behaviour deliberately unchanged ─────────────────────
+      # Both marginal and interaction means are emitted unconditionally, as
+      # before. The decision tree above governs three-factor runs only, so no
+      # existing two-factor output changes.
+      factorial_interaction_means <- .cell_means_for(c("genotype", "factor"))
+    } else {
+      factorial_interaction_means <- NULL
+    }
   }
 
   design_label <- if (has_splitplot) {
@@ -1446,7 +1606,15 @@ compute_single_environment <- function(data, trait_name = "Trait",
     anova_table                = as.data.frame(anova_table),
     mean_separation            = mean_sep,
     mean_separation_b          = mean_sep_b,
+    mean_separation_c          = mean_sep_c,
     interaction_separation     = factorial_interaction_means,
+    # Every significant two-way, keyed "roleA:roleB" — populated only when a
+    # three-factor run drops to the two-way level. NULL otherwise.
+    two_way_interaction_means  = two_way_interaction_means,
+    # Which level of the FAC-05 tree was selected and why. NULL for two-factor
+    # runs, whose behaviour is unchanged.
+    mean_separation_basis      = mean_separation_basis,
+    n_treatment_factors        = n_treatment_factors,
     main_plot_mean_separation  = if (has_splitplot) main_plot_mean_sep else NULL,
     interaction_means          = if (has_splitplot) interaction_means else NULL,
     assumption_tests           = assumption_tests_out,
