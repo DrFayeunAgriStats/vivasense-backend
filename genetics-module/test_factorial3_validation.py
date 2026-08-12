@@ -270,3 +270,57 @@ class TestCheckBalanceThreeFactor(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestAnovaLabelMapping(unittest.TestCase):
+    """Internal role names must never reach the researcher.
+
+    This class runs the REAL R engine rather than the stub. Every other test
+    here stops at validation, and the R-level tests read raw anova_table
+    rownames — so the Python layer that translates genotype/factor/factor_c
+    into the researcher's own column names was covered by nothing. A
+    three-factor run consequently shipped "genotype:factor:factor_c" to the
+    UI where it should have read "A×B×C". Slower than the rest of the file by
+    an R subprocess, and worth it: this is the only test that sees the
+    translated output.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import app_genetics
+        cls._saved = getattr(app_genetics, "r_engine", None)
+        app_genetics.r_engine = app_genetics.RGeneticsEngine("vivasense_genetics.R")
+        cls._app_genetics = app_genetics
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._app_genetics.r_engine = cls._saved
+
+    def _sources(self, **overrides):
+        req = _abc_request(_abc_df(), **overrides)
+        response = asyncio.run(routes.analyze_upload(req))
+        trait = response.trait_results[req.trait_columns[0]]
+        self.assertEqual(trait.status, "success", msg=str(trait.error))
+        return list(trait.analysis_result.result.anova_table.source)
+
+    def test_three_factor_labels_use_researcher_column_names(self):
+        sources = self._sources()
+        self.assertEqual(
+            sources,
+            ["rep", "Irrigation", "Variety", "Spacing",
+             "Irrigation×Variety", "Irrigation×Spacing", "Variety×Spacing",
+             "Irrigation×Variety×Spacing", "Residuals"],
+        )
+
+    def test_no_internal_role_name_survives_to_the_client(self):
+        for label in self._sources():
+            for internal in ("genotype", "factor_c", "factor"):
+                self.assertNotIn(internal, label,
+                                 f"internal role name leaked in {label!r}")
+
+    def test_two_factor_labels_unchanged(self):
+        sources = self._sources(factor_c_column=None)
+        self.assertEqual(
+            sources,
+            ["rep", "Irrigation", "Variety", "Irrigation×Variety", "Residuals"],
+        )

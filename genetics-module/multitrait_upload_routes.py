@@ -23,6 +23,7 @@ import base64
 import io
 import logging
 import re
+from itertools import combinations
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -1356,15 +1357,29 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                         and isinstance(r_result, dict)):
                     at = r_result.get("anova_table")
                     if at and isinstance(at.get("source"), list):
-                        _lmap = {}
+                        # Internal role names -> the researcher's own column
+                        # names. Built from whichever roles are actually in the
+                        # model rather than a fixed pair, so a third factor and
+                        # its interactions are translated too. Without this the
+                        # table showed "genotype:factor:factor_c" where it
+                        # should read "N×P×V" — VivaSense's internals leaking
+                        # into a result the researcher has to read.
+                        _roles: List[tuple] = []
                         if effective_genotype_col:
-                            _lmap["genotype"] = effective_genotype_col
+                            _roles.append(("genotype", effective_genotype_col))
                         if factor_col:
-                            _lmap["factor"] = factor_col
-                        if effective_genotype_col and factor_col:
-                            _lmap["genotype:factor"] = (
-                                f"{effective_genotype_col}×{factor_col}"
-                            )
+                            _roles.append(("factor", factor_col))
+                        if _factor_c:
+                            _roles.append(("factor_c", _factor_c))
+
+                        _lmap = {role: col for role, col in _roles}
+                        # Every interaction among the roles present, in the term
+                        # order R writes them (A:B, A:C, B:C, A:B:C).
+                        for _size in range(2, len(_roles) + 1):
+                            for _combo in combinations(_roles, _size):
+                                _lmap[":".join(r for r, _ in _combo)] = "×".join(
+                                    c for _, c in _combo
+                                )
                         at["source"] = [_lmap.get(s, s) for s in at["source"]]
                     ms = r_result.get("mean_separation")
                     if ms and isinstance(ms, dict) and effective_genotype_col:
@@ -1372,12 +1387,30 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
                     ms_b = r_result.get("mean_separation_b")
                     if ms_b and isinstance(ms_b, dict) and factor_col:
                         ms_b["treatment_label"] = factor_col
+                    ms_c = r_result.get("mean_separation_c")
+                    if ms_c and isinstance(ms_c, dict) and _factor_c:
+                        ms_c["treatment_label"] = _factor_c
                     int_sep = r_result.get("interaction_separation")
                     if int_sep and isinstance(int_sep, dict):
                         if effective_genotype_col:
                             int_sep["genotype_label"] = effective_genotype_col
                         if factor_col:
                             int_sep["factor_label"] = factor_col
+                        if _factor_c:
+                            int_sep["factor_c_label"] = _factor_c
+                    # Same labelling for each significant two-way carried
+                    # alongside the primary result on a three-factor run.
+                    two_way = r_result.get("two_way_interaction_means")
+                    if two_way and isinstance(two_way, dict):
+                        for _cells in two_way.values():
+                            if not isinstance(_cells, dict):
+                                continue
+                            if effective_genotype_col:
+                                _cells["genotype_label"] = effective_genotype_col
+                            if factor_col:
+                                _cells["factor_label"] = factor_col
+                            if _factor_c:
+                                _cells["factor_c_label"] = _factor_c
 
                 if (request.design_type == "split_plot_rcbd"
                         and isinstance(r_result, dict)):
