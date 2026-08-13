@@ -1157,7 +1157,14 @@ def _add_descriptive_stats(doc: Document, result: GeneticsResult, domain: str = 
     _entry_label = "No. Treatments" if not is_plant_breeding_domain(domain) else "No. Genotypes"
     # Use only real, directly-available fields — do not fabricate derived stats
     rows: List[tuple] = [("Grand Mean", _fmt(result.grand_mean))]
-    if result.n_genotypes is not None:
+    # result.n_genotypes comes from R as nlevels(data$genotype) — which for a
+    # factorial IS Factor A, not a genotype. Suppress the row for factorial
+    # designs; the per-factor level rows below carry the same information under
+    # the researcher's own labels. Genuine genotype designs are unaffected.
+    _is_factorial_design = (getattr(result, "design", None) or "") in (
+        "factorial_crd", "factorial_rcbd"
+    )
+    if result.n_genotypes is not None and not _is_factorial_design:
         rows.append((_entry_label, str(result.n_genotypes)))
 
     # Generic factorial: describe the treatment structure by its actual factors
@@ -2351,9 +2358,16 @@ def _add_writing_support_guide(doc: Document, data: DownloadReportRequest) -> No
             eta_g = _eta_squared_for_source(at, _primary_source)
             sig_word = "significant" if (p_g is not None and p_g < 0.05) else "not significant"
 
-            # n_genotypes is None for a generic factorial (no Genotype role), so
-            # the entry clause is dropped rather than rendered as "None".
-            _entry_clause = f"{n_genotypes} {_entry} and " if n_genotypes else ""
+            # For a factorial, result.n_genotypes is R's Factor A count, so this
+            # clause rendered "across 2 genotypes". The factor structure is
+            # already stated in the header and Descriptive Statistics, so the
+            # clause is simply dropped rather than restated here.
+            _is_fac_entry = (getattr(result, "design", None) or "") in (
+                "factorial_crd", "factorial_rcbd"
+            )
+            _entry_clause = (
+                f"{n_genotypes} {_entry} and " if (n_genotypes and not _is_fac_entry) else ""
+            )
             env_phrase = (
                 f"across {_entry_clause}{n_env} environments"
                 if n_env
@@ -2434,9 +2448,15 @@ def _add_writing_support_guide(doc: Document, data: DownloadReportRequest) -> No
                     "under similar management conditions."
                 )
             else:
+                # For a factorial this table separates Factor A's levels, not
+                # genotypes. Name the factor the researcher supplied.
+                _sep_unit = "genotypes"
+                if (getattr(result, "design", None) or "") in ("factorial_crd", "factorial_rcbd"):
+                    _sep_lbl = getattr(result.mean_separation, "treatment_label", None)
+                    _sep_unit = f"{_sep_lbl} levels" if _sep_lbl else "treatment levels"
                 starter_means = (
-                    f"Mean separation ({result.mean_separation.test}) placed {top_genotype} among genotypes "
-                    f"with the highest observed mean in group '{top_group}'."
+                    f"Mean separation ({result.mean_separation.test}) placed {top_genotype} "
+                    f"among {_sep_unit} with the highest observed mean in group '{top_group}'."
                 )
             _add_body(doc, starter_means)
 
@@ -3397,6 +3417,41 @@ def _pl(n: Optional[int], singular: str, plural: Optional[str] = None) -> str:
     return f"{n} {singular}" if n == 1 else f"{n} {plural}"
 
 
+def _factorial_structure(data: Any) -> Optional[Dict[str, Any]]:
+    """Return factorial factor structure for the report header, or None.
+
+    Mirrors _split_plot_structure. A generic factorial has no genotype factor,
+    so labelling Factor A's level count "genotypes" asserts a biological role
+    from an upload position. Labels come from the treatment_label the engine
+    remapped to the researcher's own columns; level counts from the separation
+    tables.
+    """
+    for tr in (getattr(data, "trait_results", None) or {}).values():
+        ar = getattr(tr, "analysis_result", None)
+        result = getattr(ar, "result", None) if ar is not None else None
+        if result is None:
+            result = getattr(tr, "result", None) or tr
+        design = getattr(result, "design", None) or ""
+        if design not in ("factorial_crd", "factorial_rcbd"):
+            continue
+        factors = []
+        for sep in (getattr(result, "mean_separation", None),
+                    getattr(result, "mean_separation_b", None),
+                    getattr(result, "mean_separation_c", None)):
+            label = getattr(sep, "treatment_label", None) if sep else None
+            levels = getattr(sep, "genotype", None) if sep else None
+            if label and levels:
+                factors.append((label, len(set(levels))))
+        if not factors:
+            continue
+        return {
+            "design_label": ("Factorial CRD" if design == "factorial_crd"
+                             else "Factorial RCBD"),
+            "factors": factors,
+        }
+    return None
+
+
 def _split_plot_structure(data: Any) -> Optional[Dict[str, Any]]:
     """Return split-plot factor structure for the report header, or None.
 
@@ -3455,7 +3510,16 @@ def _build_document(data: DownloadReportRequest) -> Document:
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     ds = data.dataset_summary
-    mode_label = "Multi-environment" if ds.mode == "multi" else "Single-environment"
+    # Factorial designs describe themselves. Deriving this from the binary mode
+    # labelled a Factorial RCBD "Single-environment" — a term that asserts an
+    # environmental structure the analysis never had. The /export route's
+    # _design_metadata_label() already does this; the Word renderer is a second,
+    # independent header composer that was missed.
+    _fac_hdr = _factorial_structure(data)
+    mode_label = (
+        _fac_hdr["design_label"] if _fac_hdr
+        else ("Multi-environment" if ds.mode == "multi" else "Single-environment")
+    )
     env_part = f"  ·  {_pl(ds.n_environments, 'environment')}" if ds.n_environments else ""
 
     # Split-plot: describe the factor structure (main-plot × sub-plot) instead of
@@ -3466,6 +3530,12 @@ def _build_document(data: DownloadReportRequest) -> Document:
         _entry_part = (
             f"  ·  {_sp['mp_label']} ({_sp['n_main']} levels)"
             f" × {_sp['sp_label']} ({_sp['n_sub']} levels)"
+        )
+    elif _fac_hdr:
+        # "V (2 levels) × N (3 levels) × P (3 levels)" — the same shape the
+        # split-plot branch above uses, extended to any number of factors.
+        _entry_part = "  ·  " + " × ".join(
+            f"{lbl} ({n} levels)" for lbl, n in _fac_hdr["factors"]
         )
     else:
         _unit = "treatments" if _is_agronomy else "genotypes"

@@ -1179,7 +1179,10 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
     # _geno_for_summary still carries the factorial fallback below, because CRD
     # replication inference legitimately groups by Factor A regardless of what
     # that factor represents.
-    if request.genotype_column:
+    # Presence of genotype_column is not proof of a genotype role: clients send
+    # it for every design as a legacy field, so an auto-detected column reaches
+    # a factorial request where Factor A may be Irrigation. Gate on design too.
+    if request.genotype_column and request.design_type != "factorial":
         n_genotypes = int(df[request.genotype_column].nunique())
     else:
         n_genotypes = None

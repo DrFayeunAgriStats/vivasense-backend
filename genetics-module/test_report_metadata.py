@@ -249,10 +249,22 @@ class TestFactorialGenotypeLabelling(unittest.TestCase):
         s = self._summary(factor_a_column="Variety", factor_b_column="Irrigation")
         self.assertIsNone(s.n_genotypes)
 
-    def test_a_genuine_genotype_role_is_reported(self):
+    def test_a_genotype_column_on_a_factorial_is_still_not_counted(self):
+        """Superseded by D-1: the count is gated on design, not just presence.
+
+        This previously asserted n_genotypes == 3 when genotype_column was
+        supplied alongside factorial factors. That is no longer reachable
+        behaviour: clients send genotype_column for every design as a legacy
+        field, so its presence cannot distinguish a genuine role from an
+        auto-detected column. Nothing is lost — the factor's levels are
+        reported under its own label ("No. Variety Levels").
+
+        Non-factorial designs keep genotype counting; see
+        test_e_non_factorial_genotype_metadata_unchanged.
+        """
         s = self._summary(genotype_column="Variety", factor_a_column="Irrigation",
                           factor_b_column="Variety")
-        self.assertEqual(s.n_genotypes, 3)
+        self.assertIsNone(s.n_genotypes)
 
     def test_e_non_factorial_genotype_metadata_unchanged(self):
         s = self._summary(design_type="rcbd", genotype_column="Variety",
