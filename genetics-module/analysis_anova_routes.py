@@ -155,6 +155,189 @@ def _fmt_factor_label(raw: Optional[str], fallback: str) -> str:
     return raw.replace("_", " ").title()
 
 
+def _generate_factorial_interpretation(
+    trait: str,
+    summary: Dict[str, Optional[float]],
+    precision_level: Optional[str],
+    cv_interpretation_flag: Optional[str],
+    n_reps: Optional[int],
+    mean_separation_basis: Optional[Dict[str, Any]] = None,
+    factor_labels: Optional[Dict[str, str]] = None,
+    interaction_separation: Optional[Any] = None,
+    two_way_interaction_means: Optional[Dict[str, Any]] = None,
+    design_type: Optional[str] = None,
+) -> str:
+    """
+    Domain-neutral factorial interpretation driven by the significance hierarchy.
+
+    The engine has already decided which level of interaction governs
+    interpretation (vivasense_genetics.R) and reports it as
+    mean_separation_basis.selected — "three_way", "two_way" or "marginal".
+    This function narrates that decision; it does not re-derive it, so the prose
+    and the presented means can never disagree.
+
+    Deliberately domain-neutral. A factorial run is a GENERAL factorial: its
+    factors are whatever the researcher mapped, so nothing here says "genotype",
+    "genetic" or "environment". Factors are named by their actual column names
+    via factor_labels; where a label is missing the role position is used
+    ("Factor A") rather than any biological term.
+
+    factor_labels: {"genotype": "N", "factor": "P", "factor_c": "V"} — the R
+    role names mapped to the researcher's columns.
+    """
+    roles = ["genotype", "factor", "factor_c"]
+    positional = {"genotype": "Factor A", "factor": "Factor B", "factor_c": "Factor C"}
+    labels = factor_labels or {}
+
+    def name_of(role: str) -> str:
+        raw = labels.get(role)
+        return _fmt_factor_label(raw, positional[role]) if raw else positional[role]
+
+    present = [r for r in roles if labels.get(r)] or roles[:2]
+    names = [name_of(r) for r in present]
+
+    def term_name(term: str) -> str:
+        """'genotype:factor_c' -> 'N × V', using real labels."""
+        return " × ".join(name_of(part.strip()) for part in term.split(":"))
+
+    selected = (mean_separation_basis or {}).get("selected")
+    sig_terms_raw = str((mean_separation_basis or {}).get("significant_terms") or "")
+    design_name = (
+        "factorial completely randomised design (CRD)"
+        if design_type == "factorial_crd"
+        else "factorial randomised complete block design (RCBD)"
+    )
+
+    sections: List[tuple] = []
+
+    # ── 1. Overview ───────────────────────────────────────────────────────────
+    overview = [
+        f"This analysis used a {design_name} with {len(names)} treatment factors: "
+        f"{', '.join(names)}. The model estimates every main effect, all two-way "
+        "interactions among these factors"
+        + (", and the three-way interaction. " if len(names) >= 3 else ". ")
+        + "All treatment terms are tested against the pooled residual error."
+    ]
+    if n_reps:
+        _blk = "replication" if n_reps == 1 else "replications"
+        overview.append(f"The experiment comprised {n_reps} {_blk}.")
+    if summary.get("grand_mean") is not None:
+        overview.append(
+            f"The overall grand mean for {trait} across all treatment combinations "
+            f"was {summary['grand_mean']:.2f}."
+        )
+    sections.append(("Factorial Design Overview", " ".join(overview)))
+
+    # ── 2. Precision ──────────────────────────────────────────────────────────
+    if summary.get("cv_percent") is not None:
+        prec = [
+            f"The coefficient of variation was {summary['cv_percent']:.2f}%"
+            + (f", indicating {precision_level} experimental precision." if precision_level else ".")
+        ]
+        if cv_interpretation_flag:
+            prec.append(str(cv_interpretation_flag))
+        sections.append(("Experimental Precision", " ".join(prec)))
+
+    # ── 3. Significance hierarchy — the governing result ──────────────────────
+    # Higher-order interactions take precedence: a marginal mean averages over
+    # any dependence a significant interaction has established, so it cannot be
+    # the primary inferential result while that interaction stands.
+    if selected == "three_way":
+        three_way = term_name(":".join(present))
+        hierarchy = [
+            f"The {three_way} interaction was statistically significant. "
+            f"The effect of each factor on {trait} therefore depends on the levels of "
+            "the other two, and no factor can be interpreted on its own.",
+            "The primary result is the set of treatment-combination (simple-effect) "
+            f"means conditioned on all {len(names)} factors. Marginal means for individual "
+            "factors average over this dependence and must not be read as unconditional "
+            "effects.",
+        ]
+        sections.append(("Governing Interaction (Three-Way)", " ".join(hierarchy)))
+
+    elif selected == "two_way":
+        terms = [t.strip() for t in sig_terms_raw.split(",") if t.strip()]
+        pretty = [term_name(t) for t in terms] or ["the significant two-way interaction"]
+        joined = ", ".join(pretty[:-1]) + (" and " + pretty[-1] if len(pretty) > 1 else pretty[0]) \
+            if len(pretty) > 1 else pretty[0]
+        # State the dependence per interaction and in a fixed direction, rather
+        # than naming the factors as a set — "the effect of V is conditional on
+        # the level of P" is directly actionable; "the response to P, V is
+        # conditional" leaves the reader to work out what depends on what.
+        conditional = []
+        for t in terms:
+            parts = [name_of(p.strip()) for p in t.split(":")]
+            if len(parts) == 2:
+                conditional.append(
+                    f"the effect of {parts[0]} is conditional on the level of {parts[1]}"
+                )
+        cond_clause = "; ".join(conditional) if conditional else (
+            "the factor effects are conditional on one another"
+        )
+        hierarchy = [
+            f"The three-way interaction was not significant, so interpretation drops to "
+            f"the two-way level. The {joined} interaction"
+            + ("s were" if len(pretty) > 1 else " was")
+            + " statistically significant.",
+            f"This is the primary inferential result for {trait}: {cond_clause}. "
+            "Interaction (simple-effect) means for "
+            + ("these interactions" if len(pretty) > 1 else "this interaction")
+            + " are presented as the governing comparison.",
+            # The interaction is what establishes that the effect varies. A
+            # marginal p-value cannot establish it either way, so it must not be
+            # offered as the evidence for that claim.
+            "Marginal means for the factors entering "
+            + ("these interactions" if len(pretty) > 1 else "this interaction")
+            + " may be shown as supplementary descriptive information. The "
+            "significant interaction is what establishes that the effect varies "
+            "across levels; the marginal main-effect p-value cannot establish "
+            "this either way, because it averages over the very factor the "
+            "interaction shows the effect depends on. A non-significant marginal "
+            "main effect therefore does not indicate the absence of an effect.",
+        ]
+        sections.append(("Governing Interaction (Two-Way)", " ".join(hierarchy)))
+
+    elif selected == "marginal":
+        sections.append((
+            "Main-Effect Interpretation",
+            "No interaction among the treatment factors was statistically significant. "
+            f"Each factor's marginal means for {trait} are therefore interpretable on "
+            "their own, and main-effect mean separation is the appropriate comparison.",
+        ))
+
+    # ── 4. What to compare ────────────────────────────────────────────────────
+    recs: List[str] = []
+    if selected == "three_way":
+        recs.append(
+            "Compare treatment-combination cell means across all "
+            f"{len(names)} factors rather than marginal factor means."
+        )
+    elif selected == "two_way":
+        terms = [t.strip() for t in sig_terms_raw.split(",") if t.strip()]
+        for t in terms:
+            recs.append(
+                f"Compare {term_name(t)} combination means, and report the effect of each "
+                "factor separately at each level of the other."
+            )
+        if two_way_interaction_means and len(two_way_interaction_means) > 1:
+            recs.append(
+                "More than one two-way interaction is significant; each is reported "
+                "separately and none should be collapsed into a marginal summary."
+            )
+    else:
+        recs.append(
+            "Compare marginal factor means directly; no conditional structure "
+            "constrains their interpretation for this trait."
+        )
+    recs.append(
+        f"Integrate these results with domain knowledge about {trait} and a minimum "
+        "meaningful difference before drawing applied conclusions."
+    )
+    sections.append(("Recommendation", " ".join(recs)))
+
+    return "\n\n".join(f"{heading}\n{content}" for heading, content in sections)
+
+
 def _generate_split_plot_interpretation(
     trait: str,
     summary: Dict[str, Optional[float]],
@@ -496,6 +679,12 @@ def generate_anova_interpretation(
     domain: str = "general",
     mp_label: Optional[str] = None,
     sp_label: Optional[str] = None,
+    # Factorial: the significance hierarchy the engine already resolved, plus
+    # the researcher's own factor names. Absent for every other design.
+    mean_separation_basis: Optional[Dict[str, Any]] = None,
+    factor_labels: Optional[Dict[str, str]] = None,
+    interaction_separation: Optional[Any] = None,
+    two_way_interaction_means: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Generate context-aware ANOVA interpretation following VivaSense standards.
@@ -515,6 +704,27 @@ def generate_anova_interpretation(
     environment_mode="multi"
         All nine sections including Environment Effect and G×E Interaction.
     """
+    # ── Dispatch: factorial uses its own domain-neutral, hierarchy-driven path ─
+    # A factorial run is a GENERAL factorial — its factors are whatever the
+    # researcher mapped. Routing it through the genetics path below made the
+    # report call the first factor "genotype" and, worse, ask only whether that
+    # marginal main effect was significant. A factor whose effect is real but
+    # conditional on another then produced "No significant genetic variation
+    # was detected", contradicting a significant interaction in the same table.
+    if design_type in ("factorial", "factorial_crd", "factorial_rcbd"):
+        return _generate_factorial_interpretation(
+            trait=trait,
+            summary=summary,
+            precision_level=precision_level,
+            cv_interpretation_flag=cv_interpretation_flag,
+            n_reps=n_reps,
+            mean_separation_basis=mean_separation_basis,
+            factor_labels=factor_labels,
+            interaction_separation=interaction_separation,
+            two_way_interaction_means=two_way_interaction_means,
+            design_type=design_type,
+        )
+
     # ── Dispatch: generic split-plot uses its own domain-neutral path ──────────
     if design_type == "split_plot_rcbd":
         return _generate_split_plot_interpretation(

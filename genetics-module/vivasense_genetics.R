@@ -1077,9 +1077,11 @@ compute_single_environment <- function(data, trait_name = "Trait",
             statistic      = as.numeric(lv_stat),
             p_value        = as.numeric(lv_p),
             passed         = lv_p >= 0.05,
+            # A non-significant test is a failure to detect heterogeneity, not
+            # proof of equal variances. Wording stays conservative accordingly.
             interpretation = if (lv_p >= 0.05)
               sprintf(
-                "Homogeneity of variance supported (F = %.4f, p = %.4f). Equal variance assumption is not violated.",
+                "No evidence of heterogeneity of variance was detected (F = %.4f, p = %.4f). This does not establish that the variances are equal.",
                 as.numeric(lv_stat), as.numeric(lv_p))
               else
               sprintf(
@@ -1096,9 +1098,10 @@ compute_single_environment <- function(data, trait_name = "Trait",
             statistic      = as.numeric(bt$statistic),
             p_value        = as.numeric(bt$p.value),
             passed         = bt$p.value >= 0.05,
+            # Same conservative framing as the Levene branch above.
             interpretation = if (bt$p.value >= 0.05)
               sprintf(
-                "Homogeneity of variance supported (K² = %.4f, p = %.4f). Equal variance assumption is not violated.",
+                "No evidence of heterogeneity of variance was detected (K² = %.4f, p = %.4f). This does not establish that the variances are equal.",
                 as.numeric(bt$statistic), as.numeric(bt$p.value))
               else
               sprintf(
@@ -1121,7 +1124,29 @@ compute_single_environment <- function(data, trait_name = "Trait",
     } else if (isFALSE(norm_pass)) {
       "The normality assumption may be violated. ANOVA is generally robust to mild non-normality with balanced designs, but results should be verified."
     } else {
-      "The homogeneity of variance assumption may be violated. Results should be interpreted cautiously, particularly for unbalanced designs."
+      # Report what this dataset actually is. The previous wording warned about
+      # unbalanced designs unconditionally, which contradicts a dataset already
+      # validated as balanced and buries the real finding.
+      .cell_counts <- tryCatch({
+        if (!is.null(grp_col)) as.vector(table(grp_col)) else integer(0)
+      }, error = function(e) integer(0))
+      .is_balanced <- length(.cell_counts) > 0 &&
+        length(unique(.cell_counts)) == 1L
+      if (.is_balanced) {
+        paste(
+          "The design is balanced; however, the homogeneity of variance",
+          "assumption was not supported. ANOVA is comparatively robust to",
+          "unequal variances when replication is equal, but treatment",
+          "comparisons should still be interpreted with that in mind."
+        )
+      } else {
+        paste(
+          "The homogeneity of variance assumption may be violated, and cell",
+          "sizes are unequal. Unequal variance combined with unbalanced",
+          "replication affects the reliability of treatment comparisons —",
+          "interpret them cautiously."
+        )
+      }
     }
 
     # Status is based ONLY on assumption tests (normality + homogeneity), NOT on influential observations
@@ -1562,11 +1587,41 @@ compute_single_environment <- function(data, trait_name = "Trait",
         }
       }
     } else if (has_factor && has_genotype) {
-      # ── Two factors: behaviour deliberately unchanged ─────────────────────
-      # Both marginal and interaction means are emitted unconditionally, as
-      # before. The decision tree above governs three-factor runs only, so no
-      # existing two-factor output changes.
+      # ── Two factors ───────────────────────────────────────────────────────
+      # Means are emitted exactly as before: both marginal and interaction,
+      # unconditionally. Nothing computed here changes — mean_separation,
+      # mean_separation_b and interaction_separation keep their previous values
+      # and their previous statistics.
       factorial_interaction_means <- .cell_means_for(c("genotype", "factor"))
+
+      # FAC-10: the same hierarchy the three-factor branch uses, now also
+      # resolved for two factors so the reporting layer has one consistent
+      # signal to read. Additive — this only records which level governs
+      # interpretation; it does not gate or alter any mean above.
+      p_ab <- .term_p(anova_table, c("genotype", "factor"))
+      if (!is.na(p_ab) && p_ab < ALPHA_INT) {
+        mean_separation_basis <- list(
+          selected = "two_way",
+          significant_terms = "genotype:factor",
+          alpha = ALPHA_INT,
+          rationale = paste(
+            "The two-way interaction is significant, so the effect of each",
+            "factor depends on the level of the other. Interaction means are",
+            "the governing comparison; marginal means average over that",
+            "dependence."
+          )
+        )
+      } else {
+        mean_separation_basis <- list(
+          selected = "marginal",
+          significant_terms = "",
+          alpha = ALPHA_INT,
+          rationale = paste(
+            "The two-way interaction is not significant, so each factor's",
+            "marginal means are interpretable on their own."
+          )
+        )
+      }
     } else {
       factorial_interaction_means <- NULL
     }

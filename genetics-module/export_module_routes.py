@@ -74,6 +74,34 @@ from interpretation import InterpretationEngine
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Export"])
 
+
+#: Engine design labels that describe their own treatment structure. For these,
+#: "single-environment" says nothing meaningful — the design IS the structure.
+_DESIGN_METADATA_LABELS = {
+    "factorial_rcbd":  "Factorial RCBD",
+    "factorial_crd":   "Factorial CRD",
+    "split_plot_rcbd": "Split-Plot RCBD",
+}
+
+
+def _design_metadata_label(data: Any) -> str:
+    """Metadata label describing the design actually analysed.
+
+    Precedence: the engine's own design label for designs that define their own
+    treatment structure, then the genuine environment distinction, then the
+    plain single-environment case.
+
+    Reading this off `mode` alone labelled every factorial run
+    "Single-environment" because it was not MET, which asserts an environmental
+    structure the analysis never had.
+    """
+    for tr in (getattr(data, "trait_results", None) or {}).values():
+        result = getattr(getattr(tr, "analysis_result", None), "result", None)
+        label = _DESIGN_METADATA_LABELS.get(getattr(result, "design", None) or "")
+        if label:
+            return label
+    return "Multi-environment" if getattr(data, "mode", None) == "multi" else "Single-environment"
+
 _DOCX_MIME = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 )
@@ -482,7 +510,11 @@ async def export_anova_word(data: AnovaExportRequest):
     try:
         n_traits   = len(data.trait_results)
         n_success  = sum(1 for tr in data.trait_results.values() if tr.status == "success")
-        mode_label = "Multi-environment" if data.mode == "multi" else "Single-environment"
+        # Describe the design actually analysed. Deriving this from the
+        # binary mode labelled every factorial run "Single-environment"
+        # merely because it was not MET — a term that carries no meaning
+        # for a design whose structure is its treatment factors.
+        mode_label = _design_metadata_label(data)
 
         logger.info(
             "ANOVA export started: %d traits, %d successful",
@@ -698,7 +730,11 @@ async def export_genetic_parameters_word(data: GeneticParametersExportRequest):
     try:
         n_traits   = len(data.trait_results)
         n_success  = sum(1 for tr in data.trait_results.values() if tr.status == "success")
-        mode_label = "Multi-environment" if data.mode == "multi" else "Single-environment"
+        # Describe the design actually analysed. Deriving this from the
+        # binary mode labelled every factorial run "Single-environment"
+        # merely because it was not MET — a term that carries no meaning
+        # for a design whose structure is its treatment factors.
+        mode_label = _design_metadata_label(data)
 
         doc = _new_document(
             "VivaSense Genetic Parameters Report",

@@ -392,6 +392,90 @@ def _p_for_sentence(p: Optional[float]) -> str:
     return f"p = {p:.3f}"
 
 
+def _factorial_starter_sentence(result: Any, at: Optional[AnovaTable],
+                                trait: str) -> Optional[str]:
+    """Concise statistical summary driven by the interaction hierarchy.
+
+    Returns None for non-factorial designs so the caller keeps its existing
+    sentence. A factorial has no single "primary treatment effect": naming
+    Factor A as such asserted an unconditional effect that a significant
+    interaction contradicts, and left the starter disagreeing with the detailed
+    interpretation two paragraphs below.
+
+    Summary only — the reasoning stays in _generate_factorial_interpretation.
+    Both layers read the same mean_separation_basis, so they cannot diverge.
+    """
+    if (getattr(result, "design", None) or "") not in ("factorial_crd", "factorial_rcbd"):
+        return None
+    basis = getattr(result, "mean_separation_basis", None) or {}
+    selected = basis.get("selected")
+    if not selected or at is None or not at.source:
+        return None
+
+    labels: Dict[str, str] = {}
+    for role, sep in (("genotype", result.mean_separation),
+                      ("factor", getattr(result, "mean_separation_b", None)),
+                      ("factor_c", getattr(result, "mean_separation_c", None))):
+        lbl = getattr(sep, "treatment_label", None) if sep else None
+        if lbl:
+            labels[role] = lbl
+    if not labels:
+        return None
+
+    def name_of(role: str) -> str:
+        return labels.get(role, {"genotype": "Factor A", "factor": "Factor B",
+                                 "factor_c": "Factor C"}[role])
+
+    def term_label(term: str) -> str:
+        return " × ".join(name_of(p.strip()) for p in term.split(":"))
+
+    def p_of(term: str) -> Optional[float]:
+        """Look the term up by its rendered label — sources are relabelled."""
+        _, p, _ = _extract_source_stats(at, term_label(term))
+        return p
+
+    roles = [r for r in ("genotype", "factor", "factor_c") if r in labels]
+    sig = lambda p: p is not None and p < 0.05  # noqa: E731
+
+    if selected == "three_way":
+        return (
+            f"The {term_label(':'.join(roles))} interaction was statistically "
+            f"significant for {trait}. Therefore the factors cannot be "
+            "interpreted independently."
+        )
+
+    if selected == "two_way":
+        terms = [t.strip() for t in str(basis.get("significant_terms") or "").split(",") if t.strip()]
+        clauses = []
+        for t in terms:
+            parts = [name_of(p.strip()) for p in t.split(":")]
+            if len(parts) == 2:
+                clauses.append(
+                    f"The {parts[0]} × {parts[1]} interaction was statistically "
+                    f"significant; therefore the effect of {parts[0]} is "
+                    f"conditional on the level of {parts[1]}."
+                )
+        if not clauses:
+            return None
+        lead = ("The three-way interaction was not statistically significant. "
+                if len(roles) >= 3 else "")
+        return f"For {trait}: {lead}" + " ".join(clauses)
+
+    # marginal — report each factor individually, never one as "the" effect
+    parts = []
+    for role in roles:
+        p = p_of(role)
+        parts.append(f"{name_of(role)} "
+                     + ("had a significant main effect" if sig(p)
+                        else "did not have a significant main effect"))
+    joined = ", ".join(parts[:-1]) + (f", and {parts[-1]}" if len(parts) > 1 else parts[0]) \
+        if len(parts) > 1 else parts[0]
+    lead = ("No treatment interactions were statistically significant."
+            if len(roles) >= 3 else
+            f"The {term_label('genotype:factor')} interaction was not statistically significant.")
+    return f"{lead} For {trait}, {joined}."
+
+
 def _extract_source_stats(at: Optional[AnovaTable], source_name: str) -> Tuple[Optional[float], Optional[float], Optional[float]]:
     if at is None or not at.source:
         return None, None, None
@@ -1075,6 +1159,18 @@ def _add_descriptive_stats(doc: Document, result: GeneticsResult, domain: str = 
     rows: List[tuple] = [("Grand Mean", _fmt(result.grand_mean))]
     if result.n_genotypes is not None:
         rows.append((_entry_label, str(result.n_genotypes)))
+
+    # Generic factorial: describe the treatment structure by its actual factors
+    # rather than borrowing a biological label. n_genotypes is None here unless a
+    # real Genotype role was mapped, so this replaces the suppressed row instead
+    # of duplicating it — a genotype-based factorial keeps both.
+    if (getattr(result, "design", None) or "") in ("factorial_crd", "factorial_rcbd"):
+        for _sep in (result.mean_separation, result.mean_separation_b,
+                     result.mean_separation_c):
+            _lbl = getattr(_sep, "treatment_label", None) if _sep else None
+            _levels = getattr(_sep, "genotype", None) if _sep else None
+            if _lbl and _levels:
+                rows.append((f"No. {_lbl} Levels", str(len(set(_levels)))))
     rows.append(("No. Replications", str(result.n_reps)))
     if result.n_environments:
         rows.append(("No. Environments", str(result.n_environments)))
@@ -1942,7 +2038,32 @@ def _add_interpretation_section(
 
             # Detect split-plot and extract all required kwargs from result
             _is_split_plot = result.main_plot_mean_separation is not None
-            _design_type = "split_plot_rcbd" if _is_split_plot else None
+            # Factorial is routed by the engine's own design label so the report
+            # narrates the design that was actually fitted. Previously
+            # _design_type was only ever split-plot or None, so factorial fell
+            # through to the genetics-specific narrative.
+            _engine_design = getattr(result, "design", None)
+            _is_factorial = (not _is_split_plot) and _engine_design in (
+                "factorial_crd", "factorial_rcbd"
+            )
+            _design_type = (
+                "split_plot_rcbd" if _is_split_plot
+                else _engine_design if _is_factorial
+                else None
+            )
+            # Researcher's own column names, carried on the mean-separation
+            # objects the API layer already labelled. Missing labels fall back to
+            # positional naming inside the interpreter — never to a domain term.
+            _factor_labels = {}
+            if _is_factorial:
+                for _role, _obj in (
+                    ("genotype", result.mean_separation),
+                    ("factor", result.mean_separation_b),
+                    ("factor_c", result.mean_separation_c),
+                ):
+                    _lbl = getattr(_obj, "treatment_label", None) if _obj else None
+                    if _lbl:
+                        _factor_labels[_role] = _lbl
             if _is_split_plot:
                 # Extract labels first — needed to resolve remapped ANOVA source names
                 _mp_label = getattr(result.main_plot_mean_separation, "treatment_label", None)
@@ -1985,6 +2106,12 @@ def _add_interpretation_section(
                 main_plot_mean_separation=result.main_plot_mean_separation if _is_split_plot else None,
                 mp_label=_mp_label,
                 sp_label=_sp_label,
+                # Factorial: the hierarchy the engine already resolved, so the
+                # prose and the presented means cannot disagree.
+                mean_separation_basis=result.mean_separation_basis if _is_factorial else None,
+                factor_labels=_factor_labels if _is_factorial else None,
+                interaction_separation=result.interaction_separation if _is_factorial else None,
+                two_way_interaction_means=result.two_way_interaction_means if _is_factorial else None,
             )
             if is_plant_breeding_domain(domain or "plant_breeding"):
                 interpretation = interpretation.replace(
@@ -2206,21 +2333,46 @@ def _add_writing_support_guide(doc: Document, data: DownloadReportRequest) -> No
             n_env = result.n_environments or data.dataset_summary.n_environments
             n_rep = result.n_reps or data.dataset_summary.n_reps
 
-            f_g, p_g, _ = _extract_source_stats(at, "genotype")
-            eta_g = _eta_squared_for_source(at, "genotype")
+            # Factorial ANOVA sources are relabelled to the researcher's own
+            # column names, so a literal "genotype" lookup misses, returns None,
+            # and the else-branch below reports a real effect as "not
+            # significant" with em-dash statistics. Resolve the primary
+            # treatment source from the same label the relabelling used.
+            _primary_source = "genotype"
+            _effect_label = _effect
+            if (getattr(result, "design", None) or "") in ("factorial_crd", "factorial_rcbd"):
+                _ms_label = getattr(result.mean_separation, "treatment_label", None) \
+                    if result.mean_separation else None
+                if _ms_label:
+                    _primary_source = _ms_label
+                    _effect_label = f"{_ms_label} effect"
+
+            f_g, p_g, _ = _extract_source_stats(at, _primary_source)
+            eta_g = _eta_squared_for_source(at, _primary_source)
             sig_word = "significant" if (p_g is not None and p_g < 0.05) else "not significant"
 
+            # n_genotypes is None for a generic factorial (no Genotype role), so
+            # the entry clause is dropped rather than rendered as "None".
+            _entry_clause = f"{n_genotypes} {_entry} and " if n_genotypes else ""
             env_phrase = (
-                f"across {n_genotypes} {_entry} and {n_env} environments"
+                f"across {_entry_clause}{n_env} environments"
                 if n_env
-                else f"across {n_genotypes} {_entry} and {n_rep} replications"
+                else f"across {_entry_clause}{n_rep} replications"
             )
 
-            starter_anova = (
-                f"An analysis of variance for {row.trait} evaluated {env_phrase} showed that "
-                f"the {_effect} was {sig_word} "
-                f"(F = {_fmt(f_g, 3)}, {_p_for_sentence(p_g)}, η² = {_fmt(eta_g, 2, thousands=False)})."
-            )
+            # Factorial designs summarise the governing hierarchy instead of a
+            # single privileged factor; every other design keeps its sentence.
+            _hier = _factorial_starter_sentence(result, at, row.trait)
+            if _hier:
+                starter_anova = (
+                    f"An analysis of variance for {row.trait} evaluated {env_phrase}. {_hier}"
+                )
+            else:
+                starter_anova = (
+                    f"An analysis of variance for {row.trait} evaluated {env_phrase} showed that "
+                    f"the {_effect_label} was {sig_word} "
+                    f"(F = {_fmt(f_g, 3)}, {_p_for_sentence(p_g)}, η² = {_fmt(eta_g, 2, thousands=False)})."
+                )
             _add_body(doc, starter_anova)
 
         if not _guide_agronomy and not _is_split_plot:
@@ -2367,7 +2519,12 @@ def _add_assumption_tests_section(doc: Document, assumption_tests: Dict[str, Any
         if rows_data:
             _add_stat_table(
                 doc,
-                ["Assumption", "Test", "Statistic", "p-value", "Passed", "Interpretation"],
+                # "Passed" sat immediately left of a sentence beginning with the
+                # finding, so the row read as "No | Heterogeneity of variance
+                # detected" — the opposite of what both cells mean. Renaming the
+                # header breaks that adjacency. Presentation only; the underlying
+                # `passed` field and its semantics are unchanged.
+                ["Assumption", "Test", "Statistic", "p-value", "Assumption upheld", "Interpretation"],
                 rows_data,
                 numeric_cols={2},
             )

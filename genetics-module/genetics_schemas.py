@@ -104,6 +104,23 @@ class GeneticsResult(BaseModel):
     mean_separation: Optional[MeanSeparation] = None
     mean_separation_b: Optional[MeanSeparation] = None  # factorial Factor B main effect
     interaction_separation: Optional[InteractionMeans] = None  # factorial A×B interaction
+    # ── Three-factor factorial ────────────────────────────────────────────────
+    # The R engine emits these; without declaring them here Pydantic silently
+    # drops them (extra='ignore'), so the reporting layer could not see the
+    # interaction hierarchy the engine had already resolved and fell back to
+    # marginal main-effect narration. All optional — absent for other designs.
+    mean_separation_c: Optional[MeanSeparation] = None  # factorial Factor C main effect
+    #: Which level of the hierarchy governs interpretation:
+    #: {"selected": "three_way"|"two_way"|"marginal", "significant_terms": str,
+    #:  "alpha": float, "rationale": str}
+    mean_separation_basis: Optional[Dict[str, Any]] = None
+    #: Every significant two-way, keyed "roleA:roleB". Populated only when a
+    #: three-factor run drops to the two-way level.
+    two_way_interaction_means: Optional[Dict[str, Any]] = None
+    n_treatment_factors: Optional[int] = None
+    #: Design label from the engine: crd | rcbd | factorial_crd | factorial_rcbd
+    #: | split_plot_rcbd. Lets consumers route without re-deriving the design.
+    design: Optional[str] = None
     main_plot_mean_separation: Optional[MeanSeparation] = None  # split-plot main-plot level
     interaction_means: Optional[Dict[str, Any]] = None  # split-plot A×B cell means for interaction plot
     # Optional fields returned by the R engine — preserved here so the export
@@ -134,7 +151,8 @@ class GeneticsResult(BaseModel):
             return {}
         return v
 
-    @field_validator("mean_separation", "mean_separation_b", "main_plot_mean_separation", mode="before")
+    @field_validator("mean_separation", "mean_separation_b", "mean_separation_c",
+                     "main_plot_mean_separation", mode="before")
     @classmethod
     def coerce_mean_separation(cls, v: Any) -> Any:
         """

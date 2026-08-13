@@ -1170,8 +1170,17 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
     _geno_for_summary = request.genotype_column or (
         request.factor_a_column if request.design_type == "factorial" else None
     )
-    if _geno_for_summary:
-        n_genotypes = int(df[_geno_for_summary].nunique())
+    # Count genotypes only when a genuine Genotype role was mapped. Factor A of
+    # a generic factorial is a real model term, but it is Irrigation or Tillage
+    # as often as it is a genotype — labelling it "genotypes" assigns a
+    # biological role from an upload position. Same principle as the environment
+    # metadata fix: legacy role must not determine scientific role.
+    #
+    # _geno_for_summary still carries the factorial fallback below, because CRD
+    # replication inference legitimately groups by Factor A regardless of what
+    # that factor represents.
+    if request.genotype_column:
+        n_genotypes = int(df[request.genotype_column].nunique())
     else:
         n_genotypes = None
     if rep_column:
@@ -1181,11 +1190,27 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
         n_reps = int(df.groupby(_geno_for_summary).size().max())
     else:
         n_reps = len(df)
-    n_environments = (
+    # Report an environment count ONLY when Environment is genuinely part of the
+    # analysed structure. Clients send environment_column for every design as a
+    # legacy back-compat field, so a plain treatment factor that happens to sit
+    # in that slot would otherwise be counted as environments — a 3-level factor
+    # silently becoming "3 environments" in a factorial report, while
+    # env_col_for_mode (below) correctly excludes it from the model.
+    #
+    # Metadata must describe the structure actually analysed, so the count is
+    # suppressed for designs that define their own treatment structure and for
+    # any run the engine is not fitting environment terms in.
+    _env_levels_raw = (
         int(df[request.environment_column].nunique())
         if request.environment_column
         else None
     )
+    _env_is_structural = bool(request.environment_column) and request.design_type not in (
+        "factorial", "split_plot_rcbd"
+    )
+    # Reported value. The raw count above still drives the effective-mode guard
+    # below, so this change is metadata-only and alters no analysis behaviour.
+    n_environments = _env_levels_raw if _env_is_structural else None
 
     # ── Effective-mode guard ─────────────────────────────────────────────────
     # A "multi" request whose environment column resolves to < 2 levels cannot
@@ -1193,10 +1218,13 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
     # the R engine never fits those terms, and record a warning for the client.
     effective_mode = request.mode
     env_downgrade_warning: Optional[str] = None
-    if request.mode == "multi" and n_environments is not None and n_environments < 2:
+    # Guard reads the RAW level count, not the reported one: suppressing the
+    # metadata figure for factorial/split-plot must not change which runs are
+    # downgraded.
+    if request.mode == "multi" and _env_levels_raw is not None and _env_levels_raw < 2:
         effective_mode = "single"
         env_downgrade_warning = (
-            f"Only {n_environments} environment level detected in "
+            f"Only {_env_levels_raw} environment level detected in "
             f"'{request.environment_column}'; analysis proceeded as single-environment. "
             "Environment and GxE statistics are not estimable and were omitted."
         )
