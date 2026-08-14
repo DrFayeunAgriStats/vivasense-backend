@@ -73,9 +73,6 @@ _GENOTYPE_ORIENTED_KEYWORDS = {
     "hybrid",
 }
 
-_NON_APPLICABLE_GP_MESSAGE = "Genetic parameter estimation is not applicable for the current experimental structure."
-
-
 class UTF8JSONResponse(JSONResponse):
     media_type = "application/json; charset=utf-8"
 
@@ -319,54 +316,77 @@ async def analysis_genetic_parameters(request: ModuleRequest):
         )
 
     has_genetic_factor = bool(geno_col and str(geno_col).strip())
-    genotype_oriented = _is_genotype_oriented_experiment(ctx)
 
-    # Governance gate:
-    # H2/GCV/PCV/GAM are only valid for genotype-oriented experiments with a
-    # true genetic factor. Non-genetic treatment studies get a neutral message.
-    if (not has_genetic_factor) or (not genotype_oriented) or (design_type == "split_plot_rcbd"):
-        trait_results: Dict[str, GeneticParametersTraitResult] = {}
-        for trait in request.trait_columns:
-            trait_descriptive_stats = compute_descriptive_stats(df[trait])
-            desc_stats_obj = DescriptiveStats(
-                grand_mean=trait_descriptive_stats.get("grand_mean"),
-                standard_deviation=trait_descriptive_stats.get("standard_deviation"),
-                variance=trait_descriptive_stats.get("variance"),
-                standard_error=trait_descriptive_stats.get("standard_error"),
-                cv_percent=trait_descriptive_stats.get("cv_percent"),
-                min=trait_descriptive_stats.get("min"),
-                max=trait_descriptive_stats.get("max"),
-                range=trait_descriptive_stats.get("range"),
-            )
-            analysis_ctx = _make_analysis_context()
-            trait_results[trait] = GeneticParametersTraitResult(
-                trait=trait,
-                status="success",
-                grand_mean=trait_descriptive_stats.get("grand_mean"),
-                descriptive_stats=desc_stats_obj,
-                variance_components={},
-                heritability={},
-                gcv=None,
-                pcv=None,
-                ga=None,
-                gam=None,
-                breeding_implication=_NON_APPLICABLE_GP_MESSAGE,
-                interpretation=_NON_APPLICABLE_GP_MESSAGE,
-                environment_significant=None,
-                gxe_significant=None,
-                anova_f_env=None,
-                anova_p_env=None,
-                anova_f_gxe=None,
-                anova_p_gxe=None,
-                data_warnings=[_NON_APPLICABLE_GP_MESSAGE],
-                analysis_context=analysis_ctx,
-            )
+    # ── Explicit declaration beats name inference ────────────────────────────
+    # _is_genotype_oriented_experiment() is deliberately NOT consulted here.
+    # It infers a genetic role from column NAMES, so a correctly-formed request
+    # whose genotype column is called "Entry", "Line", "VAR NO" or a numeric
+    # code was silently downgraded to descriptive statistics. Selecting a
+    # Genotype Column in the form IS the declaration of that role, and it is
+    # authoritative. The helper remains in the module for other paths that have
+    # no explicit declaration to rely on; this removal is scoped to variance
+    # components only.
+    #
+    # No silent substitution: a request for variance components either returns
+    # the genetics result or is rejected with the reason. Descriptive statistics
+    # is a different analysis, not a fallback.
+    if not has_genetic_factor:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Variance components and heritability require a genotype column. "
+                "None was declared for this dataset. Re-register the dataset with "
+                "the genotype column mapped, then retry."
+            ),
+        )
 
-        return GeneticParametersModuleResponse(
-            dataset_token=request.dataset_token,
-            mode=mode,
-            trait_results=trait_results,
-            failed_traits=[],
+    if geno_col not in df.columns:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"The declared genotype column '{geno_col}' is not present in the "
+                f"dataset. Available columns: {sorted(df.columns.tolist())}."
+            ),
+        )
+
+    if df[geno_col].nunique(dropna=True) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"The genotype column '{geno_col}' has "
+                f"{int(df[geno_col].nunique(dropna=True))} distinct level(s). "
+                "Genotypic variance cannot be partitioned from a single genotype; "
+                "at least 2 are required."
+            ),
+        )
+
+    # RCBD only: replication is what the blocked model partitions error with.
+    # A CRD run legitimately has no replication column, or a single-level one,
+    # and must not be rejected for it.
+    if (design_type == "rcbd"
+            and rep_col and rep_col in df.columns
+            and df[rep_col].nunique(dropna=True) < 2):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"The replication column '{rep_col}' has "
+                f"{int(df[rep_col].nunique(dropna=True))} distinct level(s). "
+                "Mean squares cannot be decomposed into genotypic and error "
+                "components without at least 2 replications."
+            ),
+        )
+
+    if design_type == "split_plot_rcbd":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Variance components and heritability are not available for "
+                "split-plot designs. The split-plot model carries two error "
+                "strata, so a single pooled error term cannot be used to "
+                "estimate genotypic variance. Analyse this dataset as a "
+                "randomised complete block or completely randomised design, or "
+                "use the ANOVA module."
+            ),
         )
 
     trait_results: Dict[str, GeneticParametersTraitResult] = {}
