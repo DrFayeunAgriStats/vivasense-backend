@@ -51,28 +51,6 @@ DEFAULT_SELECTION_INTENSITY = {
 
 logger = logging.getLogger(__name__)
 
-_NON_GENETIC_EXPERIMENT_KEYWORDS = {
-    "treatment",
-    "irrigation",
-    "fertilizer",
-    "fertiliser",
-    "management",
-    "dose",
-    "rate",
-    "spacing",
-    "tillage",
-}
-
-_GENOTYPE_ORIENTED_KEYWORDS = {
-    "genotype",
-    "variety",
-    "cultivar",
-    "line",
-    "accession",
-    "cross",
-    "hybrid",
-}
-
 class UTF8JSONResponse(JSONResponse):
     media_type = "application/json; charset=utf-8"
 
@@ -204,29 +182,6 @@ def _build_gp_text(
         )
 
 
-def _is_genotype_oriented_experiment(ctx: Dict[str, object]) -> bool:
-    """Heuristic governance gate for genetic-parameter applicability."""
-    genotype_col = str(ctx.get("genotype_column") or "").strip().lower()
-    factor_col = str(ctx.get("factor_column") or "").strip().lower()
-    numeric_factors = [str(c).strip().lower() for c in (ctx.get("numeric_factor_columns") or [])]
-    categorical_cols = [str(c).strip().lower() for c in (ctx.get("categorical_columns") or [])]
-
-    if any(k in genotype_col for k in _NON_GENETIC_EXPERIMENT_KEYWORDS):
-        return False
-
-    if factor_col and any(k in factor_col for k in _NON_GENETIC_EXPERIMENT_KEYWORDS):
-        return False
-
-    if any(any(k in col for k in _NON_GENETIC_EXPERIMENT_KEYWORDS) for col in numeric_factors):
-        return False
-
-    if any(any(k in col for k in _NON_GENETIC_EXPERIMENT_KEYWORDS) for col in categorical_cols):
-        has_genotype_named_column = any(any(g in col for g in _GENOTYPE_ORIENTED_KEYWORDS) for col in categorical_cols)
-        if not has_genotype_named_column:
-            return False
-
-    return any(g in genotype_col for g in _GENOTYPE_ORIENTED_KEYWORDS)
-
 @router.post(
     "/analysis/genetic-parameters",
     response_model=GeneticParametersModuleResponse,
@@ -318,15 +273,6 @@ async def analysis_genetic_parameters(request: ModuleRequest):
     has_genetic_factor = bool(geno_col and str(geno_col).strip())
 
     # ── Explicit declaration beats name inference ────────────────────────────
-    # _is_genotype_oriented_experiment() is deliberately NOT consulted here.
-    # It infers a genetic role from column NAMES, so a correctly-formed request
-    # whose genotype column is called "Entry", "Line", "VAR NO" or a numeric
-    # code was silently downgraded to descriptive statistics. Selecting a
-    # Genotype Column in the form IS the declaration of that role, and it is
-    # authoritative. The helper remains in the module for other paths that have
-    # no explicit declaration to rely on; this removal is scoped to variance
-    # components only.
-    #
     # No silent substitution: a request for variance components either returns
     # the genetics result or is rejected with the reason. Descriptive statistics
     # is a different analysis, not a fallback.
