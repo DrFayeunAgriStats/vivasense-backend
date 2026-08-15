@@ -1162,6 +1162,12 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
         if (rc := _resolve(c))
     ]
 
+    environment_structure_recipe = {
+        "environment_column": request.environment_column,
+        "environment_factor_columns": list(request.environment_factor_columns),
+        "rep_column": request.rep_column,
+    }
+
     # ── Experimental-structure reconstruction ────────────────────────────────
     # Establish what the environment actually is BEFORE any column validation or
     # model selection. A supplied environment column always wins; Location x Year
@@ -1745,7 +1751,12 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
         "file_type":          request.file_type,
         "genotype_column":    request.genotype_column,
         "rep_column":         rep_column,
+        "resolved_rep_column": rep_column,
         "environment_column": request.environment_column,
+        "resolved_environment_column": request.environment_column,
+        "environment_factor_columns": list(request.environment_factor_columns),
+        "environment_structure_recipe": environment_structure_recipe,
+        "environment_structure": env_structure.as_dict(),
         "factor_column":      factor_col,
         "numeric_factor_columns": numeric_factor_columns,
         "categorical_columns": categorical_columns,

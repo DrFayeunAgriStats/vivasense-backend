@@ -35,6 +35,7 @@ from multitrait_upload_schemas import (
 )
 from module_schemas import UploadDatasetRequest, UploadDatasetResponse
 import dataset_cache  # noqa: E402 — already imported above for upload/dataset
+from environment_structure import resolve_environment_structure
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Upload"])
@@ -181,6 +182,9 @@ async def upload_dataset(request: UploadDatasetRequest):
 
     # Numeric-coded treatment columns manually toggled in the mapping UI.
     numeric_factor_columns = [c for c in request.numeric_factor_columns if c and c.strip()]
+    environment_factor_columns = [
+        c for c in request.environment_factor_columns if c and c.strip()
+    ]
 
 
     # Enforce design presence and strict validation
@@ -309,6 +313,40 @@ async def upload_dataset(request: UploadDatasetRequest):
             detail=f"numeric_factor_columns not found in file: {missing_numeric_factors}",
         )
 
+    missing_environment_factors = [
+        c for c in environment_factor_columns
+        if request.mode == "multi"
+        and not request.environment_column
+        and c not in df.columns
+    ]
+    if missing_environment_factors:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "environment_factor_columns not found in file: "
+                f"{missing_environment_factors}"
+            ),
+        )
+
+    environment_recipe = {
+        "environment_column": request.environment_column,
+        "environment_factor_columns": environment_factor_columns,
+        "rep_column": request.rep_column,
+    }
+    if request.mode == "multi":
+        environment_structure = resolve_environment_structure(
+            df,
+            environment_column=request.environment_column,
+            environment_factor_columns=environment_factor_columns,
+            rep_column=request.rep_column,
+        )
+        effective_environment_column = environment_structure.environment_column
+        effective_rep_column = environment_structure.rep_column
+    else:
+        environment_structure = None
+        effective_environment_column = request.environment_column
+        effective_rep_column = request.rep_column
+
     # Resolve effective factor column for single-environment factorial RCBD.
     # If the user did not set factor_column explicitly but toggled exactly one
     # numeric-coded treatment column, promote it to factor_column.
@@ -341,20 +379,20 @@ async def upload_dataset(request: UploadDatasetRequest):
     if request.design_type == "split_plot_rcbd":
         # No genotype column for generic split_plot_rcbd
         n_genotypes: Optional[int] = None
-        n_reps = int(df[request.rep_column].nunique())
+        n_reps = int(df[effective_rep_column].nunique())
     elif request.genotype_column:
         n_genotypes = int(df[request.genotype_column].nunique())
-        if request.rep_column:
-            n_reps = int(df[request.rep_column].nunique())
+        if effective_rep_column:
+            n_reps = int(df[effective_rep_column].nunique())
         else:
             # CRD: infer n_reps as maximum observations per genotype
             n_reps = int(df.groupby(request.genotype_column).size().max())
     else:
         n_genotypes = None
-        n_reps = int(df[request.rep_column].nunique()) if request.rep_column else 1
+        n_reps = int(df[effective_rep_column].nunique()) if effective_rep_column else 1
     n_envs: Optional[int] = (
-        int(df[request.environment_column].nunique())
-        if request.environment_column
+        int(df[effective_environment_column].nunique())
+        if effective_environment_column
         else None
     )
 
@@ -365,9 +403,16 @@ async def upload_dataset(request: UploadDatasetRequest):
         "file_type":         request.file_type,
         "genotype_column":   request.genotype_column,
         "rep_column":        request.rep_column,       # may be None for CRD
+        "resolved_rep_column": effective_rep_column,
         "main_plot_column":  request.main_plot_column,
         "sub_plot_column":   request.sub_plot_column,
         "environment_column": request.environment_column,
+        "resolved_environment_column": effective_environment_column,
+        "environment_factor_columns": environment_factor_columns,
+        "environment_structure_recipe": environment_recipe,
+        "environment_structure": (
+            environment_structure.as_dict() if environment_structure else None
+        ),
         "factor_column":     effective_factor_column,  # may be None; factorial RCBD/CRD
         "numeric_factor_columns": numeric_factor_columns,
         "categorical_columns": categorical_columns,

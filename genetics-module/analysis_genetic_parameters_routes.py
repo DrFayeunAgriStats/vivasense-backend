@@ -42,6 +42,7 @@ from module_schemas import (
 )
 from analysis_utils import compute_descriptive_stats
 import dataset_cache
+from environment_structure import reconstruct_environment_structure
 from genetics_interpretation import generate_genetics_interpretation
 
 SELECTION_INTENSITY_TABLE = {
@@ -235,11 +236,22 @@ async def analysis_genetic_parameters(request: ModuleRequest):
     mode          = ctx["mode"]
     design_type   = ctx.get("design_type")
 
+    if mode == "multi":
+        try:
+            resolved_structure = reconstruct_environment_structure(df, ctx)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        resolved_environment_column = resolved_structure.environment_column
+        resolved_rep_column = resolved_structure.rep_column
+    else:
+        resolved_environment_column = ctx.get("environment_column")
+        resolved_rep_column = ctx.get("rep_column")
+
     # ── Determine the ACTUAL number of environment levels from the data ──────
     # The token's mode ("multi"/"single") reflects only that an environment
     # column was mapped — not that it has >= 2 levels. Measure it directly so a
     # single-level "environment" can never drive Environment / GxE estimation.
-    _env_col_name = ctx.get("environment_column")
+    _env_col_name = resolved_environment_column
     if mode == "multi" and _env_col_name and _env_col_name in df.columns:
         environment_count = int(df[_env_col_name].nunique())
     else:
@@ -259,9 +271,9 @@ async def analysis_genetic_parameters(request: ModuleRequest):
     # closing the "mode=multi vs is_single_environment=true" contradiction.
     context_design_type = "single" if is_single_environment else (design_type or mode)
 
-    env_col       = ctx["environment_column"] if mode == "multi" else None
+    env_col       = resolved_environment_column if mode == "multi" else None
     geno_col      = ctx["genotype_column"]
-    rep_col       = ctx["rep_column"]          # may be None for CRD datasets
+    rep_col       = resolved_rep_column          # may be None for CRD datasets
     factor_col    = ctx.get("factor_column") if mode == "single" else None
     main_plot_col = ctx.get("main_plot_column")
     sub_plot_col  = ctx.get("sub_plot_column")

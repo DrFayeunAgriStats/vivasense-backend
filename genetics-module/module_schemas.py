@@ -62,6 +62,13 @@ class UploadDatasetRequest(BaseModel):
         description="Subplot factor column for split-plot RCBD designs.",
     )
     environment_column: Optional[str] = None
+    environment_factor_columns: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Ordered columns whose interaction defines the environment when "
+            "environment_column is absent, for example ['Location', 'Year']."
+        ),
+    )
     factor_column: Optional[str] = Field(
         default=None,
         description=(

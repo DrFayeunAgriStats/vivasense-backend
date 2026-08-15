@@ -45,7 +45,7 @@ factors should combine — that stays an explicit researcher decision.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import pandas as pd
 
@@ -245,4 +245,51 @@ def resolve_environment_structure(
             df, structure.environment_column, structure.original_rep_column, structure
         )
 
+    return structure
+
+
+def reconstruct_environment_structure(
+    df: pd.DataFrame,
+    context: Mapping[str, Any],
+) -> EnvironmentStructure:
+    """Rebuild derived environment columns recorded in a dataset token.
+
+    New tokens persist the original column-role recipe so this function can run
+    the same resolver used for direct uploads. Legacy tokens remain usable when
+    they reference real uploaded columns. A legacy token that references a
+    synthetic column cannot be reconstructed safely and is rejected explicitly.
+    """
+    recipe = context.get("environment_structure_recipe")
+    if recipe is not None:
+        return resolve_environment_structure(
+            df,
+            environment_column=recipe.get("environment_column"),
+            environment_factor_columns=recipe.get("environment_factor_columns", []),
+            rep_column=recipe.get("rep_column"),
+        )
+
+    configured_environment = context.get("environment_column")
+    configured_rep = context.get("rep_column")
+    missing_synthetic = [
+        name
+        for name in (configured_environment, configured_rep)
+        if name in (CONSTRUCTED_ENVIRONMENT_COLUMN, NESTED_REP_COLUMN)
+        and name not in df.columns
+    ]
+    if missing_synthetic:
+        raise ValueError(
+            "This dataset token references resolved experimental-structure "
+            f"column(s) {missing_synthetic}, but it does not contain the original "
+            "environment-resolution recipe needed to reconstruct them. "
+            "Re-register the dataset before running multi-environment genetic parameters."
+        )
+
+    structure = EnvironmentStructure(
+        environment_column=_present(df, configured_environment),
+        source=SOURCE_SUPPLIED if _present(df, configured_environment) else SOURCE_NONE,
+        rep_column=_present(df, configured_rep),
+        original_rep_column=_present(df, configured_rep),
+    )
+    if structure.environment_column:
+        structure.n_environments = int(df[structure.environment_column].nunique())
     return structure
