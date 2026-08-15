@@ -1224,13 +1224,26 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
     # Guard reads the RAW level count, not the reported one: suppressing the
     # metadata figure for factorial/split-plot must not change which runs are
     # downgraded.
-    if request.mode == "multi" and _env_levels_raw is not None and _env_levels_raw < 2:
-        effective_mode = "single"
-        env_downgrade_warning = (
-            f"Only {_env_levels_raw} environment level detected in "
-            f"'{request.environment_column}'; analysis proceeded as single-environment. "
-            "Environment and GxE statistics are not estimable and were omitted."
-        )
+    if request.mode == "multi":
+        if _env_levels_raw is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Multi-environment mode was requested but no environment structure "
+                    "could be determined from the uploaded data. "
+                    "Supply an explicit Environment column, or set Location and Year columns "
+                    "to construct environments automatically. "
+                    "To run a single-environment analysis, set mode to 'single'."
+                ),
+            )
+
+        if _env_levels_raw < 2:
+            effective_mode = "single"
+            env_downgrade_warning = (
+                f"Only {_env_levels_raw} environment level detected in "
+                f"'{request.environment_column}'; analysis proceeded as single-environment. "
+                "Environment and GxE statistics are not estimable and were omitted."
+            )
 
     # ── Replication required for multi-environment analysis ──────────────────
     # Independent of any client-side check. Replication is legitimately optional

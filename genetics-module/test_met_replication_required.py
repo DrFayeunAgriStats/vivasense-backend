@@ -100,11 +100,15 @@ class _StubEngine:
     class Reached(Exception):
         pass
 
+    def __init__(self):
+        self.calls = 0
+
     def run_analysis(self, *args, **kwargs):
+        self.calls += 1
         raise _StubEngine.Reached()
 
 
-def _call(request: UploadAnalysisRequest):
+def _call(request: UploadAnalysisRequest, engine=None):
     """Run the route handler with a stubbed engine.
 
     analyze_upload does a lazy `import app_genetics` and rejects with 503 when
@@ -112,7 +116,7 @@ def _call(request: UploadAnalysisRequest):
     it on the real module — the same object the handler imports — lets the
     request reach the guard under test.
     """
-    with patch.object(app_genetics, "r_engine", _StubEngine()):
+    with patch.object(app_genetics, "r_engine", engine or _StubEngine()):
         return asyncio.run(routes.analyze_upload(request))
 
 
@@ -133,6 +137,36 @@ def _assert_passes_validation(testcase, request: UploadAnalysisRequest) -> None:
 
 
 class TestReplicationRequiredForMultiEnvironment(unittest.TestCase):
+
+    def test_multi_environment_missing_environment_structure_is_rejected(self):
+        """Missing environment structure is not eligible for downgrade."""
+        engine = _StubEngine()
+        req = _request(
+            _met_df(),
+            environment_column=None,
+            environment_factor_columns=[],
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            _call(req, engine)
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("no environment structure", str(ctx.exception.detail).lower())
+        self.assertEqual(engine.calls, 0)
+
+    def test_missing_environment_structure_and_rep_is_rejected_before_analysis(self):
+        """Either structural guard may reject, but analysis must not execute."""
+        engine = _StubEngine()
+        req = _request(
+            _met_df(),
+            rep_column=None,
+            environment_column=None,
+            environment_factor_columns=[],
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            _call(req, engine)
+        self.assertEqual(ctx.exception.status_code, 400)
+        detail = str(ctx.exception.detail).lower()
+        self.assertTrue("environment" in detail or "replication" in detail)
+        self.assertEqual(engine.calls, 0)
 
     # ── A. multi-environment + missing Replication ───────────────────────────
 
