@@ -654,6 +654,165 @@ def check_balance(
     return warnings
 
 
+def validate_balanced_met_variance_components(
+    df: pd.DataFrame,
+    genotype_col: Optional[str],
+    environment_col: Optional[str],
+    rep_col: Optional[str],
+    trait_col: str,
+) -> List[str]:
+    """Return strict structural errors for classical MET variance components.
+
+    The method-of-moments estimators in ``compute_multi_environment()`` use a
+    common ``e`` and ``r`` in their expected-mean-square divisors. They are
+    therefore valid only for a complete, balanced combined RCBD. Validation is
+    trait-specific because non-numeric and missing trait values are removed
+    before the R records are built and can break an otherwise balanced upload.
+
+    This is deliberately separate from :func:`check_balance`: imbalance remains
+    warning-only for general ANOVA, while multi-environment genetic parameters
+    require the stricter structure checked here.
+    """
+    errors: List[str] = []
+    role_columns = {
+        "genotype": genotype_col,
+        "environment": environment_col,
+        "replication": rep_col,
+    }
+    missing_roles = [name for name, col in role_columns.items() if not col or col not in df.columns]
+    if trait_col not in df.columns:
+        errors.append(f"trait column '{trait_col}' is not present")
+    if missing_roles:
+        errors.append(f"missing required structural role(s): {', '.join(missing_roles)}")
+    if errors:
+        return errors
+
+    assert genotype_col is not None
+    assert environment_col is not None
+    assert rep_col is not None
+
+    sub = df[[genotype_col, environment_col, rep_col, trait_col]].copy()
+    sub[trait_col] = pd.to_numeric(sub[trait_col], errors="coerce")
+    sub = sub.loc[sub[trait_col].notna()].copy()
+    if sub.empty:
+        return ["no usable numeric observations remain after trait-specific missing values are removed"]
+
+    structural_missing = {
+        label: int(sub[col].isna().sum() + sub[col].astype(str).str.strip().eq("").sum())
+        for label, col in role_columns.items()
+    }
+    for label, count in structural_missing.items():
+        if count:
+            errors.append(f"{count} usable observation(s) have a missing {label} value")
+    if errors:
+        return errors
+
+    genotypes = list(pd.unique(sub[genotype_col]))
+    environments = list(pd.unique(sub[environment_col]))
+    if len(genotypes) < 2:
+        errors.append(f"only {len(genotypes)} genotype level remains; at least 2 are required")
+    if len(environments) < 2:
+        errors.append(f"only {len(environments)} environment level remains; at least 2 are required")
+    if errors:
+        return errors
+
+    cell_counts = sub.groupby([genotype_col, environment_col], dropna=False).size()
+    expected_cells = len(genotypes) * len(environments)
+    if len(cell_counts) != expected_cells:
+        observed = set(cell_counts.index.tolist())
+        missing = [
+            f"{g} × {e}"
+            for g in genotypes
+            for e in environments
+            if (g, e) not in observed
+        ]
+        preview = ", ".join(missing[:8])
+        suffix = f" (and {len(missing) - 8} more)" if len(missing) > 8 else ""
+        errors.append(
+            f"incomplete Genotype × Environment crossing: {len(cell_counts)} of "
+            f"{expected_cells} cells are present; missing {preview}{suffix}"
+        )
+
+    min_cell = int(cell_counts.min())
+    max_cell = int(cell_counts.max())
+    if min_cell != max_cell:
+        errors.append(
+            "unequal observations per Genotype × Environment cell: "
+            f"minimum {min_cell}, maximum {max_cell}"
+        )
+    elif min_cell < 2:
+        errors.append(
+            f"only {min_cell} replication(s) per Genotype × Environment cell; at least 2 are required"
+        )
+
+    triple_counts = sub.groupby(
+        [genotype_col, environment_col, rep_col], dropna=False
+    ).size()
+    duplicated = triple_counts[triple_counts != 1]
+    if not duplicated.empty:
+        errors.append(
+            f"{len(duplicated)} Genotype × Environment × Rep cell(s) contain duplicate observations; "
+            "exactly one observation per block is required"
+        )
+
+    rep_sets = {
+        env: frozenset(str(v).strip() for v in env_df[rep_col].unique())
+        for env, env_df in sub.groupby(environment_col, sort=False)
+    }
+    first_rep_set = next(iter(rep_sets.values()))
+    inconsistent_envs = [str(env) for env, reps in rep_sets.items() if reps != first_rep_set]
+    if inconsistent_envs:
+        errors.append(
+            "inconsistent replication labels across environments; "
+            f"effective Rep sets differ for: {', '.join(inconsistent_envs)}"
+        )
+    elif len(first_rep_set) < 2:
+        errors.append(
+            f"only {len(first_rep_set)} replication block(s) per environment; at least 2 are required"
+        )
+
+    incomplete_blocks = 0
+    for (_, _), block in sub.groupby([environment_col, rep_col], sort=False):
+        if block[genotype_col].nunique() != len(genotypes) or len(block) != len(genotypes):
+            incomplete_blocks += 1
+    if incomplete_blocks:
+        errors.append(
+            f"{incomplete_blocks} Environment × Rep block(s) do not contain each genotype exactly once"
+        )
+
+    return errors
+
+
+def collect_balanced_met_trait_errors(
+    df: pd.DataFrame,
+    genotype_col: Optional[str],
+    environment_col: Optional[str],
+    rep_col: Optional[str],
+    trait_columns: List[str],
+) -> Dict[str, List[str]]:
+    """Collect strict MET structural failures for all selected traits."""
+    failures: Dict[str, List[str]] = {}
+    for trait in trait_columns:
+        trait_errors = validate_balanced_met_variance_components(
+            df, genotype_col, environment_col, rep_col, trait
+        )
+        if trait_errors:
+            failures[trait] = trait_errors
+    return failures
+
+
+def balanced_met_error_detail(failures: Dict[str, List[str]]) -> str:
+    """Format trait-level MET failures for a request-level HTTP 400."""
+    lines = [
+        "Multi-environment variance-components analysis requires a complete, "
+        "balanced RCBD after trait-specific missing/non-numeric values are removed."
+    ]
+    for trait, errors in failures.items():
+        lines.append(f"Trait '{trait}':")
+        lines.extend(f"- {error}" for error in errors)
+    return "\n".join(lines)
+
+
 # ============================================================================
 # SUMMARY HELPERS
 # ============================================================================
@@ -1271,6 +1430,22 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
             ),
         )
 
+    env_col_for_mode = request.environment_column if effective_mode == "multi" else None
+
+    if actual_module == "genetic_parameters" and effective_mode == "multi":
+        met_failures = collect_balanced_met_trait_errors(
+            df,
+            request.genotype_column,
+            env_col_for_mode,
+            rep_column,
+            request.trait_columns,
+        )
+        if met_failures:
+            raise HTTPException(
+                status_code=400,
+                detail=balanced_met_error_detail(met_failures),
+            )
+
     dataset_summary = DatasetSummary(
         n_genotypes=n_genotypes,
         n_reps=n_reps,
@@ -1285,7 +1460,6 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
     failed_traits: List[str] = []
     anova_type_warning: Optional[str] = None
 
-    env_col_for_mode = request.environment_column if effective_mode == "multi" else None
     # factor_column is only applicable in single-env mode
     factor_col = getattr(request, "factor_column", None) if request.mode == "single" else None
     numeric_factor_columns = [

@@ -26,7 +26,13 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from genetics_schemas import GeneticsResponse
-from multitrait_upload_routes import build_observations, check_balance, read_file
+from multitrait_upload_routes import (
+    balanced_met_error_detail,
+    build_observations,
+    check_balance,
+    collect_balanced_met_trait_errors,
+    read_file,
+)
 from module_schemas import (
     GeneticParametersModuleResponse,
     GeneticParametersTraitResult,
@@ -334,6 +340,20 @@ async def analysis_genetic_parameters(request: ModuleRequest):
                 "use the ANOVA module."
             ),
         )
+
+    if mode == "multi":
+        met_failures = collect_balanced_met_trait_errors(
+            df,
+            geno_col,
+            env_col,
+            rep_col,
+            request.trait_columns,
+        )
+        if met_failures:
+            raise HTTPException(
+                status_code=400,
+                detail=balanced_met_error_detail(met_failures),
+            )
 
     trait_results: Dict[str, GeneticParametersTraitResult] = {}
     failed_traits: List[str] = []
