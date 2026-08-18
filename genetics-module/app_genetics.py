@@ -266,6 +266,10 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 from multitrait_upload_routes import router as multitrait_router
 app.include_router(multitrait_router)
 
+# Crop Protection Analytics — Bioassay / Efficacy Analysis (backend only).
+from crop_protection_routes import router as crop_protection_router
+app.include_router(crop_protection_router)
+
 # Trait relationships endpoints (Phase 2)
 from trait_relationships_routes import router as tr_router
 app.include_router(tr_router)
