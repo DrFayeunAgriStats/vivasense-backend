@@ -227,6 +227,11 @@ ALLOWED_ORIGINS = [
     "https://vivasensestat.com",
     "https://vivasense-standalone-d0siguh9g-fayeun-lawerences-projects.vercel.app",
     "https://vivasense-standalone.vercel.app",
+    # Temporary acceptance-testing origin — one exact Vercel deployment URL, not a
+    # pattern. Preview origins are enumerated individually on purpose: a
+    # *.vercel.app wildcard would admit every deployment of every account.
+    # Remove this entry once acceptance on this build is signed off.
+    "https://vivasense-stat-c1x9emuvk-fayeun-lawerences-projects.vercel.app",
     "http://localhost:5173",
     "http://localhost:5174",
     "http://localhost:3000",
