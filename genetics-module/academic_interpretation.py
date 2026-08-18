@@ -83,14 +83,14 @@ def detect_analysis_domain(column_names: list[str], module: str) -> str:
     Infer the research domain from uploaded dataset column names.
 
     Returns one of: "plant_breeding", "agronomy", "soil_science", "general".
-    Always returns "plant_breeding" for the genetic_parameters module.
     """
-    if module == "genetic_parameters":
-        return "plant_breeding"
     breeding_keywords = {"genotype", "variety", "cultivar", "accession", "line", "cross"}
     agronomy_keywords = {
         "fertilizer", "fertiliser", "nitrogen", "irrigation",
         "tillage", "spacing", "density", "rate", "dose",
+        "treatment", "fungicide", "pesticide", "herbicide", "insecticide",
+        "bloom", "berry", "fruit", "disease", "infection", "pathogen",
+        "spray", "application", "plot",
     }
     soil_keywords = {
         "soil", "ph", "organic", "carbon", "nitrogen", "texture",

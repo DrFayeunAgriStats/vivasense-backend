@@ -61,6 +61,7 @@ from genetics_schemas import AnalysisContext, GeneticsResponse
 import result_cache
 from interpretation import InterpretationEngine
 from genetics_interpretation import build_breeding_synthesis
+from academic_interpretation import detect_analysis_domain
 
 logger = logging.getLogger(__name__)
 
@@ -1783,6 +1784,11 @@ async def analyze_upload(request: UploadAnalysisRequest, module: Optional[str] =
         failed_traits=failed_traits,
         anova_type_warning=anova_type_warning,
         dataset_token=dataset_token,
+        domain=(
+            request.research_domain
+            if request.research_domain is not None
+            else detect_analysis_domain(list(df.columns), actual_module) or "general"
+        ),
         module=actual_module,
         # Synthesis must describe the analysis that ran. Keying this off
         # request.mode labelled downgraded runs "multi_environment" in the

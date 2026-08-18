@@ -89,6 +89,7 @@ class UploadAnalysisRequest(BaseModel):
     """
     base64_content: str = Field(..., description="Base64-encoded file content")
     file_type: str = Field(..., description="'csv', 'xlsx', or 'xls'", pattern="^(csv|xlsx|xls)$")
+    research_domain: Optional[str] = None
     genotype_column: Optional[str] = None
     rep_column: Optional[str] = Field(
         default=None,
@@ -321,7 +322,7 @@ class UploadAnalysisResponse(BaseModel):
         description="Rule-based cross-trait breeding strategy synthesis.",
     )
     domain: Optional[str] = Field(
-        default="plant_breeding",
+        default="general",
         description="Analysis domain controlling domain-specific UI and export wording.",
     )
     module: Optional[str] = Field(

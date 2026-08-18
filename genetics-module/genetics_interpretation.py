@@ -29,7 +29,7 @@ def _is_single_environment_analysis(analysis_type: Optional[str]) -> bool:
     return mode in {"single", "single_environment"}
 
 
-def _cv_precision_narrative(cv_percent: Optional[float], domain: str = "plant_breeding") -> str:
+def _cv_precision_narrative(cv_percent: Optional[float], domain: str = "general") -> str:
     if cv_percent is None:
         return ""
     try:
@@ -333,7 +333,7 @@ def build_breeding_synthesis(trait_results: list[dict], analysis_type: Optional[
     return synthesis
 
 
-def _describe_gcv_pcv(gcv: float, pcv: float, trait_name: str, domain: str = "plant_breeding") -> str:
+def _describe_gcv_pcv(gcv: float, pcv: float, trait_name: str, domain: str = "general") -> str:
     if gcv <= 0:
         return ""
     inflation_pct = ((pcv - gcv) / gcv) * 100
@@ -400,7 +400,7 @@ def _describe_env_effects(
     p_env: float,
     f_gxe: float,
     p_gxe: float,
-    domain: str = "plant_breeding",
+    domain: str = "general",
     analysis_type: Optional[str] = None,
 ) -> str:
     if _is_single_environment_analysis(analysis_type):
@@ -746,7 +746,7 @@ def generate_genetics_interpretation(
     anova_p_gxe: Optional[float] = None,
     cv_percent: Optional[float] = None,
     analysis_type: Optional[str] = None,
-    domain: str = "plant_breeding",
+    domain: str = "general",
 ) -> Tuple[str, str]:
     """
     Generate academic-grade interpretation following VivaSense standards.

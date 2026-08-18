@@ -316,6 +316,7 @@ class TestNarrativeDiversity(unittest.TestCase):
             gcv=None,
             pcv=None,
             analysis_type="single_environment",
+            domain="plant_breeding",
         )
         found = any(e in interpretation for e in approved_endings)
         self.assertTrue(found, f"No approved variant found in: {interpretation}")
@@ -333,6 +334,7 @@ class TestNarrativeDiversity(unittest.TestCase):
             gcv=None,
             pcv=None,
             analysis_type="single_environment",
+            domain="plant_breeding",
         )
         found = any(e in interpretation for e in approved_endings)
         self.assertTrue(found, f"No approved variant found in: {interpretation}")

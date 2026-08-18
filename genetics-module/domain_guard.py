@@ -3,7 +3,7 @@ from typing import List, Optional
 
 
 def is_plant_breeding_domain(domain: Optional[str]) -> bool:
-    normalized = (domain or "plant_breeding").strip().lower().replace("-", "_").replace(" ", "_")
+    normalized = (domain or "general").strip().lower().replace("-", "_").replace(" ", "_")
     return normalized == "plant_breeding"
 
 

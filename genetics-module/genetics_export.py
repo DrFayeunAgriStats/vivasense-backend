@@ -247,7 +247,7 @@ def _fmt_cv(value: Optional[float]) -> str:
     return _fmt(_clean_cv_percent(value), 2)
 
 
-def _cv_precision_narrative(cv_percent: Optional[float], domain: Optional[str] = "plant_breeding") -> str:
+def _cv_precision_narrative(cv_percent: Optional[float], domain: Optional[str] = "general") -> str:
     cv_val = _clean_cv_percent(cv_percent)
     if cv_val is None:
         return ""
@@ -641,7 +641,7 @@ def _generate_mean_separation_chart(
     means: List[float],
     ses: List[Optional[float]],
     groups: List[str],
-    domain: str = "plant_breeding",
+    domain: str = "general",
     factor_name: Optional[str] = None,
 ) -> bytes:
     logger.info("Chart generation started for trait: '%s'. Received %d means, %d groups.", trait_name, len(means), len(groups))
@@ -1062,7 +1062,7 @@ def _add_executive_summary(
     trait: str,
     result: GeneticsResult,
     is_anova: bool = False,
-    domain: str = "plant_breeding",
+    domain: str = "general",
 ) -> None:
     _add_heading(doc, "Executive Summary", level=2)
 
@@ -1151,7 +1151,7 @@ def _add_executive_summary(
 # SECTION: DESCRIPTIVE STATISTICS (per trait)
 # ============================================================================
 
-def _add_descriptive_stats(doc: Document, result: GeneticsResult, domain: str = "plant_breeding") -> None:
+def _add_descriptive_stats(doc: Document, result: GeneticsResult, domain: str = "general") -> None:
     _add_heading(doc, "Descriptive Statistics", level=2)
 
     _entry_label = "No. Treatments" if not is_plant_breeding_domain(domain) else "No. Genotypes"
@@ -1251,7 +1251,7 @@ def _add_design_statement(
 # SECTION: ANOVA (per trait)
 # ============================================================================
 
-def _add_anova_section(doc: Document, at: AnovaTable, domain: str = "plant_breeding") -> None:
+def _add_anova_section(doc: Document, at: AnovaTable, domain: str = "general") -> None:
     _add_heading(doc, "Analysis of Variance (ANOVA)", level=2)
 
     is_agronomy = not is_plant_breeding_domain(domain)
@@ -1470,7 +1470,7 @@ def _add_mean_separation_section(
     doc: Document,
     trait_name: str,
     ms: MeanSeparation,
-    domain: str = "plant_breeding",
+    domain: str = "general",
     factor_name: Optional[str] = None,
     interaction_significant: bool = False,
 ) -> None:
@@ -1546,7 +1546,7 @@ def _add_interaction_separation_section(
     doc: Document,
     trait_name: str,
     int_sep: InteractionMeans,
-    domain: str = "plant_breeding",
+    domain: str = "general",
 ) -> None:
     a_label = int_sep.genotype_label or "Factor A"
     b_label = int_sep.factor_label or "Factor B"
@@ -2103,7 +2103,7 @@ def _add_interpretation_section(
                 n_genotypes=result.n_genotypes,
                 n_environments=result.n_environments,
                 n_reps=result.n_reps,
-                domain=domain or "plant_breeding",
+                domain=domain or "general",
                 design_type=_design_type,
                 main_plot_significant=mp_sig,
                 subplot_significant=sp_sig,
@@ -2120,7 +2120,7 @@ def _add_interpretation_section(
                 interaction_separation=result.interaction_separation if _is_factorial else None,
                 two_way_interaction_means=result.two_way_interaction_means if _is_factorial else None,
             )
-            if is_plant_breeding_domain(domain or "plant_breeding"):
+            if is_plant_breeding_domain(domain or "general"):
                 interpretation = interpretation.replace(
                     "Experimental variability appeared acceptable for treatment comparison under the evaluated conditions.",
                     "Experimental variability appeared acceptable for genotype comparison under the evaluated conditions.",
@@ -2226,7 +2226,7 @@ def _add_interpretation_section(
             anova_p_gxe=anova_p_gxe,
             cv_percent=cv_val,
             analysis_type=analysis_type,
-            domain=domain or "plant_breeding",
+            domain=domain or "general",
         )
         logger.info("Generated genetics interpretation: %d characters", len(interpretation_text))
 
@@ -2276,7 +2276,7 @@ def _add_writing_support_guide(doc: Document, data: DownloadReportRequest) -> No
 
     _add_heading(doc, "Sentence Starters", level=2)
 
-    _guide_domain = getattr(data, "domain", None) or "plant_breeding"
+    _guide_domain = getattr(data, "domain", None) or "general"
     _guide_agronomy = not is_plant_breeding_domain(_guide_domain)
     _entry = "treatments" if _guide_agronomy else "genotypes"
     _effect = "treatment effect" if _guide_agronomy else "genotype effect"
@@ -2906,7 +2906,7 @@ def export_traits_to_word(
             7. Interpretation and domain-appropriate implication/recommendation text
     """
     trait_results = results.trait_results or {}
-    domain = getattr(results, "domain", "plant_breeding")
+    domain = getattr(results, "domain", None) or "general"
 
     if not trait_results:
         # Cache recovery found nothing (server restart / token expired).
@@ -3497,7 +3497,7 @@ def _build_document(data: DownloadReportRequest) -> Document:
         _logo_para.add_run().add_picture(_logo_path, width=Inches(2.5))
 
     # ── Title ─────────────────────────────────────────────────────────────────
-    report_domain = getattr(data, "domain", None) or "plant_breeding"
+    report_domain = getattr(data, "domain", None) or "general"
     _is_anova_module = getattr(data, "module", "") == "anova"
     _is_agronomy = not is_plant_breeding_domain(report_domain)
     if _is_anova_module:
@@ -3726,7 +3726,7 @@ async def export_word_report(data: DownloadReportRequest) -> Response:
     # and patches in the missing analysis_result objects before building the doc.
     incoming_domain = data.domain
     data = _recover_from_cache(data)
-    if incoming_domain and incoming_domain != (data.domain or "plant_breeding"):
+    if incoming_domain and incoming_domain != (data.domain or "general"):
         data = data.model_copy(update={"domain": incoming_domain})
 
     # Diagnose key-mismatch upfront
