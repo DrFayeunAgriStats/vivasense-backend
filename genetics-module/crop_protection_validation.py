@@ -26,7 +26,8 @@ def validate_bioassay_dataframe(
             ] if column
         )
     required = {
-        design.treatment_column, design.dose_column, design.replicate_column,
+        design.replicate_column,
+        *(factor.column for factor in design.factor_columns),
         *response_columns,
     }
     missing = sorted(required - set(df.columns))
@@ -34,25 +35,33 @@ def validate_bioassay_dataframe(
         raise BioassayValidationError(f"Mapped columns not found: {missing}")
     if df[design.replicate_column].isna().any():
         raise BioassayValidationError("Replicate identifiers contain missing values.")
-    dose = pd.to_numeric(df[design.dose_column], errors="coerce")
-    if dose.isna().any():
-        raise BioassayValidationError("Dose column contains missing or non-numeric values.")
-    if not (df[design.treatment_column].astype(str) == design.control_treatment_level).any():
+    dose_factor = next((factor for factor in design.factor_columns
+                        if factor.id == design.dose_factor_id), None)
+    if dose_factor and design.expected_dose_series:
+        dose = pd.to_numeric(df[dose_factor.column], errors="coerce")
+        if dose.isna().any():
+            raise BioassayValidationError("Dose factor contains missing or non-numeric values.")
+    control_factor = next((factor for factor in design.factor_columns
+                           if factor.semantic_role == "treatment"), design.factor_columns[0])
+    if design.control_treatment_level is not None and not (
+        df[control_factor.column].astype(str) == design.control_treatment_level
+    ).any():
         raise BioassayValidationError(
             f"Declared control level {design.control_treatment_level!r} was not found."
         )
     duplicate = df.duplicated(
-        [design.treatment_column, design.dose_column, design.replicate_column], keep=False
+        [*(factor.column for factor in design.factor_columns), design.replicate_column], keep=False
     )
     # Exact repeated control blocks are handled by the explicit Phase 2 policy;
     # duplicate treated experimental units are always invalid.
     treated_duplicate = duplicate & (
-        df[design.treatment_column].astype(str) != design.control_treatment_level
+        (design.control_treatment_level is None) |
+        (df[control_factor.column].astype(str) != design.control_treatment_level)
     )
     if treated_duplicate.any():
         keys = df.loc[
             treated_duplicate,
-            [design.treatment_column, design.dose_column, design.replicate_column],
+            [*(factor.column for factor in design.factor_columns), design.replicate_column],
         ].to_dict("records")
         raise BioassayValidationError(
             f"Duplicate Treatment × Dose × Replicate experimental units: {keys}."

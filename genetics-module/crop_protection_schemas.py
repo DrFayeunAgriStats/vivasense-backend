@@ -12,13 +12,58 @@ class BioassayDataset(BaseModel):
     file_type: Literal["csv", "xlsx", "xls"]
 
 
+class BioassayFactor(BaseModel):
+    id: str = Field(min_length=1)
+    column: str = Field(min_length=1)
+    display_name: Optional[str] = None
+    semantic_role: Optional[Literal[
+        "treatment", "dose", "formulation", "variety", "level", "other"
+    ]] = None
+
+
 class BioassayDesign(BaseModel):
     design_type: Literal["crd"]
-    treatment_column: str
-    dose_column: str
+    factor_columns: List[BioassayFactor] = Field(default_factory=list, max_length=3)
+    dose_factor_id: Optional[str] = None
+    treatment_column: Optional[str] = None
+    dose_column: Optional[str] = None
     replicate_column: str
-    control_treatment_level: str
-    expected_dose_series: List[float] = Field(min_length=1)
+    control_treatment_level: Optional[str] = None
+    expected_dose_series: List[float] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_factors(self):
+        if not self.factor_columns:
+            if not self.treatment_column or not self.dose_column:
+                raise ValueError("Declare between one and three experimental factors.")
+            self.factor_columns = [
+                BioassayFactor(id="treatment", column=self.treatment_column,
+                               display_name="Treatment", semantic_role="treatment"),
+                BioassayFactor(id="dose", column=self.dose_column,
+                               display_name="Dose", semantic_role="dose"),
+            ]
+            self.dose_factor_id = "dose"
+        if not 1 <= len(self.factor_columns) <= 3:
+            raise ValueError("Crop Protection supports between one and three experimental factors.")
+        ids = [factor.id for factor in self.factor_columns]
+        columns = [factor.column for factor in self.factor_columns]
+        if len(ids) != len(set(ids)) or len(columns) != len(set(columns)):
+            raise ValueError("Experimental factor IDs and columns must be unique.")
+        dose_roles = [factor.id for factor in self.factor_columns if factor.semantic_role == "dose"]
+        if len(dose_roles) > 1:
+            raise ValueError("Only one experimental factor may have semantic role 'dose'.")
+        if self.dose_factor_id is None and dose_roles:
+            self.dose_factor_id = dose_roles[0]
+        if self.dose_factor_id and self.dose_factor_id not in ids:
+            raise ValueError("dose_factor_id must reference a declared experimental factor.")
+        if dose_roles and self.dose_factor_id != dose_roles[0]:
+            raise ValueError("dose_factor_id must reference the factor with semantic role 'dose'.")
+        display_names = [factor.display_name or factor.column for factor in self.factor_columns]
+        if len(display_names) != len(set(display_names)):
+            raise ValueError("Experimental factor display names must be unique.")
+        if self.replicate_column in columns:
+            raise ValueError("Replicate must be separate from the experimental factors.")
+        return self
 
 
 class BioassayResponseDefinition(BaseModel):
@@ -91,13 +136,6 @@ class BioassayAnalysisRequest(BaseModel):
         unknown = sorted(requested - known)
         if unknown:
             raise ValueError(f"Unknown response IDs referenced: {unknown}")
-        roles = [
-            self.design.treatment_column,
-            self.design.dose_column,
-            self.design.replicate_column,
-        ]
-        if len(set(roles)) != len(roles):
-            raise ValueError("Treatment, dose and replicate columns must be distinct.")
         return self
 
 

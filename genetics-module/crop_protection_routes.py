@@ -23,6 +23,8 @@ def _resolve_request_columns(request: BioassayAnalysisRequest, mapping: dict[str
     design.treatment_column = resolve(design.treatment_column)
     design.dose_column = resolve(design.dose_column)
     design.replicate_column = resolve(design.replicate_column)
+    for factor in design.factor_columns:
+        factor.column = resolve(factor.column)
     for response in request.responses:
         response.raw_column = resolve(response.raw_column)
         response.inference_column = resolve(response.inference_column)

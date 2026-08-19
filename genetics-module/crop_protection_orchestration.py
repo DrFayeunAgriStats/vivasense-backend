@@ -28,11 +28,11 @@ def _anova_map(result: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
 
 
 def _diagnostics(
-    df: pd.DataFrame, treatment: str, dose: str, response: str, response_id: str
+    df: pd.DataFrame, factors: List[str], response: str, response_id: str
 ) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
-    work = df[[treatment, dose, response]].copy()
+    work = df[[*factors, response]].copy()
     work[response] = pd.to_numeric(work[response], errors="coerce")
-    cell_mean = work.groupby([treatment, dose], observed=True)[response].transform("mean")
+    cell_mean = work.groupby(factors, observed=True)[response].transform("mean")
     residuals = (work[response] - cell_mean).to_numpy(dtype=float)
     residuals = residuals[np.isfinite(residuals)]
     shapiro = None
@@ -42,13 +42,14 @@ def _diagnostics(
                    "p_value": float(p_value), "passed": bool(p_value >= 0.05)}
     groups = [
         group[response].to_numpy(dtype=float)
-        for _, group in work.groupby([treatment, dose], observed=True)
+        for _, group in work.groupby(factors, observed=True)
         if len(group) >= 2
     ]
     levene = None
     if len(groups) >= 2:
         statistic, p_value = stats.levene(*groups, center="median")
-        levene = {"test": "Levene (median-centered)", "grouping": "Treatment × Dose cell",
+        levene = {"test": "Levene (median-centered)",
+                  "grouping": " × ".join(factors) + " cell",
                   "statistic": float(statistic), "p_value": float(p_value),
                   "passed": bool(p_value >= 0.05)}
     warnings = []
@@ -70,7 +71,11 @@ def _diagnostics(
 def _correlations(
     df: pd.DataFrame, request: BioassayAnalysisRequest, response_by_id: Dict[str, Any]
 ) -> List[Dict[str, Any]]:
-    treated = df[df[request.design.treatment_column].astype(str) != request.design.control_treatment_level]
+    design = request.design
+    treatment = next((factor for factor in design.factor_columns
+                      if factor.semantic_role == "treatment"), design.factor_columns[0])
+    treated = (df if design.control_treatment_level is None else
+               df[df[treatment.column].astype(str) != design.control_treatment_level])
     output = []
     ids = request.correlation_response_ids
     for left_index, left_id in enumerate(ids):
@@ -95,6 +100,13 @@ def _regressions(
     df: pd.DataFrame, request: BioassayAnalysisRequest, response_by_id: Dict[str, Any]
 ) -> List[Dict[str, Any]]:
     design = request.design
+    factors = design.factor_columns
+    factor_columns = [factor.column for factor in factors]
+    factor_labels = [factor.display_name or factor.column for factor in factors]
+    treatment_factor = next((factor for factor in factors if factor.semantic_role == "treatment"), factors[0])
+    dose_factor = next((factor for factor in factors if factor.id == design.dose_factor_id), None)
+    treatment_column = treatment_factor.column
+    dose_column = dose_factor.column if dose_factor else None
     treated = df[df[design.treatment_column].astype(str) != design.control_treatment_level]
     output = []
     for response_id in request.regression_response_ids:
@@ -122,11 +134,34 @@ def _regressions(
     return output
 
 
+def _interpretation_priority(anova_rows, factor_count, alpha):
+    interactions = [row for row in anova_rows if " × " in row["source"] or ":" in row["source"]]
+    order_of = lambda source: max(source.count(" × "), source.count(":")) + 1
+    significant_highest = [row for row in interactions if order_of(row["source"]) == factor_count
+                           and row["p_value"] is not None and row["p_value"] < alpha]
+    significant_two_way = [row for row in interactions if order_of(row["source"]) == 2
+                           and row["p_value"] is not None and row["p_value"] < alpha]
+    if factor_count == 3 and significant_highest:
+        priority = "three_way_interaction"
+    elif significant_two_way:
+        priority = "two_way_interaction" if factor_count == 3 else "interaction"
+    else:
+        priority = "main_effects"
+    return priority, significant_highest, significant_two_way
+
+
 def orchestrate_bioassay(
     df: pd.DataFrame, request: BioassayAnalysisRequest
 ) -> Dict[str, Any]:
     validation = validate_bioassay_dataframe(df, request)
     design = request.design
+    factors = design.factor_columns
+    factor_columns = [factor.column for factor in factors]
+    factor_labels = [factor.display_name or factor.column for factor in factors]
+    treatment_factor = next((factor for factor in factors if factor.semantic_role == "treatment"), factors[0])
+    dose_factor = next((factor for factor in factors if factor.id == design.dose_factor_id), None)
+    treatment_column = treatment_factor.column
+    dose_column = dose_factor.column if dose_factor else None
     response_by_id = {response.id: response for response in request.responses}
     warnings: List[Dict[str, Any]] = []
 
@@ -134,6 +169,10 @@ def orchestrate_bioassay(
     mortality = None
     mortality_by_time = {}
     if mortality_definitions:
+        if design.control_treatment_level is None or dose_column is None:
+            raise BioassayValidationError(
+                "Mortality correction requires an explicit control and a factor with semantic role 'dose'."
+            )
         mappings = [
             MortalityResponseMapping(
                 raw_column=response.raw_column,
@@ -148,8 +187,8 @@ def orchestrate_bioassay(
         ]
         mortality = prepare_mortality_responses(
             df,
-            treatment_column=design.treatment_column,
-            dose_column=design.dose_column,
+            treatment_column=treatment_column,
+            dose_column=dose_column,
             replicate_column=design.replicate_column,
             control_level=design.control_treatment_level,
             mortality_responses=mappings,
@@ -184,26 +223,30 @@ def orchestrate_bioassay(
     first_design = None
     interpretation_by_response = {}
     for response in request.responses:
-        result = analyze_factorial_crd(
-            df,
-            treatment_column=design.treatment_column,
-            dose_column=design.dose_column,
+        analysis_kwargs = dict(
             replicate_column=design.replicate_column,
             response_column=response.inference_column,
-            display_column=(
-                response.display_column or response.raw_column
-                if (response.display_column or response.raw_column) != response.inference_column
-                else None
-            ),
+            display_column=((response.display_column or response.raw_column)
+                            if (response.display_column or response.raw_column) != response.inference_column else None),
             control_level=design.control_treatment_level,
+            control_column=treatment_column,
             expected_dose_series=design.expected_dose_series,
         )
+        if design.treatment_column and design.dose_column:
+            result = analyze_factorial_crd(
+                df, treatment_column=design.treatment_column, dose_column=design.dose_column,
+                **analysis_kwargs,
+            )
+        else:
+            result = analyze_factorial_crd(
+                df, factor_columns=factor_columns, factor_display_names=factor_labels,
+                **analysis_kwargs,
+            )
         if first_design is None:
             first_design = result["design"]
         treated = df.loc[result["factorial_rows_used"]]
         diagnostics, diagnostic_warnings = _diagnostics(
-            treated, design.treatment_column, design.dose_column,
-            response.inference_column, response.id,
+            treated, factor_columns, response.inference_column, response.id,
         )
         warnings.extend(diagnostic_warnings)
         if not result["design"]["balanced"]:
@@ -212,10 +255,10 @@ def orchestrate_bioassay(
                 response_id=response.id,
             ))
         anova = _anova_map(result)
-        interaction_significant = bool(
-            anova["Treatment:Dose"]["p_value"] < request.options.alpha
+        priority, significant_highest, significant_two_way = _interpretation_priority(
+            result["anova"], len(factors), request.options.alpha
         )
-        priority = "interaction" if interaction_significant else "main_effects"
+        interaction_significant = bool(significant_highest or significant_two_way)
         mortality_details = None
         if response.type == "mortality":
             prepared = mortality_by_time[(float(response.observation_time), str(response.time_unit))]
@@ -239,9 +282,17 @@ def orchestrate_bioassay(
                 "warnings": mortality["warnings"],
             }
         facts = {
-            "treatment_significant": bool(anova["Treatment"]["p_value"] < request.options.alpha),
-            "dose_significant": bool(anova["Dose"]["p_value"] < request.options.alpha),
+            "treatment_significant": bool(anova.get(factor_labels[0], {}).get("p_value", 1) < request.options.alpha),
+            "dose_significant": bool(
+                len(factor_labels) > 1 and
+                anova.get(factor_labels[1], {}).get("p_value", 1) < request.options.alpha
+            ),
+            "main_effect_significance": {
+                label: bool(anova.get(label, {}).get("p_value", 1) < request.options.alpha)
+                for label in factor_labels
+            },
             "interaction_significant": interaction_significant,
+            "significant_two_way_interactions": [row["source"] for row in significant_two_way],
             "interpretation_priority": priority,
         }
         interpretation_by_response[response.id] = facts
@@ -250,9 +301,11 @@ def orchestrate_bioassay(
             "biological_type": response.type,
             "anova": result["anova"],
             "interaction": result["interaction"],
-            "primary_mean_separation": result["interaction"]["means"] if priority == "interaction" else result["marginal_means"],
-            "treatment_marginal_means": result["marginal_means"]["treatment"],
-            "dose_marginal_means": result["marginal_means"]["dose"],
+            "primary_mean_separation": result["interaction"]["means"] if priority != "main_effects" else result["marginal_means"],
+            "cell_means": result["cell_means"],
+            "marginal_means": result["marginal_means"],
+            "treatment_marginal_means": result["marginal_means"].get("treatment", result["marginal_means"].get(factor_labels[0], [])),
+            "dose_marginal_means": result["marginal_means"].get("dose", result["marginal_means"].get(factor_labels[1], []) if len(factors)>1 else []),
             "diagnostics": diagnostics,
             "mortality_correction": mortality_details,
             "interpretation_metadata": facts,
@@ -272,30 +325,29 @@ def orchestrate_bioassay(
             },
         })
 
-    control_n = mortality["control"]["n_control"] if mortality else int(
-        (df[design.treatment_column].astype(str) == design.control_treatment_level).sum()
-    )
-    control_rows = mortality["control"]["control_rows_used"] if mortality else df.index[
-        df[design.treatment_column].astype(str) == design.control_treatment_level
-    ].tolist()
-    cell_counts = df[df[design.treatment_column].astype(str) != design.control_treatment_level].groupby(
-        [design.treatment_column, design.dose_column], observed=True
-    ).size()
+    control_mask = (df[treatment_column].astype(str) == design.control_treatment_level
+                    if design.control_treatment_level is not None else pd.Series(False, index=df.index))
+    control_n = mortality["control"]["n_control"] if mortality else int(control_mask.sum())
+    control_rows = mortality["control"]["control_rows_used"] if mortality else df.index[control_mask].tolist()
+    cell_counts = df[~control_mask].groupby(factor_columns, observed=True).size()
     design_result = {
         "design_type": "factorial_crd",
         "total_rows": len(df),
         "factorial_rows": first_design["factorial_n"],
         "control_rows": control_n,
-        "factorial_treatments": df.loc[
-            df[design.treatment_column].astype(str) != design.control_treatment_level,
-            design.treatment_column,
-        ].astype(str).drop_duplicates().tolist(),
+        "factor_count": len(factors),
+        "factors": first_design.get("factors", [
+            {"column": factor.column, "display_name": factor.display_name or factor.column,
+             "levels": int(df.loc[~control_mask, factor.column].nunique())}
+            for factor in factors
+        ]),
+        "factorial_treatments": df.loc[~control_mask, treatment_column].astype(str).drop_duplicates().tolist(),
         "dose_levels": design.expected_dose_series,
         "cells": int(len(cell_counts)),
         "balanced": bool(cell_counts.nunique() == 1),
         "cell_replication": int(cell_counts.iloc[0]) if cell_counts.nunique() == 1 else None,
         "cell_counts": [
-            {"treatment": str(key[0]), "dose": float(key[1]), "n": int(value)}
+            {"factor_levels": dict(zip(factor_labels, key if isinstance(key, tuple) else (key,))), "n": int(value)}
             for key, value in cell_counts.items()
         ],
         "replicate_role": "experimental_unit_identifier",
@@ -320,6 +372,8 @@ def orchestrate_bioassay(
 
     cotoxicity_result = None
     if request.cotoxicity and request.cotoxicity.enabled:
+        if len(factors) > 2:
+            raise UnsupportedBioassayAnalysis("not_supported_for_multifactor_cotoxicity")
         config = request.cotoxicity
         if config.method.lower() != "bliss":
             raise UnsupportedBioassayAnalysis(
@@ -374,7 +428,9 @@ def orchestrate_bioassay(
                            "confidence_level": config.confidence_level, "seed": config.seed},
         }
 
-    regressions = _regressions(df, request, response_by_id)
+    if request.regression_response_ids and (dose_factor is None or len(factors) > 2):
+        raise UnsupportedBioassayAnalysis("Dose-response regression is not supported for multifactor pooling.")
+    regressions = _regressions(df, request, response_by_id) if dose_factor else []
     correlations = _correlations(df, request, response_by_id)
     return {
         "status": "success",
