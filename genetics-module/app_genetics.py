@@ -232,6 +232,7 @@ ALLOWED_ORIGINS = [
     # *.vercel.app wildcard would admit every deployment of every account.
     # Remove this entry once acceptance on this build is signed off.
     "https://vivasense-stat-c1x9emuvk-fayeun-lawerences-projects.vercel.app",
+    "https://vivasense-stat-41a0ir1cn-fayeun-lawerences-projects.vercel.app",
     "http://localhost:5173",
     "http://localhost:5174",
     "http://localhost:3000",
